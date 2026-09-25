@@ -16,25 +16,40 @@ import type { RegistryConfig, ModelRef } from "./llm/registry.js";
  * custom_instructions and no sliders, silently. String configs are converted
  * to the object form by normalizeConfig instead.
  */
+/**
+ * The 0-4 dials, in one place.
+ *
+ * They were spelled out twice: once in the schema, once — once there was a
+ * string-coercion pass — as "every key under personality". The second version
+ * turned `tone: "3"` into the number 3, because tone is free text and nobody
+ * told the coercion which keys were dials. One list, used by the schema and by
+ * the coercion, so the two cannot drift.
+ */
+const PERSONALITY_SLIDERS = [
+  "formality",
+  "emotionality",
+  "humor",
+  "confidence",
+  "response_length",
+  "structure",
+  "emoji",
+  "examples",
+  "friendliness",
+  "initiative",
+  "curiosity",
+  "empathy",
+  "criticism",
+] as const;
+
 const personalitySchema = z.object({
     // Free-text fields
     tone: z.string().optional(),
     style: z.string().optional(),
     custom_instructions: z.string().optional(),
     // Sliders (0-4)
-    formality: z.number().min(0).max(4).optional(),
-    emotionality: z.number().min(0).max(4).optional(),
-    humor: z.number().min(0).max(4).optional(),
-    confidence: z.number().min(0).max(4).optional(),
-    response_length: z.number().min(0).max(4).optional(),
-    structure: z.number().min(0).max(4).optional(),
-    emoji: z.number().min(0).max(4).optional(),
-    examples: z.number().min(0).max(4).optional(),
-    friendliness: z.number().min(0).max(4).optional(),
-    initiative: z.number().min(0).max(4).optional(),
-    curiosity: z.number().min(0).max(4).optional(),
-    empathy: z.number().min(0).max(4).optional(),
-    criticism: z.number().min(0).max(4).optional(),
+    ...Object.fromEntries(
+      PERSONALITY_SLIDERS.map((key) => [key, z.number().min(0).max(4).optional()]),
+    ),
   }).optional();
 
 const llmProviderSchema = z.object({
@@ -134,7 +149,7 @@ const configSchema = z.object({
   }).optional(),
 }).passthrough(); // Allow extra fields
 
-export type BetsyConfig = z.infer<typeof configSchema>;
+export type EvaConfig = z.infer<typeof configSchema>;
 
 export function getConfigDir(): string {
   // Plain relative segment: on Linux "\.eva" would become a literal filename.
@@ -143,6 +158,47 @@ export function getConfigDir(): string {
 
 export function getConfigPath(customPath?: string): string {
   return customPath ?? process.env.EVA_CONFIG_PATH ?? path.join(getConfigDir(), "config.yaml");
+}
+
+/**
+ * Turn `"12345"` into `12345` for the fields whose schema demands a number.
+ *
+ * Everything that feeds this config is a string at the edges: environment
+ * variables, YAML written by hand, a `self_config` call from chat. Zod does not
+ * coerce, so `owner_id: "12345"` failed validation, and the repair path in
+ * loadConfig deleted the field. A bot with no owner id is a bot that answers
+ * nobody, and the only warning in the log was one line naming a field nobody
+ * looks at. Coerce instead of dropping.
+ *
+ * Only for keys the schema types as numbers, and only when the string is
+ * actually a plain number — `"12abc"` stays a string and gets reported, since
+ * that is a real typo rather than a quoting accident.
+ */
+function coerceNumericStrings(raw: Record<string, unknown>): void {
+  const numeric = (obj: Record<string, unknown> | undefined, keys: string[]): void => {
+    if (!obj) return;
+    for (const key of keys) {
+      const value = obj[key];
+      if (typeof value !== "string") continue;
+      const trimmed = value.trim();
+      if (trimmed === "" || !/^-?\d+(\.\d+)?$/.test(trimmed)) continue;
+      obj[key] = Number(trimmed);
+    }
+  };
+
+  numeric(raw.telegram as Record<string, unknown> | undefined, ["owner_id"]);
+  numeric(raw.memory as Record<string, unknown> | undefined, [
+    "max_knowledge",
+    "study_interval_min",
+    "context_budget",
+  ]);
+  // Dials only. `tone` and `style` sit in the same object and are free text,
+  // so a numeric-looking value there is a string and stays one.
+  const agent = raw.agent as Record<string, unknown> | undefined;
+  const personality = agent?.personality as Record<string, unknown> | undefined;
+  if (personality && typeof personality === "object") {
+    numeric(personality, [...PERSONALITY_SLIDERS]);
+  }
 }
 
 /**
@@ -157,6 +213,7 @@ function normalizeConfig(raw: Record<string, unknown>): Record<string, unknown> 
     if (typeof agent.personality === "string") {
       agent.personality = { custom_instructions: agent.personality };
     }
+    coerceNumericStrings(raw);
     return raw;
   }
 
@@ -240,7 +297,7 @@ function normalizeConfig(raw: Record<string, unknown>): Record<string, unknown> 
   return out;
 }
 
-export function loadConfig(customPath?: string): BetsyConfig | null {
+export function loadConfig(customPath?: string): EvaConfig | null {
   const filePath = getConfigPath(customPath);
   if (!fs.existsSync(filePath)) return null;
 
@@ -266,16 +323,96 @@ export function loadConfig(customPath?: string): BetsyConfig | null {
   return result.data;
 }
 
-export function saveConfig(config: BetsyConfig, customPath?: string): void {
+/**
+ * How many previous versions of the config to keep.
+ *
+ * A fixed count, not one file per save. Timestamped backups were unbounded:
+ * the live install has 19 of them sitting next to the original, and the oldest
+ * is the most useless one. Rotating slots keep the same safety with a known
+ * ceiling.
+ */
+const CONFIG_BACKUPS = 5;
+
+/**
+ * Write the config without ever leaving it half-written.
+ *
+ * The order matters. Validate first, so a rejected config leaves the working
+ * one in place instead of costing a boot. Then write to a temp file in the
+ * same directory, flush it to disk, and rename over the target — rename is
+ * atomic within a filesystem, so a crash or a full disk mid-write leaves the
+ * previous config intact. Writing straight to the path did neither: a
+ * truncated YAML file is an agent that will not start, with nothing to
+ * indicate why.
+ */
+export function saveConfig(config: EvaConfig, customPath?: string): void {
   const filePath = getConfigPath(customPath);
   const dir = path.dirname(filePath);
-
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(filePath, stringifyYaml(config));
+
+  const yaml = stringifyYaml(config);
+
+  // Refuse to save something that will not load. Reading is tolerant on
+  // purpose — foreign files get repaired field by field — but what we write
+  // back is our own state and by construction has to be valid. If it is not,
+  // that is a bug worth hearing about rather than a config to discover broken.
+  const check = configSchema.safeParse(
+    normalizeConfig(parseYaml(yaml) as Record<string, unknown>),
+  );
+  if (!check.success) {
+    const issues = check.error.issues
+      .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
+      .join(", ");
+    throw new Error(`Config not saved — it would not load back: ${issues}`);
+  }
+
+  // Snapshot what is on disk now, before it is replaced — that is the state a
+  // bad write needs to be undone to. Doing this after the write would put a
+  // copy of the fresh file in bak.1 and leave nothing to roll back to.
+  rotateConfigBackups(filePath);
+
+  const tmp = path.join(dir, `.${path.basename(filePath)}.${process.pid}.tmp`);
+  try {
+    const fd = fs.openSync(tmp, "w");
+    try {
+      fs.writeFileSync(fd, yaml, "utf-8");
+      // Without the flush the rename can land before the bytes do.
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tmp, filePath);
+  } catch (err) {
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch {
+      // The temp file is in the way of nothing important.
+    }
+    throw err;
+  }
+}
+
+/** Shift `bak.1..bak.N` up, drop the oldest, and snapshot the live file into `bak.1`. */
+function rotateConfigBackups(filePath: string): void {
+  try {
+    if (!fs.existsSync(filePath)) return;
+    const oldest = `${filePath}.bak.${CONFIG_BACKUPS}`;
+    if (fs.existsSync(oldest)) fs.rmSync(oldest, { force: true });
+    for (let i = CONFIG_BACKUPS - 1; i >= 1; i--) {
+      const from = `${filePath}.bak.${i}`;
+      if (fs.existsSync(from)) fs.copyFileSync(from, `${filePath}.bak.${i + 1}`);
+    }
+    fs.copyFileSync(filePath, `${filePath}.bak.1`);
+  } catch (err) {
+    // Backups are insurance, not the write itself. Losing them must not fail
+    // a config save that already succeeded.
+    console.warn(
+      `⚠️ не удалось обновить бэкапы конфига (${err instanceof Error ? err.message : err})`,
+    );
+  }
 }
 
 /**
- * Read-modify-write the config file in one step.
+ * Read-modify-write the config file in one step. Throws if the write fails.
  *
  * The process holds a config object it loaded at startup, and several places
  * (the provider registry, the owner-claim handler, the self_config tool) write
@@ -283,17 +420,37 @@ export function saveConfig(config: BetsyConfig, customPath?: string): void {
  * anything the others changed in the meantime, so every write goes through
  * here instead: fresh copy from disk, patch, save.
  */
-export function patchConfig(
+export function patchConfigOrThrow(
   mutate: (config: Record<string, unknown>) => void,
   customPath?: string,
-): boolean {
+): void {
   const current = (loadConfig(customPath) ?? { agent: { name: "Eva" } }) as unknown as Record<
     string,
     unknown
   >;
   mutate(current);
-  saveConfig(current as unknown as BetsyConfig, customPath);
-  return true;
+  saveConfig(current as unknown as EvaConfig, customPath);
+}
+
+/**
+ * Same as patchConfigOrThrow, but a failed write is a log line and a false.
+ *
+ * For background callers (the registry's onChange, the owner-claim handler)
+ * that have nobody to report to: a rejected setting should not take the
+ * process down with it. Callers that can talk to a human — the self_config
+ * tool — want the real error, so they use patchConfigOrThrow directly.
+ */
+export function patchConfig(
+  mutate: (config: Record<string, unknown>) => void,
+  customPath?: string,
+): boolean {
+  try {
+    patchConfigOrThrow(mutate, customPath);
+    return true;
+  } catch (err) {
+    console.error(`Config not patched: ${err instanceof Error ? err.message : String(err)}`);
+    return false;
+  }
 }
 
 /** Check if a config file exists and has LLM credentials */
@@ -305,7 +462,7 @@ export function isConfigured(customPath?: string): boolean {
 }
 
 /** Get LLM API key from either config format */
-export function getLLMApiKey(config: BetsyConfig): string | null {
+export function getLLMApiKey(config: EvaConfig): string | null {
   // New format: any provider in the registry that has a key.
   const fromProviders = Object.values(config.providers ?? {}).find((p) => p.api_key)?.api_key;
   if (fromProviders) return fromProviders;
@@ -321,7 +478,7 @@ export function getLLMApiKey(config: BetsyConfig): string | null {
  * shape and the legacy flat `llm` block, so an existing install can be read
  * before it is migrated.
  */
-export function toRegistryConfig(config: BetsyConfig): RegistryConfig {
+export function toRegistryConfig(config: EvaConfig): RegistryConfig {
   const providers: RegistryConfig["providers"] = {};
   const models: RegistryConfig["models"] = {};
   let fallbacks: ModelRef[] = [];
@@ -383,12 +540,12 @@ export function toRegistryConfig(config: BetsyConfig): RegistryConfig {
 }
 
 /** Get agent name */
-export function getAgentName(config: BetsyConfig): string {
+export function getAgentName(config: EvaConfig): string {
   return config.agent?.name ?? "Eva";
 }
 
 /** Get personality as structured object */
-export function getPersonality(config: BetsyConfig): {
+export function getPersonality(config: EvaConfig): {
   tone?: string;
   style?: string;
   customInstructions?: string;
@@ -402,12 +559,11 @@ export function getPersonality(config: BetsyConfig): {
   };
 }
 
-export function getPersonalitySliders(config: BetsyConfig): Record<string, number> {
+export function getPersonalitySliders(config: EvaConfig): Record<string, number> {
   const p = config.agent?.personality;
   if (!p) return {};
   const result: Record<string, number> = {};
-  const keys = ["formality","emotionality","humor","confidence","response_length","structure","emoji","examples","friendliness","initiative","curiosity","empathy","criticism"];
-  for (const k of keys) {
+  for (const k of PERSONALITY_SLIDERS) {
     const v = (p as Record<string, unknown>)[k];
     if (typeof v === "number") result[k] = v;
   }

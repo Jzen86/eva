@@ -1,5 +1,5 @@
 import type { Tool, ToolResult } from "./types.js";
-import { loadConfig, saveConfig, configSchema, type BetsyConfig } from "../config.js";
+import { loadConfig, patchConfigOrThrow, configSchema, type EvaConfig } from "../config.js";
 
 // ---------------------------------------------------------------------------
 // What Eva is allowed to change about herself.
@@ -193,14 +193,15 @@ function handleSet(params: Record<string, unknown>): ToolResult {
     };
   }
 
-  const config = loadConfig() ?? ({ agent: { name: "Eva" } } as BetsyConfig);
   const coerced = typeof value === "string" ? coerceValue(value, keyPath) : value;
-  setNestedValue(config as unknown as Record<string, unknown>, keyPath, coerced);
 
-  // Refuse a write that the schema would reject. loadConfig repairs invalid
-  // configs by dropping fields, and a dropped subtree is invisible to the
-  // caller: the write "succeeded" and the setting quietly stopped existing.
-  const check = configSchema.safeParse(config);
+  // Validate the result of the write before it is written, and report the
+  // schema's own words when it is not. loadConfig repairs invalid configs by
+  // dropping fields, and a dropped subtree is invisible to the caller: the
+  // write "succeeded" and the setting quietly stopped existing.
+  const probe = loadConfig() ?? ({ agent: { name: "Eva" } } as EvaConfig);
+  setNestedValue(probe as unknown as Record<string, unknown>, keyPath, coerced);
+  const check = configSchema.safeParse(probe);
   if (!check.success) {
     const detail = check.error.issues
       .map((i) => `${i.path.join(".") || "(корень)"}: ${i.message}`)
@@ -212,7 +213,17 @@ function handleSet(params: Record<string, unknown>): ToolResult {
     };
   }
 
-  saveConfig(config);
+  // patchConfigOrThrow, not patchConfig: the owner asked for this value, so
+  // they get told why it did not stick instead of a log line nobody reads.
+  try {
+    patchConfigOrThrow((config) => setNestedValue(config, keyPath, coerced));
+  } catch (err) {
+    return {
+      success: false,
+      output: "",
+      error: `Не сохранено: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
   return { success: true, output: `${keyPath} = ${redact(keyPath, coerced)} — сохранено.` };
 }
 
@@ -230,13 +241,24 @@ function handleAppend(params: Record<string, unknown>): ToolResult {
     return { success: false, output: "Missing required parameter: value", error: "missing_param" };
   }
 
-  const config = loadConfig() ?? ({ agent: { name: "Eva" } } as BetsyConfig);
-  const existing = getNestedValue(config as unknown as Record<string, unknown>, keyPath);
-  const arr = Array.isArray(existing) ? existing : [];
-  arr.push(typeof value === "string" ? value : String(value));
-  setNestedValue(config as unknown as Record<string, unknown>, keyPath, arr);
-  saveConfig(config);
-  return { success: true, output: `Добавлено в ${keyPath} (теперь ${arr.length}).` };
+  const added = typeof value === "string" ? value : String(value);
+  try {
+    patchConfigOrThrow((config) => {
+      const existing = getNestedValue(config, keyPath);
+      const arr = Array.isArray(existing) ? [...existing] : [];
+      arr.push(added);
+      setNestedValue(config, keyPath, arr);
+    });
+  } catch (err) {
+    return {
+      success: false,
+      output: "",
+      error: `Не сохранено: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+  const count = getNestedValue(loadConfig() as unknown as Record<string, unknown>, keyPath);
+  const total = Array.isArray(count) ? count.length : 1;
+  return { success: true, output: `Добавлено в ${keyPath} (теперь ${total}).` };
 }
 
 function handleList(): ToolResult {
