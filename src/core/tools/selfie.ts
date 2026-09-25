@@ -4,7 +4,10 @@ import type { Tool, ToolResult } from "./types.js";
 import { uploadToFal } from "../fal-upload.js";
 
 const FAL_ENDPOINT = "https://fal.run/xai/grok-imagine-image/edit";
-const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
+/** Default image backend. The `modalities:["image"]` chat extension is an
+ *  OpenRouter feature, not part of the OpenAI spec — a different endpoint only
+ *  works if it implements it too. */
+const IMAGE_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 const OPENROUTER_DEFAULT_MODEL = "google/gemini-3.1-flash-image";
 const OPENROUTER_FALLBACK_MODEL = "google/gemini-2.5-flash-image";
 
@@ -39,6 +42,8 @@ export interface SelfieToolConfig {
   openrouterApiKey?: string;
   /** OpenRouter model id (default google/gemini-3.1-flash-image). */
   openrouterModel?: string;
+  /** Point the image backend elsewhere. Needs OpenRouter's modalities extension. */
+  imageBaseUrl?: string;
 }
 
 export class SelfieTool implements Tool {
@@ -62,6 +67,11 @@ export class SelfieTool implements Tool {
   }
 
   /** Resolve reference to a URL that fal.ai can access. */
+  private imageEndpoint(): string {
+    const base = this.config.imageBaseUrl?.replace(/\/+$/, "");
+    return base ? `${base}/chat/completions` : IMAGE_ENDPOINT;
+  }
+
   private async resolveFalReferenceUrl(ref: string): Promise<string> {
     if (ref.startsWith("http")) return ref;
     // Local file — upload to fal.ai storage
@@ -185,7 +195,7 @@ export class SelfieTool implements Tool {
   ): Promise<{ image?: string; filter?: boolean; error?: string }> {
     console.log(`📸 Selfie(openrouter/${model}): mode=${mode}`);
     try {
-      const response = await fetch(OPENROUTER_ENDPOINT, {
+      const response = await fetch(this.imageEndpoint(), {
         method: "POST",
         headers: {
           Authorization: `Bearer ${this.config.openrouterApiKey}`,

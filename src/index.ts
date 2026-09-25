@@ -1,9 +1,10 @@
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
-import { isConfigured, loadConfig, saveConfig, getAgentName, getPersonality, getPersonalitySliders, getLLMApiKey } from "./core/config.js";
+import { isConfigured, loadConfig, saveConfig, getConfigPath, getAgentName, getPersonality, getPersonalitySliders, getLLMApiKey, toRegistryConfig } from "./core/config.js";
 import { TelegramChannel } from "./channels/telegram/index.js";
 import { LLMRouter } from "./core/llm/router.js";
+import { ProviderRegistry } from "./core/llm/registry.js";
 import { Engine } from "./core/engine.js";
 import { ToolRegistry } from "./core/tools/registry.js";
 import { ShellTool } from "./core/tools/shell.js";
@@ -17,7 +18,6 @@ import { SchedulerService } from "./core/tools/scheduler.js";
 import { SchedulerStore } from "./core/tools/scheduler-store.js";
 import { getDB } from "./core/memory/db.js";
 import { primeStudyTimer, runStudyIfDue } from "./core/memory/study-runner.js";
-import { createOpenRouterClient } from "./core/llm/providers/openrouter.js";
 import type { LLMClient } from "./core/llm/types.js";
 import type { Channel } from "./channels/types.js";
 import { sshTool } from "./core/tools/ssh.js";
@@ -28,6 +28,7 @@ import { ImageGenTool } from "./core/tools/image-gen.js";
 import { SkillSearchTool } from "./core/tools/skill-search.js";
 import { SkillInstallTool } from "./core/tools/skill-install.js";
 import { SendFileTool } from "./core/tools/send-file.js";
+import { SwitchModelTool } from "./core/tools/switch-model.js";
 
 async function main() {
   const config = isConfigured() ? loadConfig() : null;
@@ -35,7 +36,7 @@ async function main() {
   if (!config) {
     console.error("❌ Конфиг не найден.");
     console.error("   Скопируй config.example.yaml в config.yaml и заполни ключи.");
-    console.error("   Ожидается в ~/.eva/config.yaml (переопределяется EVA_CONFIG_DIR).");
+    console.error("   Ожидается в ~/.eva/config.yaml (переопределяется EVA_CONFIG_PATH).");
     process.exit(1);
   }
 
@@ -47,27 +48,28 @@ async function main() {
   // Setup LLM
   const apiKey = getLLMApiKey(config);
   let llm: LLMRouter | null = null;
+  let registry: ProviderRegistry | null = null;
 
   if (apiKey) {
-    const llmConfig = config.llm as any;
-    if (llmConfig.fast) {
-      llm = new LLMRouter({
-        provider: llmConfig.fast.provider,
-        api_key: llmConfig.fast.api_key,
-        fast_model: llmConfig.fast.model,
-        strong_model: llmConfig.strong?.model ?? llmConfig.fast.model,
-        fallback_models: llmConfig.fallback_models,
-      });
-    } else {
-      llm = new LLMRouter({
-        provider: llmConfig.provider,
-        api_key: llmConfig.api_key,
-        fast_model: llmConfig.fast_model,
-        strong_model: llmConfig.strong_model,
-        fallback_models: llmConfig.fallback_models,
-      });
-    }
-    console.log("✅ LLM подключён");
+    registry = new ProviderRegistry(toRegistryConfig(config));
+    // Write-through so a model switch made at runtime survives a restart.
+    const cfgPath = getConfigPath();
+    registry.onChange(() => {
+      try {
+        const snapshot = registry!.toConfig();
+        config.providers = snapshot.providers;
+        config.models = snapshot.models;
+        config.fallbacks = snapshot.fallbacks;
+        saveConfig(config, cfgPath);
+      } catch (err) {
+        console.error("⚠️ не удалось сохранить конфиг:", err instanceof Error ? err.message : err);
+      }
+    });
+    llm = new LLMRouter(registry);
+    console.log("✅ LLM подключён:", ["fast", "strong", "study", "embed"]
+      .filter((r) => llm!.hasRole(r))
+      .map((r) => llm!.describe(r))
+      .join("  |  "));
   }
 
   // Register tools
@@ -89,32 +91,62 @@ async function main() {
   tools.register(npmInstallTool);
   // channels map is populated later — closure captures the reference
   const channels = new Map<string, Channel>();
+  if (registry && llm) {
+    // Let Eva answer "давай поговорим на другой модели" herself. Verified
+    // before it sticks: a model that fails the smoke test is rolled back.
+    tools.register(new SwitchModelTool({ registry, router: llm, selfSwitchable: true }));
+  }
+
   // Selfie tool — uses fal.ai key from selfies config, falls back to video config
   const selfiesConfig = config.selfies as Record<string, string> | undefined;
   const videoConfig = config.video as Record<string, string> | undefined;
+  // Image generation goes through the `image` role when it is set, so it is not
+  // tied to OpenRouter by construction.
+  const imageCfg = (config.image_gen as Record<string, string> | undefined) ?? {};
+  const imageRef = registry?.role("image") ?? registry?.role("fast");
+  const imageProvider = imageRef ? registry?.toConfig().providers[imageRef.provider] : undefined;
+  const imageKey =
+    imageCfg.api_key ??
+    (imageRef && imageProvider?.api_key ? imageProvider.api_key : getLLMApiKey(config)) ??
+    "";
+  const imageBaseUrl = imageCfg.base_url ?? imageProvider?.base_url;
   const selfieTool = new SelfieTool({
     falApiKey: selfiesConfig?.fal_api_key ?? videoConfig?.fal_api_key ?? "",
     referencePhotoUrl: selfiesConfig?.reference_photo_url,
     provider: (selfiesConfig?.provider as "fal" | "openrouter" | undefined) ?? "fal",
-    openrouterApiKey: selfiesConfig?.openrouter_api_key ?? getLLMApiKey(config) ?? "",
-    openrouterModel: selfiesConfig?.openrouter_model,
+    openrouterApiKey: imageKey,
+    openrouterModel: imageCfg.model ?? (imageRef ? imageRef.model : undefined),
+    imageBaseUrl: imageCfg.base_url,
   });
   tools.register(selfieTool);
-  // Voice tool — lets Betsy send voice messages on her own initiative
+  // Voice tool — lets Eva send voice messages on her own initiative
   tools.register(new VoiceTool({
     voiceConfig: (config.voice as Record<string, unknown>) ?? {},
     falApiKey: (selfiesConfig?.fal_api_key ?? videoConfig?.fal_api_key ?? "") || undefined,
   }));
-  // Image generation tool — uses OpenRouter API key
   const llmApiKey = getLLMApiKey(config);
-  if (llmApiKey) {
-    tools.register(new ImageGenTool({ apiKey: llmApiKey }));
+  if (imageKey) {
+    tools.register(new ImageGenTool({ apiKey: imageKey, baseUrl: imageBaseUrl }));
   }
   // SkillsMP tools — search and install agent skills
   const skillsmpKey = (config as any).skillsmp?.api_key as string | undefined;
   if (skillsmpKey) {
     tools.register(new SkillSearchTool({ apiKey: skillsmpKey }));
-    tools.register(new SkillInstallTool({ apiKey: llmApiKey ?? undefined }));
+    // Embeddings come from the `embed` role, same as everything else.
+    const embedRef = registry?.role("embed");
+    const embedProvider = embedRef ? registry?.toConfig().providers[embedRef.provider] : undefined;
+    tools.register(new SkillInstallTool({
+      apiKey: llmApiKey ?? undefined,
+      ...(embedRef && embedProvider?.base_url && embedProvider.api_key
+        ? {
+            embeddingEndpoint: {
+              baseUrl: embedProvider.base_url,
+              apiKey: embedProvider.api_key,
+              model: embedRef.model,
+            },
+          }
+        : {}),
+    }));
   }
   // Web tool — conditional on google config
   const googleConfig = (config as any).google as { api_key: string; cx: string } | undefined;
@@ -202,12 +234,17 @@ async function main() {
   if (llm && config.telegram?.owner_id) {
     const ownerId = String(config.telegram.owner_id);
     const studyIntervalMs = (config.memory?.study_interval_min ?? 30) * 60_000;
-    const studyModel = config.memory?.study_model;
-    const studyClients: LLMClient[] = [];
-    if (studyModel && apiKey) {
-      studyClients.push(createOpenRouterClient({ apiKey, model: studyModel }));
-    }
-    studyClients.push(llm.fast());
+    // Built once, but resolved lazily so a model switch mid-run is picked up.
+    const studyClients: LLMClient[] = [
+      {
+        chat: (m, t) => (llm!.hasRole("study") ? llm!.role("study").chat(m, t) : llm!.fast().chat(m, t)),
+        chatStream: (m, cb, t) =>
+          llm!.hasRole("study") ? llm!.role("study").chatStream(m, cb, t) : llm!.fast().chatStream(m, cb, t),
+      },
+    ];
+    const studyLabel = llm.hasRole("study")
+      ? llm.describe("study")
+      : `${llm.describe("fast")} (study-роль не задана)`;
 
     const runOneStudy = async () => {
       // Don't burn free fallback quota on junk insights when the balance is out.
@@ -245,7 +282,7 @@ async function main() {
     const studyTimer = setInterval(runOneStudy, 5 * 60_000);
     studyTimer.unref?.();
     console.log(
-      `🧠 Самообучение: каждые ${studyIntervalMs / 60_000} мин, модель ${studyModel ?? "fast"}`,
+      `🧠 Самообучение: каждые ${studyIntervalMs / 60_000} мин, ${studyLabel}`,
     );
   }
 

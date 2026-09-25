@@ -3,6 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { z } from "zod";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import type { RegistryConfig, ModelRef } from "./llm/registry.js";
 
 // Flexible schema that accepts both old and new config formats
 const personalitySchema = z.union([
@@ -52,6 +53,18 @@ const llmSchema = z.union([
   }),
 ]);
 
+const modelRefSchema = z.object({
+  provider: z.string(),
+  model: z.string(),
+});
+
+const providerSchema = z.object({
+  base_url: z.string().optional(),
+  api_key: z.string().optional(),
+  headers: z.record(z.string(), z.string()).optional(),
+  stream_usage: z.boolean().optional(),
+});
+
 const configSchema = z.object({
   agent: z.object({
     name: z.string().default("Eva"),
@@ -76,6 +89,15 @@ const configSchema = z.object({
   }).optional(),
 
   llm: llmSchema.optional(),
+
+  /**
+   * The pluggable-provider layer. `providers` is a registry of endpoints,
+   * `models` assigns endpoints to roles, `fallbacks` is the rescue chain.
+   * Supersedes the flat `llm` block above, which is still read for migration.
+   */
+  providers: z.record(z.string(), providerSchema).optional(),
+  models: z.record(z.string(), modelRefSchema).optional(),
+  fallbacks: z.array(modelRefSchema).optional(),
 
   telegram: z.object({
     token: z.string(),
@@ -108,7 +130,8 @@ const configSchema = z.object({
 export type BetsyConfig = z.infer<typeof configSchema>;
 
 export function getConfigDir(): string {
-  return path.join(os.homedir(), "\.eva");
+  // Plain relative segment: on Linux "\.eva" would become a literal filename.
+  return path.join(os.homedir(), ".eva");
 }
 
 export function getConfigPath(customPath?: string): string {
@@ -128,7 +151,7 @@ function normalizeConfig(raw: Record<string, unknown>): Record<string, unknown> 
 
   // agent
   out.agent = {
-    name: raw.name ?? "Betsy",
+    name: raw.name ?? "Eva",
     gender: raw.gender ?? "female",
     personality: {
       tone: raw.tone,
@@ -241,12 +264,15 @@ export function saveConfig(config: BetsyConfig, customPath?: string): void {
 export function isConfigured(customPath?: string): boolean {
   const config = loadConfig(customPath);
   if (!config) return false;
-  if (!config.llm) return false;
-  return true;
+  if (config.models && Object.keys(config.models).length) return true;
+  return Boolean(config.llm);
 }
 
 /** Get LLM API key from either config format */
 export function getLLMApiKey(config: BetsyConfig): string | null {
+  // New format: any provider in the registry that has a key.
+  const fromProviders = Object.values(config.providers ?? {}).find((p) => p.api_key)?.api_key;
+  if (fromProviders) return fromProviders;
   if (!config.llm) return null;
   if ("api_key" in config.llm) return config.llm.api_key;
   if ("fast" in config.llm && config.llm.fast) return config.llm.fast.api_key;
@@ -254,9 +280,75 @@ export function getLLMApiKey(config: BetsyConfig): string | null {
   return null;
 }
 
+/**
+ * Build the provider registry config, accepting both the new providers/models
+ * shape and the legacy flat `llm` block, so an existing install can be read
+ * before it is migrated.
+ */
+export function toRegistryConfig(config: BetsyConfig): RegistryConfig {
+  const providers: RegistryConfig["providers"] = {};
+  const models: RegistryConfig["models"] = {};
+  let fallbacks: ModelRef[] = [];
+
+  // New shape wins.
+  for (const [id, spec] of Object.entries(config.providers ?? {})) {
+    providers[id] = {
+      ...(spec.base_url === undefined ? {} : { base_url: spec.base_url }),
+      ...(spec.api_key === undefined ? {} : { api_key: spec.api_key }),
+      ...(spec.headers === undefined ? {} : { headers: spec.headers }),
+      ...(spec.stream_usage === undefined ? {} : { stream_usage: spec.stream_usage }),
+    };
+  }
+  for (const [role, ref] of Object.entries(config.models ?? {})) {
+    models[role] = { provider: ref.provider, model: ref.model };
+  }
+  fallbacks = (config.fallbacks ?? []).map((f) => ({ provider: f.provider, model: f.model }));
+
+  // Legacy shape fills in whatever the new one did not say.
+  if (config.llm) {
+    const legacy = "api_key" in config.llm ? config.llm : null;
+    const nested = "fast" in config.llm ? config.llm : null;
+
+    const legacyProvider = legacy?.provider ?? "openrouter";
+    const legacyKey = legacy?.api_key;
+    if (legacyKey && !providers[legacyProvider]?.api_key) {
+      providers[legacyProvider] = { ...providers[legacyProvider], api_key: legacyKey };
+    }
+
+    if (legacy?.fast_model && !models.fast) {
+      models.fast = { provider: legacyProvider, model: legacy.fast_model };
+    }
+    if (legacy?.strong_model && !models.strong) {
+      models.strong = { provider: legacyProvider, model: legacy.strong_model };
+    }
+    if (legacy?.fallback_models?.length && !fallbacks.length) {
+      fallbacks = legacy.fallback_models.map((m) => ({ provider: legacyProvider, model: m }));
+    }
+
+    // Old nested format: fast/strong each with their own provider and key.
+    for (const role of ["fast", "strong"] as const) {
+      const entry = nested?.[role];
+      if (!entry) continue;
+      if (entry.api_key && !providers[entry.provider]?.api_key) {
+        providers[entry.provider] = { ...providers[entry.provider], api_key: entry.api_key };
+      }
+      const model = entry.model ?? (role === "fast" ? undefined : undefined);
+      if (entry.model && !models[role]) {
+        models[role] = { provider: entry.provider, model: entry.model };
+      }
+      void model;
+    }
+    if (nested?.fallback_models?.length && !fallbacks.length) {
+      fallbacks = nested.fallback_models.map((m) => ({ provider: legacyProvider, model: m }));
+    }
+  }
+
+  return { providers, models, fallbacks };
+}
+
 /** Get agent name */
 export function getAgentName(config: BetsyConfig): string {
-  return config.agent?.name ?? "Betsy";
+  return config.agent?.name ?? "Eva";
 }
 
 /** Get personality as structured object */

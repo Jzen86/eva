@@ -8,6 +8,8 @@ const MAX_SKILLS_TOTAL = 200;
 
 export interface SkillInstallConfig {
   apiKey?: string;
+  /** Where to get embeddings. Resolved from the `embed` role in config.yaml. */
+  embeddingEndpoint?: { baseUrl: string; apiKey: string; model: string };
 }
 
 export class SkillInstallTool implements Tool {
@@ -23,9 +25,11 @@ export class SkillInstallTool implements Tool {
   ];
 
   private apiKey?: string;
+  private embeddingEndpoint?: { baseUrl: string; apiKey: string; model: string };
 
   constructor(config?: SkillInstallConfig) {
     this.apiKey = config?.apiKey;
+    this.embeddingEndpoint = config?.embeddingEndpoint;
   }
 
   async execute(params: Record<string, unknown>): Promise<ToolResult> {
@@ -78,9 +82,12 @@ export class SkillInstallTool implements Tool {
 
       // Generate embedding for vector search
       let embedding: Float32Array = new Float32Array(0);
-      if (this.apiKey) {
+      if (this.embeddingEndpoint) {
         try {
-          embedding = await generateEmbedding(`${skillName}: ${description}`, this.apiKey) as Float32Array;
+          embedding = await generateEmbedding(
+            `${skillName}: ${description}`,
+            this.embeddingEndpoint,
+          );
         } catch (err) {
           console.log(`skill_install: embedding generation failed: ${err instanceof Error ? err.message : err}`);
         }

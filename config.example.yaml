@@ -35,13 +35,67 @@ security:
     browser: true
     npm_install: true
 
-llm:
-  provider: openrouter                # СЕЙЧАС жёстко openrouter — см. этап 2 плана
-  api_key: YOUR_API_KEY
-  fast_model: google/gemini-2.5-flash
-  strong_model: anthropic/claude-sonnet-4
-  # fallback_models:                 # перебор, если у провайдера кончились деньги
-  #   - qwen/qwen3-coder:free
+# ─────────────────────────────────────────────────────────────────────────────
+# Провайдеры и модели
+# ─────────────────────────────────────────────────────────────────────────────
+# Провайдер — это адрес + ключ. Всё, что говорит на OpenAI-совместимом API,
+# подходит: OpenRouter, OpenAI, Google (Gemini), Groq, DeepSeek, Together,
+# Cerebras, LM Studio, vLLM, llama.cpp — что угодно.
+#
+# Имя провайдера, которого нет в списке готовых, тоже можно: укажи base_url
+# и api_key явно, и он заработает так же.
+#
+# Готовые имена, base_url и заголовки подставляются автоматически:
+#   openrouter   https://openrouter.ai/api/v1
+#   openai       https://api.openai.com/v1
+#   google       https://generativelanguage.googleapis.com/v1beta/openai
+#   groq         https://api.groq.com/openai/v1
+#   deepseek     https://api.deepseek.com/v1
+#   together     https://api.together.xyz/v1
+#   cerebras     https://api.cerebras.ai/v1
+
+providers:
+  openrouter:
+    api_key: YOUR_OPENROUTER_KEY       # base_url и заголовки — из готового шаблона
+  # Одновременно можно держать сколько угодно провайдеров и переключаться между
+  # ними на лету. Например, запасной на случай, если у первого кончились деньги:
+  #
+  # google:
+  #   api_key: YOUR_GEMINI_KEY
+  # groq:
+  #   api_key: YOUR_GROQ_KEY
+  # ollama:                             # любой свой эндпоинт
+  #   base_url: http://127.0.0.1:11434/v1
+  #   api_key: ollama                    # ollama требует заголовок, но ключ не проверяет
+
+# Роли: какая модель за что отвечает.
+#   fast   — болтовня, быстрые ответы
+#   strong — сложные вопросы, работа с инструментами
+#   study  — фоновое самообучение (необязательно, иначе берётся fast)
+#   embed  — эмбеддинги для поиска по навыкам (необязательно)
+#   image  — генерация картинок (необязательно)
+models:
+  fast:
+    provider: openrouter
+    model: google/gemini-2.5-flash
+  strong:
+    provider: openrouter
+    model: anthropic/claude-sonnet-4
+  # study:
+  #   provider: openrouter
+  #   model: qwen/qwen3.7-flash
+  # embed:
+  #   provider: google
+  #   model: text-embedding-004
+
+# Запасные модели: перебираются по порядку, если основная не ответила.
+# Транзиентные ошибки (5xx, сеть, таймаут, 429) и кончившиеся деньги (402)
+# переключают на следующую. Ошибка запроса (400) — нет: повтор не поможет.
+fallbacks:
+  - provider: openrouter
+    model: qwen/qwen3-coder:free
+  - provider: openrouter
+    model: deepseek/deepseek-chat-v3-0324:free
 
 telegram:
   token: YOUR_TELEGRAM_BOT_TOKEN
@@ -51,7 +105,6 @@ telegram:
 memory:
   max_knowledge: 200
   study_interval_min: 60
-  study_model: qwen/qwen3.7-flash
   learning_enabled: true
   context_budget: 40000
 
@@ -60,3 +113,12 @@ memory:
 # selfies:    { fal_api_key: "...", reference_photo_url: "https://..." }
 # google:     { api_key: "...", cx: "..." }
 # plugins:    ["voice", "selfies"]
+
+# Генерация картинок. Внимание: режим modalities:["image"] — это расширение
+# OpenRouter, не часть спецификации OpenAI. Другой эндпоинт сработает, только
+# если он тоже это умеет. Если секции нет — берётся провайдер роли image,
+# затем fast.
+# image_gen:
+#   base_url: https://openrouter.ai/api/v1
+#   api_key: YOUR_KEY
+#   model: google/gemini-2.5-flash-image

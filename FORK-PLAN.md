@@ -78,21 +78,25 @@
 
 **Проверка после этапа:** бот стартует, отвечает в Telegram, память работает, самообучение тикает.
 
-### Этап 2 — Провайдер LLM: уйти с OpenRouter (~1–2 дня)
+### Этап 2 — Провайдер LLM: уйти с OpenRouter — **СДЕЛАН**
 
-Сейчас LLM-слой — **534 строки, один провайдер**, и он уже работает через SDK `openai`, то есть формат Chat Completions. Значит привязка слабее, чем кажется.
-
-| # | Что | Детали |
+| # | Что | Статус |
 |---|---|---|
-| 2.1 | Интерфейс `LLMProvider` | `chat`, `chatStream`, `capabilities` (vision/tools/json/stream/context) |
-| 2.2 | `OpenAICompatibleProvider` | `baseURL` + ключ. Один класс покрывает OpenRouter, Ollama, vLLM, llama.cpp, Groq, DeepSeek, Mistral, xAI, Google |
-| 2.3 | `AnthropicProvider` | Нативный `/v1/messages`: system отдельным параметром, content blocks, `tool_use`/`tool_result`, маппинг `stop_reason` |
-| 2.4 | Свой фолбэк | Заменить `switchDelegates` / `checkBalance` / `isBillingError` / `isRateLimitError` на свою политику: список моделей-профили + классификация ошибок (429 / 402 / 5xx / timeout) |
-| 2.5 | Реестр моделей | Что умеет: vision, tools, json, streaming, размер контекста. Чтобы фолбэк не сломал текущий запрос |
-| 2.6 | Конфиг-профили | `fast` / `strong` / `study` / `embed` вместо хардкода `openrouter` |
-| 2.7 | Вынести проверку ключа | Сейчас `validate-key` ходит на `openrouter.ai/api/v1/auth/key` прямо из рантайма → сделать отдельным инструментом «проверить подключение» |
+| 2.1 | Интерфейс `LLMClient` | ✅ `types.ts` — `chat` + `chatStream` (изменять не пришлось) |
+| 2.2 | `OpenAICompatibleProvider` | ✅ `providers/openai-compat.ts`. Свой `baseURL`/ключ/заголовки, авто-откат при 400 на `stream_options`, `ToolCallAccumulator` с эвристикой для провайдеров без `index`, `safeParseArgs` вместо падающего `JSON.parse` |
+| 2.3 | `AnthropicProvider` | ⏭️ Не нужен: у Anthropic есть официальный OpenAI-совместимый эндпоинт. Отдельный класс — лишний код без выигрыша |
+| 2.4 | Свой фолбэк | ✅ `errors.ts` + `router.ts`. Ловит 5xx, 404, 408, сетевые сбои, а не только «кончились деньги». Общий дедлайн на цепочку (было до 6 минут молчания). Переходы синхронные — отложенный флип флага глушил уведомление о смене модели |
+| 2.5 | Реестр моделей | ✅ `registry.ts`: роли `fast` / `strong` / `study` / `embed` / `image`, кэш клиентов по `провайдер:модель`, `setRole()` без рестарта, `listProviderModels()` через `GET {base}/models` |
+| 2.6 | Конфиг-профили | ✅ `providers:` + `models:` + `fallbacks:` в схеме, старый плоский `llm:` читается для миграции. `toRegistryConfig()` |
+| 2.7 | Проверка ключа | ✅ Ушла внутрь `switch_model`: модель проверяется одним запросом, при неудаче откат на прежнюю |
 
-**Результат:** смена провайдера = правка конфига, а не правка кода.
+**Результат:** смена провайдера и модели = правка конфига, а не кода. Плюс Ева может
+переключить модель сама по просьбе (`switch_model`), пережив перезапуск.
+
+**Побочно убрано ещё 4 привязки к OpenRouter:** эмбеддинги (`services/embeddings.ts`
+получили конфигурируемый эндпоинт), генерация картинок (`image-gen.ts` и `selfie.ts`
+принимают `baseUrl`). Осталась одна по существу — `modalities:["image"]` в чат-комплишенах
+не входит в спецификацию OpenAI, это расширение OpenRouter; адрес вынесен в `image_gen.base_url`.
 
 ### Этап 3 — Память и самообучение (~1–2 дня)
 

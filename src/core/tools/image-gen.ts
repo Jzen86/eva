@@ -5,11 +5,16 @@ import type { Tool, ToolResult } from "./types.js";
 
 /** Working OpenRouter image model (gemini-2.0-flash-exp:free no longer exists). */
 const MODEL = "google/gemini-2.5-flash-image";
-const DEFAULT_REFERENCE = path.join(os.homedir(), "\.eva", "reference.jpg");
+const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
+const DEFAULT_REFERENCE = path.join(os.homedir(), ".eva", "reference.jpg");
 
 export interface ImageGenToolConfig {
   apiKey: string;
   model?: string;
+  /** Defaults to OpenRouter. Point it elsewhere only if that endpoint supports
+   *  the `modalities: ["image","text"]` extension — it is not part of the
+   *  OpenAI spec, so most compatible endpoints reject it. */
+  baseUrl?: string;
   /** Path to the reference photo used to keep the same face. */
   referencePath?: string;
 }
@@ -86,11 +91,13 @@ export class ImageGenTool implements Tool {
 
   private apiKey: string;
   private model: string;
+  private baseUrl: string;
   private referencePath: string;
 
   constructor(config: ImageGenToolConfig) {
     this.apiKey = config.apiKey;
     this.model = config.model ?? MODEL;
+    this.baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
     this.referencePath = config.referencePath ?? DEFAULT_REFERENCE;
   }
 
@@ -122,7 +129,7 @@ export class ImageGenTool implements Tool {
           ]
         : text;
 
-      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${this.apiKey}`,
