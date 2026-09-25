@@ -6,6 +6,11 @@ export interface PromptConfig {
   personality?: {
     tone?: string;
     responseStyle?: string;
+    /** Character, in her own words. */
+    persona?: string;
+    /** Standing operational rules, one per line. */
+    ops?: string[];
+    /** The original single blob; still honoured, still rendered. */
     customInstructions?: string;
   };
   personalitySliders?: Record<string, number>;
@@ -41,7 +46,7 @@ export function buildSystemPrompt(
   chatId?: string,
   connectedServices?: string[],
 ): string {
-  const name = config.name || "Betsy";
+  const name = config.name || "Eva";
   const gender = config.gender ?? "female";
   const genderBlock = buildGenderBlock(gender);
 
@@ -76,11 +81,31 @@ ${genderBlock}
     const p = config.personality;
     if (p.tone) personalityParts.push(`Тон: ${p.tone}`);
     if (p.responseStyle) personalityParts.push(`Стиль ответов: ${p.responseStyle}`);
+    if (p.persona) personalityParts.push(p.persona);
+    // Legacy blob. It is character and rules mixed together, so it goes last
+    // and stays attached to the personality it was written as part of.
     if (p.customInstructions) personalityParts.push(p.customInstructions);
   }
 
   if (personalityParts.length > 0) {
     prompt += `\n\n## Личность\n\n${personalityParts.join("\n")}`;
+  }
+
+  /**
+   * Rules get their own heading, on purpose.
+   *
+   * They used to sit inside the personality block as loose prose, which reads
+   * as flavour rather than instruction — a model follows "always reply in
+   * Russian" less reliably when it is one clause among several paragraphs of
+   * character description. A numbered list under its own heading is a
+   * different kind of sentence to the model, and it is also the half that
+   * must survive someone rewriting her tone.
+   */
+  const ops = (config.personality?.ops ?? []).map((r) => r.trim()).filter(Boolean);
+  if (ops.length > 0) {
+    prompt += `\n\n## Правила работы\n\nЭто постоянные правила, соблюдай их во всех диалогах:\n\n${ops
+      .map((r, i) => `${i + 1}. ${r}`)
+      .join("\n")}`;
   }
 
   // Owner info

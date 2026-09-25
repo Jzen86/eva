@@ -180,6 +180,8 @@ async function main() {
       personality: {
         tone: personality.tone,
         responseStyle: personality.style,
+        persona: personality.persona,
+        ops: personality.ops,
         customInstructions: personality.customInstructions,
       },
       personalitySliders: getPersonalitySliders(config),

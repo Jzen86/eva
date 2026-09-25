@@ -31,6 +31,79 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("Ты милая и игривая.");
   });
 
+  it("keeps character and standing rules in separate sections", () => {
+    // The whole point of splitting them: a rule buried in a paragraph of
+    // character reads as flavour, and a rewrite of one must not take the
+    // other with it.
+    const prompt = buildSystemPrompt({
+      name: "Eva",
+      personality: {
+        persona: "Тёплая, с сухим юмором. Любишь котов и не терпишь пафоса.",
+        ops: ["Всегда отвечай на русском.", "Обращайся ко мне на «ты»."],
+      },
+    });
+    expect(prompt).toContain("Тёплая, с сухим юмором");
+    expect(prompt).toContain("## Правила работы");
+    // The persona must not end up inside the rules block, or vice versa.
+    const rules = prompt.slice(prompt.indexOf("## Правила работы"));
+    expect(rules).not.toContain("Любишь котов");
+    const personality = prompt.slice(0, prompt.indexOf("## Правила работы"));
+    expect(personality).not.toContain("Обращайся ко мне");
+  });
+
+  it("numbers standing rules, one per line", () => {
+    const prompt = buildSystemPrompt({
+      name: "Eva",
+      personality: { ops: ["Правило один", "Правило два", "Правило три"] },
+    });
+    expect(prompt).toContain("1. Правило один");
+    expect(prompt).toContain("2. Правило два");
+    expect(prompt).toContain("3. Правило три");
+  });
+
+  it("drops blank rules rather than numbering them", () => {
+    const prompt = buildSystemPrompt({
+      name: "Eva",
+      personality: { ops: ["Правило один", "   ", ""] },
+    });
+    const start = prompt.indexOf("## Правила работы");
+    // Up to the next heading: the prompt has numbered lists further down
+    // (the settings menu), and this is about the rules block only.
+    const rules = prompt.slice(start, prompt.indexOf("\n## ", start + 1));
+    expect(rules).toContain("1. Правило один");
+    expect(rules).not.toContain("2. ");
+  });
+
+  it("omits the rules section entirely when there are no rules", () => {
+    const prompt = buildSystemPrompt({ name: "Eva", personality: { tone: "friendly" } });
+    expect(prompt).not.toContain("## Правила работы");
+  });
+
+  it("still renders the legacy custom_instructions blob", () => {
+    // Installs that never split their config must keep working untouched.
+    const prompt = buildSystemPrompt({
+      name: "Eva",
+      personality: { customInstructions: "Старое правило и старый характер в одном тексте." },
+    });
+    expect(prompt).toContain("Старое правило и старый характер в одном тексте.");
+  });
+
+  it("renders persona and the legacy blob together without either being lost", () => {
+    const prompt = buildSystemPrompt({
+      name: "Eva",
+      personality: {
+        persona: "Новый характер.",
+        customInstructions: "Старый текст.",
+      },
+    });
+    expect(prompt).toContain("Новый характер.");
+    expect(prompt).toContain("Старый текст.");
+  });
+
+  it("falls back to Eva, not the old name, when no name is given", () => {
+    expect(buildSystemPrompt({ name: "" })).toContain("Ты — Eva.");
+  });
+
   it("includes settings menu capability", () => {
     const prompt = buildSystemPrompt({ name: "Бетси" });
     expect(prompt).toContain("/settings");

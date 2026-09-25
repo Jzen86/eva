@@ -45,6 +45,27 @@ const personalitySchema = z.object({
     // Free-text fields
     tone: z.string().optional(),
     style: z.string().optional(),
+    /**
+     * Who she is, in her own words. Character, not rules.
+     *
+     * `custom_instructions` below used to hold both, and the mix was the
+     * problem: rewriting her tone meant rewriting the server rules too, and
+     * rules buried in a paragraph of character description are followed far
+     * less reliably than a list. `persona` is the character half;
+     * `ops` is the rules half, and the prompt renders them apart.
+     */
+    persona: z.string().optional(),
+    /**
+     * Standing rules for how she operates — a list, so each line is one rule
+     * the model can hold on to. "Always reply in Russian", "never use bullet
+     * points in chat", "call him Женя".
+     */
+    ops: z.array(z.string()).optional(),
+    /**
+     * The original single blob, still read and still rendered. Installs that
+     * never split their config keep working untouched; anything new goes to
+     * `persona` and `ops`.
+     */
     custom_instructions: z.string().optional(),
     // Sliders (0-4)
     ...Object.fromEntries(
@@ -548,6 +569,8 @@ export function getAgentName(config: EvaConfig): string {
 export function getPersonality(config: EvaConfig): {
   tone?: string;
   style?: string;
+  persona?: string;
+  ops?: string[];
   customInstructions?: string;
 } {
   const p = config.agent?.personality;
@@ -555,6 +578,8 @@ export function getPersonality(config: EvaConfig): {
   return {
     tone: p.tone,
     style: p.style,
+    persona: p.persona,
+    ops: p.ops,
     customInstructions: p.custom_instructions,
   };
 }

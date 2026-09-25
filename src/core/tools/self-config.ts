@@ -132,9 +132,14 @@ const TEXT_LEAVES = new Set([
   "name",
   "tone",
   "style",
+  "persona",
   "custom_instructions",
   "address_as",
   "response_style",
+  // An array of rules, appended one line at a time via action=append. Never a
+  // scalar, and a numeric rule ("всегда отвечай 2 предложениями") must not
+  // become the number 2.
+  "ops",
 ]);
 
 /** Flatten a nested object into dot-separated key paths for listing */
@@ -281,11 +286,15 @@ export const selfConfigTool: Tool = {
     "Read or write Eva's own configuration in ~/.eva/config.yaml. Dot-notation for nested keys. " +
     "action=get — one key, action=set — write a value, action=append — add to an array, " +
     "action=list — everything (secrets are shown as *** and never as values). " +
-    "Writable: agent.name, agent.gender (female/male/neutral), agent.personality.tone, " +
-    "agent.personality.style, agent.personality.custom_instructions, " +
+    "Writable: agent.name, agent.gender (female/male/neutral), " +
+    "agent.personality.tone, agent.personality.style, " +
+    "agent.personality.persona (WHO SHE IS — character, manner, backstory; free text), " +
+    "agent.personality.ops (STANDING RULES — a list, add one rule per call with action=append), " +
     "agent.personality.{formality,emotionality,humor,confidence,response_length,structure," +
     "emoji,examples,friendliness,initiative,curiosity,empathy,criticism} (whole numbers 0-4), " +
     "owner.name, owner.address_as, owner.facts (array). " +
+    "Character and rules are separate on purpose: rewrite her tone without touching her rules, " +
+    "and put a new standing rule in ops rather than burying it in a paragraph of character. " +
     "Changing which LLM models are used is NOT done here — use switch_model, which verifies " +
     "the new model before committing it. Infrastructure settings (tokens, API keys) are read-only.",
   parameters: [
