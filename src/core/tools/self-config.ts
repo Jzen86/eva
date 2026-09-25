@@ -1,5 +1,14 @@
 import type { Tool, ToolResult } from "./types.js";
-import { loadConfig, patchConfigOrThrow, configSchema, type EvaConfig } from "../config.js";
+import {
+  loadConfig,
+  patchConfigOrThrow,
+  configSchema,
+  getNestedValue,
+  setNestedValue,
+  type EvaConfig,
+} from "../config.js";
+import { propose } from "../pending.js";
+import { PERSONALITY_SLIDERS } from "../config.js";
 
 // ---------------------------------------------------------------------------
 // What Eva is allowed to change about herself.
@@ -32,6 +41,32 @@ const REGISTRY_ROOTS = new Set(["providers", "models", "fallbacks"]);
  * they went to the LLM provider on the next turn.
  */
 const SECRET_PATTERN = /(token|api[_-]?key|secret|password|passwd|credential|private[_-]?key)/i;
+
+/**
+ * Writes that are safe to apply on the spot.
+ *
+ * Not "harmless" in the abstract — the config file is her own, and she is
+ * writing to it. The line drawn is between *flavour* and *identity*. Tone and
+ * the dials change how a message reads; the cost of a wrong value is one
+ * conversation that felt off. Her name, her gender, her character, and what
+ * she knows about the owner are who she is: a wrong value there outlives the
+ * message that caused it, and nobody notices it changed.
+ *
+ * So the safe list is an allowlist of leaves, not a denylist of badness. A new
+ * writable key lands in the sensitive class until someone decides otherwise,
+ * which is the right way round for a class whose whole point is a second look.
+ */
+const SAFE_LEAVES = new Set<string>([
+  "tone",
+  "style",
+  ...PERSONALITY_SLIDERS,
+]);
+
+/** True when a write may be applied without asking the owner first. */
+export function isSafeWrite(keyPath: string): boolean {
+  const leaf = keyPath.split(".").pop() ?? keyPath;
+  return SAFE_LEAVES.has(leaf);
+}
 
 function isSecretPath(keyPath: string): boolean {
   return SECRET_PATTERN.test(keyPath);
@@ -83,31 +118,8 @@ function refuseWrite(keyPath: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers for nested key access (e.g. "agent.gender", "memory.max_knowledge")
+// Nested key access lives in core/config.ts — the approval flow needs it too.
 // ---------------------------------------------------------------------------
-
-function getNestedValue(obj: Record<string, unknown>, keyPath: string): unknown {
-  const parts = keyPath.split(".");
-  let current: unknown = obj;
-  for (const part of parts) {
-    if (current === null || current === undefined || typeof current !== "object") return undefined;
-    current = (current as Record<string, unknown>)[part];
-  }
-  return current;
-}
-
-function setNestedValue(obj: Record<string, unknown>, keyPath: string, value: unknown): void {
-  const parts = keyPath.split(".");
-  let current: Record<string, unknown> = obj;
-  for (let i = 0; i < parts.length - 1; i++) {
-    const part = parts[i];
-    if (current[part] === undefined || current[part] === null || typeof current[part] !== "object") {
-      current[part] = {};
-    }
-    current = current[part] as Record<string, unknown>;
-  }
-  current[parts[parts.length - 1]] = value;
-}
 
 /**
  * Strings that name a boolean or a number, used for the free-text fields too.
@@ -203,7 +215,9 @@ function handleSet(params: Record<string, unknown>): ToolResult {
   // Validate the result of the write before it is written, and report the
   // schema's own words when it is not. loadConfig repairs invalid configs by
   // dropping fields, and a dropped subtree is invisible to the caller: the
-  // write "succeeded" and the setting quietly stopped existing.
+  // write "succeeded" and the setting quietly stopped existing. Checked
+  // before the proposal too — parking something that cannot be written only
+  // moves the failure to the /yes.
   const probe = loadConfig() ?? ({ agent: { name: "Eva" } } as EvaConfig);
   setNestedValue(probe as unknown as Record<string, unknown>, keyPath, coerced);
   const check = configSchema.safeParse(probe);
@@ -218,6 +232,10 @@ function handleSet(params: Record<string, unknown>): ToolResult {
     };
   }
 
+  if (!isSafeWrite(keyPath)) {
+    return parkChange(params, keyPath, coerced, "set");
+  }
+
   // patchConfigOrThrow, not patchConfig: the owner asked for this value, so
   // they get told why it did not stick instead of a log line nobody reads.
   try {
@@ -230,6 +248,49 @@ function handleSet(params: Record<string, unknown>): ToolResult {
     };
   }
   return { success: true, output: `${keyPath} = ${redact(keyPath, coerced)} — сохранено.` };
+}
+
+/**
+ * Hold a sensitive change for the owner instead of applying it.
+ *
+ * Returned as a success: the tool did its job, which was to prepare the
+ * change. The output says plainly that nothing was written, because the whole
+ * point is that the model must not tell the owner it already happened. A
+ * failure here would have the model retry with another spelling of the same
+ * key, which lands in the same place.
+ */
+function parkChange(
+  params: Record<string, unknown>,
+  keyPath: string,
+  value: unknown,
+  kind: "set" | "append",
+): ToolResult {
+  const ownerId = typeof params._userId === "string" ? params._userId : null;
+  if (!ownerId) {
+    return {
+      success: false,
+      output: "",
+      error:
+        `Ключ "${keyPath}" требует подтверждения владельца, а подтвердить нечем: вызов без чата. ` +
+        `Изменение не применено.`,
+    };
+  }
+  const reason = typeof params.reason === "string" && params.reason.trim() ? params.reason.trim() : "";
+  const summary = kind === "append" ? `добавлено в ${keyPath}` : `${keyPath} = ${String(value)}`;
+  const parked = propose(ownerId, {
+    kind: kind === "append" ? "config_append" : "config_set",
+    key: keyPath,
+    value,
+    summary,
+    reason,
+  });
+  const because = reason ? ` Причина: ${reason}.` : "";
+  return {
+    success: true,
+    output:
+      `⏸ Жду подтверждения. Предложено: ${summary}.${because} ` +
+      `НЕ ПРИМЕНЕНО. Скажи владельцу, что нужно подтвердить это изменение (/yes — принять, /no — отклонить).`,
+  };
 }
 
 function handleAppend(params: Record<string, unknown>): ToolResult {
@@ -247,6 +308,28 @@ function handleAppend(params: Record<string, unknown>): ToolResult {
   }
 
   const added = typeof value === "string" ? value : String(value);
+
+  // An append to a sensitive list is still a change to who she is: one more
+  // standing rule is one more thing she follows everywhere from now on.
+  if (!isSafeWrite(keyPath)) {
+    const probe = loadConfig() ?? ({ agent: { name: "Eva" } } as EvaConfig);
+    const existing = getNestedValue(probe as unknown as Record<string, unknown>, keyPath);
+    const arr = Array.isArray(existing) ? [...existing, added] : [added];
+    setNestedValue(probe as unknown as Record<string, unknown>, keyPath, arr);
+    const check = configSchema.safeParse(probe);
+    if (!check.success) {
+      const detail = check.error.issues
+        .map((i) => `${i.path.join(".") || "(корень)"}: ${i.message}`)
+        .join("; ");
+      return {
+        success: false,
+        output: "",
+        error: `Значение не подходит для "${keyPath}". Проверка схемы: ${detail}. Изменение не сохранено.`,
+      };
+    }
+    return parkChange(params, keyPath, added, "append");
+  }
+
   try {
     patchConfigOrThrow((config) => {
       const existing = getNestedValue(config, keyPath);
@@ -286,6 +369,11 @@ export const selfConfigTool: Tool = {
     "Read or write Eva's own configuration in ~/.eva/config.yaml. Dot-notation for nested keys. " +
     "action=get — one key, action=set — write a value, action=append — add to an array, " +
     "action=list — everything (secrets are shown as *** and never as values). " +
+    "Flavour changes (tone, style, the 0-4 dials) apply at once. " +
+    "Identity changes (name, gender, persona, ops, anything about the owner) are " +
+    "NOT applied: the tool parks the change and the owner confirms it with /yes. " +
+    "If you get 'Жду подтверждения', the change has not happened — tell the owner " +
+    "what you want to change and that it needs their yes. Do not retry it. " +
     "Writable: agent.name, agent.gender (female/male/neutral), " +
     "agent.personality.tone, agent.personality.style, " +
     "agent.personality.persona (WHO SHE IS — character, manner, backstory; free text), " +
@@ -301,6 +389,7 @@ export const selfConfigTool: Tool = {
     { name: "action", type: "string", description: "One of: get, set, append, list", required: true },
     { name: "key", type: "string", description: "Config key in dot-notation, e.g. agent.gender (required for get/set/append)" },
     { name: "value", type: "string", description: "Config value (required for set/append)" },
+    { name: "reason", type: "string", description: "One line on why this change, shown to the owner when the change needs their confirmation. Be specific — it is the only thing they see besides the key and the value." },
   ],
 
   async execute(params: Record<string, unknown>): Promise<ToolResult> {

@@ -12,7 +12,7 @@ export const sshTool: Tool = {
   description:
     "Execute a command on a remote host over SSH. " +
     "Requires host and command at minimum. Optionally provide username " +
-    "and key (path to private key). Always requires confirmation.",
+    "and key (path to private key).",
   parameters: [
     { name: "host", type: "string", description: "Remote hostname or IP", required: true },
     { name: "command", type: "string", description: "Command to run on the remote host", required: true },
@@ -20,7 +20,6 @@ export const sshTool: Tool = {
     { name: "key", type: "string", description: "Path to SSH private key file" },
     { name: "port", type: "number", description: "SSH port (default 22)" },
   ],
-  requiresConfirmation: true,
 
   async execute(params: Record<string, unknown>): Promise<ToolResult> {
     const host = params.host;

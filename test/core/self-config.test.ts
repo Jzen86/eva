@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { selfConfigTool } from "../../src/core/tools/self-config";
 import { loadConfig, patchConfig } from "../../src/core/config";
+import { applyPending, discard, peek, propose } from "../../src/core/pending";
 import type { ToolResult } from "../../src/core/tools/types";
 
 /**
@@ -35,11 +36,26 @@ async function run(action: string, key?: string, value?: string): Promise<ToolRe
   });
 }
 
+/** As the engine calls it, with the chat id the engine injects. */
+async function runAs(ownerId: string, action: string, key?: string, value?: string): Promise<ToolResult> {
+  return selfConfigTool.execute({
+    action,
+    _userId: ownerId,
+    ...(key === undefined ? {} : { key }),
+    ...(value === undefined ? {} : { value }),
+  });
+}
+
+const OWNER = "owner-1";
+
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "eva-cfg-"));
   prevPath = process.env.EVA_CONFIG_PATH;
   process.env.EVA_CONFIG_PATH = path.join(tmpDir, "config.yaml");
   writeBase();
+  // The proposal store is module-global and outlives the temp dir, so a parked
+  // change from an earlier test would leak into this one.
+  discard(OWNER);
 });
 
 afterEach(() => {
@@ -96,11 +112,15 @@ describe("self_config write allowlist", () => {
     expect(cfg.agent.personality.tone).toBe("dry");
   });
 
-  it("allows owner facts via append", async () => {
-    await run("append", "owner.facts", "Любит пиццу");
-    await run("append", "owner.facts", "Не ест грибы");
+  it("allows owner facts via append, once the owner confirms", async () => {
+    // owner.facts is identity, not flavour: what she knows about the owner
+    // follows every message after it. Parked, then applied by /yes.
+    await runAs(OWNER, "append", "owner.facts", "Любит пиццу");
+    await runAs(OWNER, "append", "owner.facts", "Не ест грибы");
+    // The second proposal replaced the first — one pending change per owner.
+    await applyPending(OWNER);
     const cfg = loadConfig() as any;
-    expect(cfg.owner.facts).toEqual(["Любит пиццу", "Не ест грибы"]);
+    expect(cfg.owner.facts).toEqual(["Не ест грибы"]);
   });
 
   it("refuses to rewrite the telegram token", async () => {
@@ -243,10 +263,153 @@ describe("personality stored as a bare string", () => {
       path.join(tmpDir, "config.yaml"),
       stringify({ agent: { name: "Eva", personality: "я ласковая" } }),
     );
-    await run("set", "owner.name", "Женя");
+    await runAs(OWNER, "set", "owner.name", "Женя");
+    await applyPending(OWNER);
     const cfg = loadConfig() as any;
     expect(cfg.agent.personality.custom_instructions).toBe("я ласковая");
     expect(cfg.owner.name).toBe("Женя");
+  });
+});
+
+/**
+ * Two classes of write, and the difference has to be a real one.
+ *
+ * Flavour applies at once. Identity does not: it waits for a /yes from the
+ * owner, in a channel of their own, not from the conversation that wanted the
+ * change. These check that the second class really does not touch the file.
+ */
+describe("self_config approval gate", () => {
+  it("applies a tone change immediately", async () => {
+    const res = await runAs(OWNER, "set", "agent.personality.tone", "сухой");
+    expect(res.success).toBe(true);
+    expect((loadConfig() as any).agent.personality.tone).toBe("сухой");
+    expect(peek(OWNER)).toBeUndefined();
+  });
+
+  it("applies a slider immediately", async () => {
+    await runAs(OWNER, "set", "agent.personality.humor", "4");
+    expect((loadConfig() as any).agent.personality.humor).toBe(4);
+  });
+
+  it("does NOT apply a rename without confirmation", async () => {
+    const res = await runAs(OWNER, "set", "agent.name", "Ксюша");
+    expect(res.success).toBe(true);
+    expect(res.output).toMatch(/Жду подтверждения/);
+    expect(res.output).toMatch(/НЕ ПРИМЕНЕНО/);
+    // The point of the gate.
+    expect((loadConfig() as any).agent.name).toBe("Eva");
+    expect(peek(OWNER)?.key).toBe("agent.name");
+  });
+
+  it("does NOT apply a persona change without confirmation", async () => {
+    await runAs(OWNER, "set", "agent.personality.persona", "Саркастичная стерва");
+    expect((loadConfig() as any).agent.personality?.persona).toBeUndefined();
+    await applyPending(OWNER);
+    expect((loadConfig() as any).agent.personality.persona).toBe("Саркастичная стерва");
+  });
+
+  it("does NOT apply a new standing rule without confirmation", async () => {
+    await runAs(OWNER, "append", "agent.personality.ops", "Всегда на ты");
+    expect((loadConfig() as any).agent.personality?.ops).toBeUndefined();
+    await applyPending(OWNER);
+    expect((loadConfig() as any).agent.personality.ops).toEqual(["Всегда на ты"]);
+  });
+
+  it("does NOT apply a gender change without confirmation", async () => {
+    await runAs(OWNER, "set", "agent.gender", "male");
+    expect((loadConfig() as any).agent.gender).toBe("female");
+    await applyPending(OWNER);
+    expect((loadConfig() as any).agent.gender).toBe("male");
+  });
+
+  it("refuses a sensitive write with nothing to confirm through", async () => {
+    // No chat means no /yes can arrive, so the change would sit forever.
+    const res = await run("set", "agent.name", "Ксюша");
+    expect(res.success).toBe(false);
+    expect(res.error).toMatch(/подтверждени/i);
+    expect((loadConfig() as any).agent.name).toBe("Eva");
+  });
+
+  it("still validates before parking, so /yes cannot land a doomed write", async () => {
+    const res = await runAs(OWNER, "set", "agent.gender", "banana");
+    expect(res.success).toBe(false);
+    expect(res.error).toMatch(/Проверка схемы/);
+    expect(peek(OWNER)).toBeUndefined();
+  });
+
+  it("carries the model's stated reason through to the approval line", async () => {
+    await selfConfigTool.execute({
+      action: "set",
+      _userId: OWNER,
+      key: "agent.name",
+      value: "Ксюша",
+      reason: "он попросил переименовать",
+    });
+    expect(peek(OWNER)?.reason).toBe("он попросил переименовать");
+  });
+
+  it("a rejection leaves the config untouched and clears the proposal", async () => {
+    await runAs(OWNER, "set", "agent.name", "Ксюша");
+    const dropped = discard(OWNER);
+    expect(dropped?.key).toBe("agent.name");
+    expect((loadConfig() as any).agent.name).toBe("Eva");
+    expect((await applyPending(OWNER)).ok).toBe(false);
+  });
+
+  it("cannot be applied twice", async () => {
+    await runAs(OWNER, "set", "owner.address_as", "Женька");
+    expect((await applyPending(OWNER)).ok).toBe(true);
+    expect((await applyPending(OWNER)).ok).toBe(false);
+  });
+
+  it("a newer proposal replaces the older one instead of queueing", async () => {
+    // A queue would need an id on every /yes, and approving whichever came
+    // first is how the wrong change gets approved.
+    await runAs(OWNER, "set", "agent.name", "Ксюша");
+    await runAs(OWNER, "set", "agent.name", "Аня");
+    expect(peek(OWNER)?.value).toBe("Аня");
+    await applyPending(OWNER);
+    expect((loadConfig() as any).agent.name).toBe("Аня");
+  });
+
+  it("keeps proposals separate per owner", async () => {
+    await runAs("owner-a", "set", "agent.name", "Ксюша");
+    await runAs("owner-b", "set", "agent.name", "Аня");
+    await applyPending("owner-a");
+    expect((loadConfig() as any).agent.name).toBe("Ксюша");
+    expect(peek("owner-b")?.value).toBe("Аня");
+  });
+
+  it("applies onto the config as it is now, not as it was when proposed", async () => {
+    // Five minutes of conversation happen between proposing and /yes. The
+    // approval must land on top of them, not roll them back.
+    await runAs(OWNER, "set", "agent.name", "Ксюша");
+    await runAs(OWNER, "set", "agent.personality.tone", "сухой");
+    await applyPending(OWNER);
+    const cfg = loadConfig() as any;
+    expect(cfg.agent.name).toBe("Ксюша");
+    expect(cfg.agent.personality.tone).toBe("сухой");
+  });
+
+  it("reports a failed write instead of consuming the proposal silently", async () => {
+    // The proposal is consumed either way, so a schema failure has to be said
+    // out loud — otherwise the owner gets a /yes that appears to work.
+    const { stringify } = require("yaml") as typeof import("yaml");
+    fs.writeFileSync(
+      path.join(tmpDir, "config.yaml"),
+      stringify({ agent: { name: "Eva" }, telegram: { token: "t" } }),
+    );
+    const bad = propose(OWNER, {
+      kind: "config_set",
+      key: "telegram.streaming",
+      value: "not-a-boolean",
+      summary: "telegram.streaming = not-a-boolean",
+      reason: "",
+    });
+    expect(bad.key).toBe("telegram.streaming");
+    const res = await applyPending(OWNER);
+    expect(res.ok).toBe(false);
+    expect(res.message).toMatch(/Не получилось|Не применилось/);
   });
 });
 

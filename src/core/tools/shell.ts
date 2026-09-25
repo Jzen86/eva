@@ -14,7 +14,6 @@ export class ShellTool implements Tool {
   parameters = [
     { name: "command", type: "string", description: "The shell command to execute", required: true },
   ]
-  requiresConfirmation = true
 
   async execute(params: Record<string, unknown>): Promise<ToolResult> {
     const command = params.command

@@ -3,6 +3,7 @@ import type { IncomingMessage, OutgoingMessage, ProgressCallback } from "../../c
 import type { MessageHandler } from "../types.js";
 import { sendVoiceResponse } from "./voice.js";
 import { sendVideoNote } from "./video.js";
+import { applyPending, discard, peek, describe } from "../../core/pending.js";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -555,7 +556,9 @@ export function registerHandlers(
       // Download and save locally
       const res = await fetch(fileUrl);
       const buffer = Buffer.from(await res.arrayBuffer());
-      const savePath = path.join(os.homedir(), "\.eva", "reference.jpg");
+      // A plain segment: on Linux "\.eva" is a literal filename, not a
+      // directory, and the reference photo lands in a file called "\.eva".
+      const savePath = path.join(os.homedir(), ".eva", "reference.jpg");
       fs.writeFileSync(savePath, buffer);
       onSetReferencePhoto?.(savePath);
       await ctx.reply("✅ Фото сохранено как референс для селфи");
@@ -568,6 +571,40 @@ export function registerHandlers(
   bot.command("study", (ctx) => handleWithTyping(ctx, "/study"));
   // /settings
   bot.command("settings", (ctx) => handleWithTyping(ctx, "/settings"));
+
+  // /yes and /no — the other end of a self_config proposal.
+  //
+  // The model parks identity changes instead of applying them (see
+  // core/pending.ts). These are the only ways to settle one, which is the
+  // point: the decision comes from the owner, in a channel of their own
+  // choosing, not from the same conversation that wanted the change.
+  bot.command("yes", async (ctx) => {
+    const chatId = ctx.chat?.id;
+    if (!chatId) return;
+    const result = await applyPending(String(chatId));
+    await ctx.reply(result.message);
+  });
+  bot.command("no", async (ctx) => {
+    const chatId = ctx.chat?.id;
+    if (!chatId) return;
+    const dropped = discard(String(chatId));
+    await ctx.reply(
+      dropped
+        ? `Отклонила: ${describe(dropped)}.`
+        : "Нечего отклонять — я ничего не предлагала.",
+    );
+  });
+  // /pending — what a /yes would do, without doing it.
+  bot.command("pending", async (ctx) => {
+    const chatId = ctx.chat?.id;
+    if (!chatId) return;
+    const waiting = peek(String(chatId));
+    await ctx.reply(
+      waiting
+        ? `Жду подтверждения: ${describe(waiting)}\n${waiting.reason ? `Причина: ${waiting.reason}` : "Причина не указана."}\n/yes — принять, /no — отклонить.`
+        : "Ничего не ждёт подтверждения.",
+    );
+  });
 
   // Photos: /setphoto saves reference, everything else is sent to the LLM
   bot.on("message:photo", async (ctx) => {
@@ -583,7 +620,9 @@ export function registerHandlers(
         const fileUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
         const res = await fetch(fileUrl);
         const buffer = Buffer.from(await res.arrayBuffer());
-        const savePath = path.join(os.homedir(), "\.eva", "reference.jpg");
+        // A plain segment: on Linux "\.eva" is a literal filename, not a
+      // directory, and the reference photo lands in a file called "\.eva".
+      const savePath = path.join(os.homedir(), ".eva", "reference.jpg");
         fs.writeFileSync(savePath, buffer);
         onSetReferencePhoto?.(savePath);
         await ctx.reply("✅ Фото сохранено как референс для селфи");

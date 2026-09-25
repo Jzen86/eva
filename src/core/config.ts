@@ -25,7 +25,7 @@ import type { RegistryConfig, ModelRef } from "./llm/registry.js";
  * told the coercion which keys were dials. One list, used by the schema and by
  * the coercion, so the two cannot drift.
  */
-const PERSONALITY_SLIDERS = [
+export const PERSONALITY_SLIDERS = [
   "formality",
   "emotionality",
   "humor",
@@ -563,6 +563,40 @@ export function toRegistryConfig(config: EvaConfig): RegistryConfig {
 /** Get agent name */
 export function getAgentName(config: EvaConfig): string {
   return config.agent?.name ?? "Eva";
+}
+
+// ---------------------------------------------------------------------------
+// Nested key access, for dot-notation like "agent.personality.tone"
+//
+// These live with the config rather than in the tool, because both the tool
+// and the approval flow need to read and write the same paths.
+// ---------------------------------------------------------------------------
+
+export function getNestedValue(obj: Record<string, unknown>, keyPath: string): unknown {
+  const parts = keyPath.split(".");
+  let current: unknown = obj;
+  for (const part of parts) {
+    if (current === null || current === undefined || typeof current !== "object") return undefined;
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
+}
+
+export function setNestedValue(
+  obj: Record<string, unknown>,
+  keyPath: string,
+  value: unknown,
+): void {
+  const parts = keyPath.split(".");
+  let current: Record<string, unknown> = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const part = parts[i];
+    if (current[part] === undefined || current[part] === null || typeof current[part] !== "object") {
+      current[part] = {};
+    }
+    current = current[part] as Record<string, unknown>;
+  }
+  current[parts[parts.length - 1]] = value;
 }
 
 /** Get personality as structured object */

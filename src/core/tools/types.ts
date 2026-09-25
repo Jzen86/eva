@@ -18,6 +18,5 @@ export interface Tool {
   name: string
   description: string
   parameters: ToolParam[]
-  requiresConfirmation?: boolean
   execute(params: Record<string, unknown>): Promise<ToolResult>
 }
