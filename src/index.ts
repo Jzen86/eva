@@ -1,7 +1,7 @@
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
-import { isConfigured, loadConfig, saveConfig, getConfigPath, getAgentName, getPersonality, getPersonalitySliders, getLLMApiKey, toRegistryConfig } from "./core/config.js";
+import { isConfigured, loadConfig, patchConfig, getConfigPath, getAgentName, getPersonality, getPersonalitySliders, getLLMApiKey, toRegistryConfig } from "./core/config.js";
 import { TelegramChannel } from "./channels/telegram/index.js";
 import { LLMRouter } from "./core/llm/router.js";
 import { ProviderRegistry } from "./core/llm/registry.js";
@@ -57,10 +57,18 @@ async function main() {
     registry.onChange(() => {
       try {
         const snapshot = registry!.toConfig();
+        // Patch only the provider sections on top of what is on disk, so a
+        // personality change made through self_config at the same moment
+        // survives instead of being rolled back by this write.
+        patchConfig((fresh) => {
+          fresh.providers = snapshot.providers;
+          fresh.models = snapshot.models;
+          fresh.fallbacks = snapshot.fallbacks;
+        }, cfgPath);
+        // Keep the in-memory copy in step so a later save is not the stale one.
         config.providers = snapshot.providers;
         config.models = snapshot.models;
         config.fallbacks = snapshot.fallbacks;
-        saveConfig(config, cfgPath);
       } catch (err) {
         console.error("⚠️ не удалось сохранить конфиг:", err instanceof Error ? err.message : err);
       }
@@ -182,7 +190,14 @@ async function main() {
       telegram = new TelegramChannel();
       telegram.onOwnerClaimed = (chatId) => {
         config.telegram!.owner_id = chatId;
-        saveConfig(config);
+        // Surgical write: this fires when someone claims the bot, which is
+        // exactly when a model switch or a self_config edit may already be on
+        // disk. Saving the startup object here would undo both.
+        patchConfig((fresh) => {
+          const tg = (fresh.telegram ?? {}) as Record<string, unknown>;
+          tg.owner_id = chatId;
+          fresh.telegram = tg;
+        });
         console.log(`🔒 Owner ID ${chatId} сохранён в конфиг`);
       };
       telegram.onSetReferencePhoto = (photoPath) => {

@@ -6,14 +6,22 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { RegistryConfig, ModelRef } from "./llm/registry.js";
 
 // Flexible schema that accepts both old and new config formats
-const personalitySchema = z.union([
-  z.string(),
-  z.object({
-    // Legacy fields
+/**
+ * Personality is one object, never a union with a bare string.
+ *
+ * It used to be `string | object`, and that was a trap: a single bad type
+ * (say `tone: 42`) made the whole union fail, the repair path in loadConfig
+ * saw the issue at `agent.personality` rather than at the offending leaf, and
+ * deleted the entire personality block. Eva came back with no tone, no
+ * custom_instructions and no sliders, silently. String configs are converted
+ * to the object form by normalizeConfig instead.
+ */
+const personalitySchema = z.object({
+    // Free-text fields
     tone: z.string().optional(),
     style: z.string().optional(),
     custom_instructions: z.string().optional(),
-    // New slider fields (0-4)
+    // Sliders (0-4)
     formality: z.number().min(0).max(4).optional(),
     emotionality: z.number().min(0).max(4).optional(),
     humor: z.number().min(0).max(4).optional(),
@@ -27,8 +35,7 @@ const personalitySchema = z.union([
     curiosity: z.number().min(0).max(4).optional(),
     empathy: z.number().min(0).max(4).optional(),
     criticism: z.number().min(0).max(4).optional(),
-  }),
-]).optional();
+  }).optional();
 
 const llmProviderSchema = z.object({
   provider: z.string(),
@@ -143,8 +150,15 @@ export function getConfigPath(customPath?: string): string {
  * expected by the zod schema. Handles both flat and already-nested configs.
  */
 function normalizeConfig(raw: Record<string, unknown>): Record<string, unknown> {
-  // If it's already nested (agent is an object), return as-is
-  if (raw.agent && typeof raw.agent === "object") return raw;
+  // Older installs stored personality as a bare string of free-form
+  // instructions. Fold it into the object shape so one schema covers both.
+  if (raw.agent && typeof raw.agent === "object") {
+    const agent = raw.agent as Record<string, unknown>;
+    if (typeof agent.personality === "string") {
+      agent.personality = { custom_instructions: agent.personality };
+    }
+    return raw;
+  }
 
   // Flat format → nested
   const out: Record<string, unknown> = {};
@@ -260,6 +274,28 @@ export function saveConfig(config: BetsyConfig, customPath?: string): void {
   fs.writeFileSync(filePath, stringifyYaml(config));
 }
 
+/**
+ * Read-modify-write the config file in one step.
+ *
+ * The process holds a config object it loaded at startup, and several places
+ * (the provider registry, the owner-claim handler, the self_config tool) write
+ * to the file later. Saving the startup object would silently roll back
+ * anything the others changed in the meantime, so every write goes through
+ * here instead: fresh copy from disk, patch, save.
+ */
+export function patchConfig(
+  mutate: (config: Record<string, unknown>) => void,
+  customPath?: string,
+): boolean {
+  const current = (loadConfig(customPath) ?? { agent: { name: "Eva" } }) as unknown as Record<
+    string,
+    unknown
+  >;
+  mutate(current);
+  saveConfig(current as unknown as BetsyConfig, customPath);
+  return true;
+}
+
 /** Check if a config file exists and has LLM credentials */
 export function isConfigured(customPath?: string): boolean {
   const config = loadConfig(customPath);
@@ -359,7 +395,6 @@ export function getPersonality(config: BetsyConfig): {
 } {
   const p = config.agent?.personality;
   if (!p) return {};
-  if (typeof p === "string") return { customInstructions: p };
   return {
     tone: p.tone,
     style: p.style,
@@ -369,7 +404,7 @@ export function getPersonality(config: BetsyConfig): {
 
 export function getPersonalitySliders(config: BetsyConfig): Record<string, number> {
   const p = config.agent?.personality;
-  if (!p || typeof p === "string") return {};
+  if (!p) return {};
   const result: Record<string, number> = {};
   const keys = ["formality","emotionality","humor","confidence","response_length","structure","emoji","examples","friendliness","initiative","curiosity","empathy","criticism"];
   for (const k of keys) {
