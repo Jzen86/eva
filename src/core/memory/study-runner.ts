@@ -42,6 +42,12 @@ const DEFAULT_KNOWLEDGE_WINDOW = 20;
 const DEFAULT_CHAT_WINDOW = 20;
 /** Max chars per conversation message in the prompt (prompt-size guard). */
 const MAX_CHAT_CHARS = 700;
+/**
+ * Cap for the rolling summary. Generous relative to one message, because it
+ * stands in for everything that has already scrolled out of the window — but
+ * still bounded, since a runaway summary would push the whole prompt over.
+ */
+const MAX_SUMMARY_CHARS = 4000;
 
 /** Source tag written by the study loop itself. */
 const STUDY_SOURCE = "study_session";
@@ -372,8 +378,10 @@ function buildStudyMessages(
     `5. Эта сессия посвящена ОДНОЙ зоне: «${zone.name}» — ${zone.hint}.`,
     "   Про другие зоны в этот раз не пиши вообще. Нет материала по своей зоне —",
     "   честно верни null, это нормально и не считается ошибкой.",
-    "6. Ничего не выдумывай: только то, что реально есть в переписке или в базе.",
+    "6. Ничего не выдумывай: только то, что реально есть в переписке, в сводке или в базе.",
     "7. Пиши на русском, как внутреннюю заметку. Без обращений к владельцу, он этого не видит.",
+    "8. сводка_старой_переписки — это то, что было раньше, чем свежая_переписка. Паттерны,",
+    "   проявившиеся за недели, видны там, а не в последних сообщениях. Учитывай её наравне.",
   ].join("\n");
 
   const payload = {
@@ -381,7 +389,10 @@ function buildStudyMessages(
     что_это_значит: zone.hint,
     не_дублировать_эти_темы: knowledge.map((k: KnowledgeRow) => k.topic),
     уже_известно: knowledge.map((k: KnowledgeRow) => ({ topic: k.topic, insight: k.insight })),
-    свежая_переписка: chat,
+    // Older than the window below. Patterns that took weeks to show up live
+    // here and nowhere else.
+    сводка_старой_переписки: chat.summary,
+    свежая_переписка: chat.messages,
   };
 
   return [
@@ -390,20 +401,38 @@ function buildStudyMessages(
   ];
 }
 
-/** Recent user/assistant messages, oldest first, as plain text. */
-function loadChat(userId: string, limit: number): Array<{ role: string; text: string }> {
+/**
+ * Recent user/assistant messages, oldest first, as plain text, plus the rolling
+ * summary of everything older.
+ *
+ * The summary is the point. Without it the session only ever sees the last ~20
+ * messages, so a pattern that took a month to emerge — how the owner actually
+ * talks, what he circles back to, what annoys him — was invisible exactly when
+ * it became visible. The table existed the whole time; the study prompt just
+ * threw the value away.
+ */
+function loadChat(
+  userId: string,
+  limit: number,
+): { messages: Array<{ role: string; text: string }>; summary: string | null } {
   let messages: LLMMessage[];
+  let summary: string | null = null;
   try {
-    messages = loadHistory(userId, limit * 3).messages;
+    const history = loadHistory(userId, limit * 3);
+    messages = history.messages;
+    summary = history.summary;
   } catch {
-    return [];
+    return { messages: [], summary: null };
   }
 
-  return messages
-    .filter((m) => m.role === "user" || m.role === "assistant")
-    .map((m) => ({ role: m.role, text: truncate(plainText(m.content), MAX_CHAT_CHARS) }))
-    .filter((m) => m.text.length > 0)
-    .slice(-limit);
+  return {
+    messages: messages
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .map((m) => ({ role: m.role, text: truncate(plainText(m.content), MAX_CHAT_CHARS) }))
+      .filter((m) => m.text.length > 0)
+      .slice(-limit),
+    summary: summary ? truncate(summary, MAX_SUMMARY_CHARS) : null,
+  };
 }
 
 /** Content may be a plain string or a JSON-serialized ContentPart array. */
