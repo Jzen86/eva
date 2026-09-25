@@ -88,6 +88,7 @@ const configSchema = z.object({
   memory: z.object({
     max_knowledge: z.number().default(200),
     study_interval_min: z.number().default(30),
+    study_model: z.string().optional(),
     learning_enabled: z.boolean().default(true),
     context_budget: z.number().default(40000),
   }).default({}),
@@ -167,6 +168,7 @@ function normalizeConfig(raw: Record<string, unknown>): Record<string, unknown> 
   out.memory = {
     max_knowledge: raw.max_knowledge ?? 200,
     study_interval_min: raw.study_interval_min ?? 30,
+    study_model: raw.study_model,
     learning_enabled: raw.learning_enabled ?? true,
     context_budget: raw.context_budget ?? 40000,
   };

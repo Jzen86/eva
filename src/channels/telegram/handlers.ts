@@ -197,8 +197,15 @@ function chunkText(text: string, maxLen: number): string[] {
 const VIDEO_EXTS = new Set([".mp4", ".webm", ".mkv", ".avi", ".mov"]);
 const AUDIO_EXTS = new Set([".mp3", ".ogg", ".wav", ".flac", ".m4a", ".aac", ".opus"]);
 
+/** Runtime options for audio/video delivery (voice config, keys, avatar path). */
+export interface AudioOptions {
+  voiceConfig: Record<string, unknown>;
+  falApiKey?: string;
+  avatarPath?: string;
+}
+
 /** Deliver an OutgoingMessage through the appropriate Telegram media type. */
-async function deliver(ctx: Context, response: OutgoingMessage): Promise<void> {
+async function deliver(ctx: Context, response: OutgoingMessage, audio?: AudioOptions): Promise<void> {
   const mode = response.mode ?? "text";
 
   // If response has a local file to send
@@ -212,6 +219,8 @@ async function deliver(ctx: Context, response: OutgoingMessage): Promise<void> {
 
       if (VIDEO_EXTS.has(ext)) {
         await ctx.replyWithVideo(file, { caption, parse_mode: parseMode });
+      } else if (ext === ".ogg" || ext === ".opus") {
+        await ctx.replyWithVoice(file);
       } else if (AUDIO_EXTS.has(ext)) {
         await ctx.replyWithAudio(file, { caption, parse_mode: parseMode });
       } else {
@@ -248,13 +257,17 @@ async function deliver(ctx: Context, response: OutgoingMessage): Promise<void> {
   }
 
   if (mode === "voice") {
-    const sent = await sendVoiceResponse(ctx as never, response.text, {});
+    const sent = audio
+      ? await sendVoiceResponse(ctx as never, response.text, audio.voiceConfig, audio.falApiKey)
+      : false;
     if (!sent) await replyHtml(ctx, response.text);
     return;
   }
 
   if (mode === "video") {
-    const sent = await sendVideoNote(ctx as never, response.text, {}, "", "");
+    const sent = audio
+      ? await sendVideoNote(ctx as never, response.text, audio.voiceConfig, audio.falApiKey ?? "", audio.avatarPath ?? "")
+      : false;
     if (!sent) await replyHtml(ctx, response.text);
     return;
   }
@@ -348,6 +361,8 @@ export function registerHandlers(
   ownerChatId: number | null,
   onSetReferencePhoto?: SetReferencePhotoFn,
   onOwnerClaimed?: OnOwnerClaimedFn,
+  audio?: AudioOptions,
+  streaming = true,
 ): void {
   // --- Owner-only filter ---
   // Mutable so the first user can claim ownership at runtime.
@@ -406,7 +421,7 @@ export function registerHandlers(
     let draftId = 0;
     let lastDraftTime = 0;
     let draftTimer: ReturnType<typeof setTimeout> | null = null;
-    let draftSupported = true;
+    let draftSupported = streaming;
     let statusMsgId: number | null = null;
 
     /** Flush current accumulated text to draft. */
@@ -485,7 +500,7 @@ export function registerHandlers(
       }
 
       // Send the final message
-      await deliver(ctx, modeOverride ? { ...response, mode: modeOverride } : response);
+      await deliver(ctx, modeOverride ? { ...response, mode: modeOverride } : response, audio);
     } catch (err) {
       stopTyping();
       if (draftTimer) clearTimeout(draftTimer);

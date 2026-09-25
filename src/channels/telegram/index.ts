@@ -2,7 +2,7 @@ import { Bot } from "grammy";
 import { autoRetry } from "@grammyjs/auto-retry";
 import type { Channel, MessageHandler } from "../types.js";
 import type { OutgoingMessage } from "../../core/types.js";
-import { registerHandlers, type SetReferencePhotoFn, type OnOwnerClaimedFn } from "./handlers.js";
+import { registerHandlers, type SetReferencePhotoFn, type OnOwnerClaimedFn, type AudioOptions } from "./handlers.js";
 
 /**
  * Telegram channel adapter.
@@ -20,6 +20,12 @@ export class TelegramChannel implements Channel {
   private _avatarUrl: string | null = null;
   private _onSetReferencePhoto: SetReferencePhotoFn | undefined;
   private _onOwnerClaimed: OnOwnerClaimedFn | undefined;
+
+  /** Audio delivery options (voice config/keys), set by the host before start(). */
+  voiceOptions?: AudioOptions;
+
+  /** Native draft streaming (sendMessageDraft). Set false to avoid the vanishing preview message. */
+  streaming?: boolean;
 
   /** Bot avatar URL fetched at startup. */
   get avatarUrl(): string | null { return this._avatarUrl; }
@@ -52,7 +58,7 @@ export class TelegramChannel implements Channel {
       // Non-critical — selfie will use config fallback
     }
 
-    registerHandlers(this.bot, this.handler, this.ownerChatId, this._onSetReferencePhoto, this._onOwnerClaimed);
+    registerHandlers(this.bot, this.handler, this.ownerChatId, this._onSetReferencePhoto, this._onOwnerClaimed, this.voiceOptions, this.streaming ?? true);
     this.bot.start();
   }
 

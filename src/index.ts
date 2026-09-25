@@ -17,10 +17,14 @@ import { selfConfigTool } from "./core/tools/self-config.js";
 import { SchedulerService } from "./core/tools/scheduler.js";
 import { SchedulerStore } from "./core/tools/scheduler-store.js";
 import { getDB } from "./core/memory/db.js";
+import { primeStudyTimer, runStudyIfDue } from "./core/memory/study-runner.js";
+import { createOpenRouterClient } from "./core/llm/providers/openrouter.js";
+import type { LLMClient } from "./core/llm/types.js";
 import type { Channel } from "./channels/types.js";
 import { sshTool } from "./core/tools/ssh.js";
 import { npmInstallTool } from "./core/tools/npm-install.js";
 import { SelfieTool } from "./core/tools/selfie.js";
+import { VoiceTool } from "./core/tools/voice.js";
 import { ImageGenTool } from "./core/tools/image-gen.js";
 import { SkillSearchTool } from "./core/tools/skill-search.js";
 import { SkillInstallTool } from "./core/tools/skill-install.js";
@@ -141,8 +145,16 @@ async function main() {
   const selfieTool = new SelfieTool({
     falApiKey: selfiesConfig?.fal_api_key ?? videoConfig?.fal_api_key ?? "",
     referencePhotoUrl: selfiesConfig?.reference_photo_url,
+    provider: (selfiesConfig?.provider as "fal" | "openrouter" | undefined) ?? "fal",
+    openrouterApiKey: selfiesConfig?.openrouter_api_key ?? getLLMApiKey(config) ?? "",
+    openrouterModel: selfiesConfig?.openrouter_model,
   });
   tools.register(selfieTool);
+  // Voice tool — lets Betsy send voice messages on her own initiative
+  tools.register(new VoiceTool({
+    voiceConfig: (config.voice as Record<string, unknown>) ?? {},
+    falApiKey: (selfiesConfig?.fal_api_key ?? videoConfig?.fal_api_key ?? "") || undefined,
+  }));
   // Image generation tool — uses OpenRouter API key
   const llmApiKey = getLLMApiKey(config);
   if (llmApiKey) {
@@ -209,6 +221,13 @@ async function main() {
         }
         return { text: "LLM не настроен. Открой дашборд для настройки." };
       });
+      // Voice delivery options (Gemini TTS etc.) — must be set before start()
+      telegram.streaming = config.telegram.streaming ?? true;
+      telegram.voiceOptions = {
+        voiceConfig: (config.voice as Record<string, unknown>) ?? {},
+        falApiKey: (selfiesConfig?.fal_api_key ?? videoConfig?.fal_api_key ?? "") || undefined,
+        avatarPath: path.join(os.homedir(), ".betsy", "reference.jpg"),
+      };
       await telegram.start({
         token: config.telegram.token,
         owner_chat_id: config.telegram.owner_id?.toString() ?? "",
@@ -227,6 +246,60 @@ async function main() {
 
   if (telegram) {
     channels.set("telegram", telegram);
+  }
+
+  // --- Background study sessions (self-learning) -----------------------------
+  // Every STUDY_TICK_MS we ask the study model for ONE new insight, built from
+  // the knowledge base + the recent conversation. The model often answers
+  // "nothing new" and then nothing is written at all.
+  if (llm && config.telegram?.owner_id) {
+    const ownerId = String(config.telegram.owner_id);
+    const studyIntervalMs = (config.memory?.study_interval_min ?? 30) * 60_000;
+    const studyModel = config.memory?.study_model;
+    const studyClients: LLMClient[] = [];
+    if (studyModel && apiKey) {
+      studyClients.push(createOpenRouterClient({ apiKey, model: studyModel }));
+    }
+    studyClients.push(llm.fast());
+
+    const runOneStudy = async () => {
+      // Don't burn free fallback quota on junk insights when the balance is out.
+      if (llm.mode === "degraded") return;
+      try {
+        const result = await runStudyIfDue({
+          clients: studyClients,
+          agentName: name,
+          ownerName: config.owner?.name,
+          userId: ownerId,
+          learning: {
+            learningEnabled: config.memory?.learning_enabled ?? true,
+            studyIntervalMs,
+            specialties: [],
+          },
+          maxKnowledge: config.memory?.max_knowledge ?? 200,
+        });
+        if (result.error) {
+          console.error("❌ study:", result.error);
+          return;
+        }
+        if (!result.ran || !result.report) return;
+        if (result.wrote) {
+          console.log("🧠 study:", result.topic);
+          await channels.get("telegram")?.send(ownerId, { text: result.report });
+        } else {
+          console.log("🧠 study: новых выводов нет —", result.reason ?? "без причины");
+        }
+      } catch (err) {
+        console.error("❌ study:", err instanceof Error ? err.message : err);
+      }
+    };
+
+    primeStudyTimer();
+    const studyTimer = setInterval(runOneStudy, 5 * 60_000);
+    studyTimer.unref?.();
+    console.log(
+      `🧠 Самообучение: каждые ${studyIntervalMs / 60_000} мин, модель ${studyModel ?? "fast"}`,
+    );
   }
 
   if (engine) {

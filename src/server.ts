@@ -744,7 +744,7 @@ export function createServer(options: ServerOptions = {}): ServerHandle {
     });
   });
 
-  server.listen(port);
+  server.listen(port, process.env.BETSY_HOST || "127.0.0.1");
 
   return {
     server,
