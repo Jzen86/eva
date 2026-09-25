@@ -6,11 +6,11 @@ import fs from "node:fs";
 let db: Database.Database | null = null;
 let currentPath: string | null = null;
 
-const DEFAULT_DB_PATH = path.join(os.homedir(), ".betsy", "betsy.db");
+const DEFAULT_DB_PATH = path.join(os.homedir(), "\.eva", "eva.db");
 
 /**
  * Get or create the SQLite database, initializing tables and FTS5 index.
- * Accepts an optional path; defaults to ~/.betsy/betsy.db.
+ * Accepts an optional path; defaults to ~/.eva/eva.db.
  */
 export function getDB(dbPath?: string): Database.Database {
   // If no path specified and a connection already exists, reuse it

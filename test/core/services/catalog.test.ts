@@ -48,7 +48,6 @@ describe("Service catalog", () => {
       expect(svc.id).toBeTruthy();
       expect(svc.name).toBeTruthy();
       expect(svc.description).toBeTruthy();
-      expect(svc.relayUrl).toBe("https://auth.betsyai.io");
       expect(Object.keys(svc.scopes).length).toBeGreaterThan(0);
       expect(Object.keys(svc.baseUrls).length).toBeGreaterThan(0);
     }

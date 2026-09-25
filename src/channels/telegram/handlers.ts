@@ -555,7 +555,7 @@ export function registerHandlers(
       // Download and save locally
       const res = await fetch(fileUrl);
       const buffer = Buffer.from(await res.arrayBuffer());
-      const savePath = path.join(os.homedir(), ".betsy", "reference.jpg");
+      const savePath = path.join(os.homedir(), "\.eva", "reference.jpg");
       fs.writeFileSync(savePath, buffer);
       onSetReferencePhoto?.(savePath);
       await ctx.reply("✅ Фото сохранено как референс для селфи");
@@ -583,7 +583,7 @@ export function registerHandlers(
         const fileUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
         const res = await fetch(fileUrl);
         const buffer = Buffer.from(await res.arrayBuffer());
-        const savePath = path.join(os.homedir(), ".betsy", "reference.jpg");
+        const savePath = path.join(os.homedir(), "\.eva", "reference.jpg");
         fs.writeFileSync(savePath, buffer);
         onSetReferencePhoto?.(savePath);
         await ctx.reply("✅ Фото сохранено как референс для селфи");

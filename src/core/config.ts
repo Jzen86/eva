@@ -54,10 +54,10 @@ const llmSchema = z.union([
 
 const configSchema = z.object({
   agent: z.object({
-    name: z.string().default("Betsy"),
+    name: z.string().default("Eva"),
     gender: z.enum(["female", "male"]).default("female"),
     personality: personalitySchema,
-  }).default({ name: "Betsy" }),
+  }).default({ name: "Eva" }),
 
   owner: z.object({
     name: z.string().optional(),
@@ -108,11 +108,11 @@ const configSchema = z.object({
 export type BetsyConfig = z.infer<typeof configSchema>;
 
 export function getConfigDir(): string {
-  return path.join(os.homedir(), ".betsy");
+  return path.join(os.homedir(), "\.eva");
 }
 
 export function getConfigPath(customPath?: string): string {
-  return customPath ?? process.env.BETSY_CONFIG_PATH ?? path.join(getConfigDir(), "config.yaml");
+  return customPath ?? process.env.EVA_CONFIG_PATH ?? path.join(getConfigDir(), "config.yaml");
 }
 
 /**

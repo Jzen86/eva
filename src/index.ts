@@ -1,7 +1,6 @@
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
-import { createServer } from "./server.js";
 import { isConfigured, loadConfig, saveConfig, getAgentName, getPersonality, getPersonalitySliders, getLLMApiKey } from "./core/config.js";
 import { TelegramChannel } from "./channels/telegram/index.js";
 import { LLMRouter } from "./core/llm/router.js";
@@ -29,42 +28,20 @@ import { ImageGenTool } from "./core/tools/image-gen.js";
 import { SkillSearchTool } from "./core/tools/skill-search.js";
 import { SkillInstallTool } from "./core/tools/skill-install.js";
 import { SendFileTool } from "./core/tools/send-file.js";
-import { ConnectServiceTool } from "./core/tools/connect-service.js";
-import { pickEntry } from "./mode.js";
-
-function getAddress(): string {
-  const nets = os.networkInterfaces();
-  for (const name of Object.keys(nets)) {
-    for (const net of nets[name] || []) {
-      if (net.family === "IPv4" && !net.internal) return net.address;
-    }
-  }
-  return "localhost";
-}
 
 async function main() {
-  if (pickEntry(process.env) === 'multi') {
-    const { startMultiServer } = await import('./multi/server.js');
-    await startMultiServer();
-    return;
-  }
-
-  const port = 3777;
-  const address = getAddress();
-
   const config = isConfigured() ? loadConfig() : null;
-  const name = config ? getAgentName(config) : "Betsy";
-
-  console.log(`🦀 ${name} запускается...`);
-  console.log(`🌐 Открой в браузере: http://${address}:${port}`);
 
   if (!config) {
-    console.log("📋 Конфиг не найден — открой визард в браузере");
-    const { server, wss } = createServer({ port });
-    setupShutdown(server, wss);
-    return;
+    console.error("❌ Конфиг не найден.");
+    console.error("   Скопируй config.example.yaml в config.yaml и заполни ключи.");
+    console.error("   Ожидается в ~/.eva/config.yaml (переопределяется EVA_CONFIG_DIR).");
+    process.exit(1);
   }
 
+  const name = getAgentName(config);
+
+  console.log(`🦀 ${name} запускается...`);
   console.log(`✅ Конфиг загружен: ${name}`);
 
   // Setup LLM
@@ -112,33 +89,6 @@ async function main() {
   tools.register(npmInstallTool);
   // channels map is populated later — closure captures the reference
   const channels = new Map<string, Channel>();
-  tools.register(new ConnectServiceTool({
-    encryptionKey: passwordHash,
-    onConnected: async (userId, service, scopes) => {
-      // Send confirmation message to user via their channel
-      for (const channel of channels.values()) {
-        try {
-          const scopeLabels = scopes.map(s => service.scopes[s] ?? s).join(", ");
-          await channel.send(userId, {
-            text: `✅ ${service.name} подключён! Доступны: ${scopeLabels}. Проверяю подключение...`,
-          });
-          // Ask engine to verify the connection
-          if (engine) {
-            const result = await engine.process({
-              channelName: channel.name,
-              userId,
-              text: `Сервис ${service.name} только что подключился (${scopeLabels}). Сделай один тестовый запрос к API чтобы проверить что всё работает, и коротко расскажи результат.`,
-              timestamp: Date.now(),
-              metadata: { serviceConnected: true },
-            });
-            await channel.send(userId, result);
-          }
-        } catch (err) {
-          console.error(`❌ onConnected notification error:`, err);
-        }
-      }
-    },
-  }));
   // Selfie tool — uses fal.ai key from selfies config, falls back to video config
   const selfiesConfig = config.selfies as Record<string, string> | undefined;
   const videoConfig = config.video as Record<string, string> | undefined;
@@ -193,9 +143,6 @@ async function main() {
     encryptionKey: passwordHash,
   }) : null;
 
-  // Start HTTP server
-  const { server, wss } = createServer({ port, engine: engine ?? undefined });
-
   // Start Telegram channel
   let telegram: TelegramChannel | null = null;
   if (config.telegram?.token) {
@@ -226,17 +173,17 @@ async function main() {
       telegram.voiceOptions = {
         voiceConfig: (config.voice as Record<string, unknown>) ?? {},
         falApiKey: (selfiesConfig?.fal_api_key ?? videoConfig?.fal_api_key ?? "") || undefined,
-        avatarPath: path.join(os.homedir(), ".betsy", "reference.jpg"),
+        avatarPath: path.join(os.homedir(), "\.eva", "reference.jpg"),
       };
       await telegram.start({
         token: config.telegram.token,
         owner_chat_id: config.telegram.owner_id?.toString() ?? "",
       });
       // Load saved reference photo if exists and no URL in config
-      const savedRef = path.join(os.homedir(), ".betsy", "reference.jpg");
+      const savedRef = path.join(os.homedir(), "\.eva", "reference.jpg");
       if (!selfieTool.config.referencePhotoUrl && fs.existsSync(savedRef)) {
         selfieTool.setReferencePhoto(savedRef);
-        console.log("📸 Референсное фото загружено из ~/.betsy/reference.jpg");
+        console.log("📸 Референсное фото загружено из ~/.eva/reference.jpg");
       }
       console.log("✅ Telegram бот запущен");
     } catch (err) {
@@ -337,23 +284,14 @@ async function main() {
     console.log("✅ Планировщик запущен");
   }
 
-  // Auto-open browser on local machine
-  if (os.platform() !== "linux") {
-    const { execFile: execFileCb } = await import("node:child_process");
-    const opener = os.platform() === "darwin" ? "open" : os.platform() === "win32" ? "start" : "xdg-open";
-    execFileCb(opener, [`http://localhost:${port}`], () => {});
-  }
-
-  setupShutdown(server, wss, scheduler, llm ?? undefined);
+  setupShutdown(scheduler, llm ?? undefined);
 }
 
-function setupShutdown(server: any, wss: any, scheduler?: SchedulerService, router?: LLMRouter) {
+function setupShutdown(scheduler?: SchedulerService, router?: LLMRouter) {
   const shutdown = () => {
     console.log("\nЗавершение работы...");
     scheduler?.stop();
     router?.destroy();
-    wss.close();
-    server.close();
     process.exit(0);
   };
   process.on("SIGINT", shutdown);

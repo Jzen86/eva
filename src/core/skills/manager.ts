@@ -4,7 +4,7 @@ import os from "node:os";
 import { parse, stringify } from "yaml";
 import type { Skill } from "./types.js";
 
-const DEFAULT_SKILLS_DIR = path.join(os.homedir(), ".betsy", "skills");
+const DEFAULT_SKILLS_DIR = path.join(os.homedir(), "\.eva", "skills");
 
 export class SkillManager {
   private skillsDir: string;

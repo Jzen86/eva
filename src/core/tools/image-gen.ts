@@ -5,7 +5,7 @@ import type { Tool, ToolResult } from "./types.js";
 
 /** Working OpenRouter image model (gemini-2.0-flash-exp:free no longer exists). */
 const MODEL = "google/gemini-2.5-flash-image";
-const DEFAULT_REFERENCE = path.join(os.homedir(), ".betsy", "reference.jpg");
+const DEFAULT_REFERENCE = path.join(os.homedir(), "\.eva", "reference.jpg");
 
 export interface ImageGenToolConfig {
   apiKey: string;

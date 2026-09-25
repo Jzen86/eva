@@ -1,0 +1,62 @@
+# Eva — пример конфига.
+# Скопируй в ~/.eva/config.yaml (путь переопределяется EVA_CONFIG_PATH) и заполни ключи.
+# Этот файл в репозитории — только образец. Реальные ключи никогда не коммитятся.
+
+agent:
+  name: Ева
+  gender: female                      # female|male
+  personality:
+    # Либо слайдеры 0-4, либо поля ниже — работает и то, и другое.
+    formality: 1
+    emotionality: 3
+    humor: 2
+    confidence: 3
+    response_length: 2
+    emoji: 2
+    initiative: 3
+    curiosity: 3
+    empathy: 3
+    criticism: 1
+    # tone: friendly
+    # style: detailed
+    # custom_instructions: |
+    #   ...
+
+owner:
+  name: Женя
+  address_as: Женька
+  facts: []
+
+security:
+  password_hash: ""                   # заполняется при первом запуске
+  tools:
+    shell: true
+    ssh: false
+    browser: true
+    npm_install: true
+
+llm:
+  provider: openrouter                # СЕЙЧАС жёстко openrouter — см. этап 2 плана
+  api_key: YOUR_API_KEY
+  fast_model: google/gemini-2.5-flash
+  strong_model: anthropic/claude-sonnet-4
+  # fallback_models:                 # перебор, если у провайдера кончились деньги
+  #   - qwen/qwen3-coder:free
+
+telegram:
+  token: YOUR_TELEGRAM_BOT_TOKEN
+  streaming: true
+  owner_id: 123456789                  # твой numeric Telegram ID
+
+memory:
+  max_knowledge: 200
+  study_interval_min: 60
+  study_model: qwen/qwen3.7-flash
+  learning_enabled: true
+  context_budget: 40000
+
+# Секции ниже опциональны, включать только если нужно.
+# voice:      { stt_api_key: "...", tts_api_key: "..." }
+# selfies:    { fal_api_key: "...", reference_photo_url: "https://..." }
+# google:     { api_key: "...", cx: "..." }
+# plugins:    ["voice", "selfies"]

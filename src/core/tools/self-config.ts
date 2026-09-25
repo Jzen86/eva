@@ -124,7 +124,7 @@ function handleList(): ToolResult {
 export const selfConfigTool: Tool = {
   name: "self_config",
   description:
-    "Read or write Betsy's own configuration stored in ~/.betsy/config.yaml. " +
+    "Read or write Eva's own configuration stored in ~/.eva/config.yaml. " +
     "Uses dot-notation for nested keys. " +
     "Key examples: agent.name, agent.gender (female/male/neutral), " +
     "agent.personality.tone, agent.personality.style, agent.personality.custom_instructions, " +

@@ -9,20 +9,16 @@ export interface ServiceDefinition {
   id: string;
   name: string;
   description: string;
-  relayUrl: string;
   scopes: Record<string, string>;
   baseUrls: Record<string, string>;
   actions: Record<string, ServiceAction[]>;
 }
-
-const RELAY_URL = "https://auth.betsyai.io";
 
 const services: ServiceDefinition[] = [
   {
     id: "google",
     name: "Google",
     description: "Почта, YouTube, Календарь, Диск, Контакты",
-    relayUrl: RELAY_URL,
     scopes: { gmail: "Почта", youtube: "YouTube", calendar: "Календарь", drive: "Диск", contacts: "Контакты" },
     baseUrls: {
       gmail: "https://gmail.googleapis.com",
@@ -68,7 +64,6 @@ const services: ServiceDefinition[] = [
     id: "github",
     name: "GitHub",
     description: "Репозитории, Issues, Pull Requests",
-    relayUrl: RELAY_URL,
     scopes: { default: "Полный доступ" },
     baseUrls: { default: "https://api.github.com" },
     actions: {
@@ -87,7 +82,6 @@ const services: ServiceDefinition[] = [
     id: "vk",
     name: "ВКонтакте",
     description: "Сообщения, стена, друзья, фото",
-    relayUrl: RELAY_URL,
     scopes: { default: "Сообщения, стена, друзья, фото" },
     baseUrls: { default: "https://api.vk.com/method" },
     actions: {
@@ -105,7 +99,6 @@ const services: ServiceDefinition[] = [
     id: "yandex",
     name: "Яндекс",
     description: "Почта, Диск",
-    relayUrl: RELAY_URL,
     scopes: { mail: "Почта", disk: "Диск" },
     baseUrls: { mail: "https://mail.yandex.ru/api", disk: "https://cloud-api.yandex.net" },
     actions: {
@@ -120,7 +113,6 @@ const services: ServiceDefinition[] = [
     id: "reddit",
     name: "Reddit",
     description: "Лента, сабреддиты, профиль",
-    relayUrl: RELAY_URL,
     scopes: { default: "Чтение, профиль, подписки" },
     baseUrls: { default: "https://oauth.reddit.com" },
     actions: {
@@ -137,7 +129,6 @@ const services: ServiceDefinition[] = [
     id: "mailru",
     name: "Mail.ru",
     description: "Профиль, почта",
-    relayUrl: RELAY_URL,
     scopes: { default: "Профиль, почта" },
     baseUrls: { default: "https://oauth.mail.ru" },
     actions: {
