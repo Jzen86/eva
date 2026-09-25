@@ -2,11 +2,13 @@ import Database from "better-sqlite3";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { indexText } from "./stem-ru.js";
 
 let db: Database.Database | null = null;
 let currentPath: string | null = null;
 
-const DEFAULT_DB_PATH = path.join(os.homedir(), "\.eva", "eva.db");
+// Plain relative segments: "\.eva" would become a literal filename on Linux.
+const DEFAULT_DB_PATH = path.join(os.homedir(), ".eva", "eva.db");
 
 /**
  * Get or create the SQLite database, initializing tables and FTS5 index.
@@ -72,24 +74,23 @@ export function getDB(dbPath?: string): Database.Database {
     );
 
     CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts
-      USING fts5(topic, insight, content='knowledge', content_rowid='id');
+      USING fts5(stems, content='knowledge', content_rowid='id');
 
-    -- Triggers to keep FTS index in sync
+    -- Triggers to keep FTS index in sync. The stems are computed in JS and
+    -- stored on the row, because an FTS5 tokenizer cannot call out to it.
     CREATE TRIGGER IF NOT EXISTS knowledge_ai AFTER INSERT ON knowledge BEGIN
-      INSERT INTO knowledge_fts(rowid, topic, insight)
-        VALUES (new.id, new.topic, new.insight);
+      INSERT INTO knowledge_fts(rowid, stems) VALUES (new.id, new.stems);
     END;
 
     CREATE TRIGGER IF NOT EXISTS knowledge_ad AFTER DELETE ON knowledge BEGIN
-      INSERT INTO knowledge_fts(knowledge_fts, rowid, topic, insight)
-        VALUES ('delete', old.id, old.topic, old.insight);
+      INSERT INTO knowledge_fts(knowledge_fts, rowid, stems)
+        VALUES ('delete', old.id, old.stems);
     END;
 
     CREATE TRIGGER IF NOT EXISTS knowledge_au AFTER UPDATE ON knowledge BEGIN
-      INSERT INTO knowledge_fts(knowledge_fts, rowid, topic, insight)
-        VALUES ('delete', old.id, old.topic, old.insight);
-      INSERT INTO knowledge_fts(rowid, topic, insight)
-        VALUES (new.id, new.topic, new.insight);
+      INSERT INTO knowledge_fts(knowledge_fts, rowid, stems)
+        VALUES ('delete', old.id, old.stems);
+      INSERT INTO knowledge_fts(rowid, stems) VALUES (new.id, new.stems);
     END;
   `);
 
@@ -135,6 +136,8 @@ export function getDB(dbPath?: string): Database.Database {
 
   db.exec("CREATE INDEX IF NOT EXISTS idx_conv_user ON conversations(user_id, timestamp)");
 
+  migrateKnowledgeIndex();
+
   db.exec(`CREATE TABLE IF NOT EXISTS service_tokens (
     service_id    TEXT NOT NULL,
     user_id       TEXT NOT NULL,
@@ -158,6 +161,133 @@ export function getDB(dbPath?: string): Database.Database {
   )`);
 
   return db;
+}
+
+/**
+ * Layout version of the knowledge search index.
+ *
+ * Bump it whenever `indexText` changes what it produces. The stored value is
+ * what decides whether existing rows need reindexing, so a format change can
+ * never silently leave the memory half-updated.
+ *
+ *   0 — no index, or the original raw topic/insight text
+ *   1 — stems only
+ *   2 — stems plus the raw tokens
+ */
+const KNOWLEDGE_INDEX_VERSION = 2;
+
+function readMeta(key: string): string | null {
+  const row = db!.prepare("SELECT value FROM eva_meta WHERE key = ?").get(key) as
+    | { value: string }
+    | undefined;
+  return row?.value ?? null;
+}
+
+function writeMeta(key: string, value: string): void {
+  db!.prepare("INSERT OR REPLACE INTO eva_meta (key, value) VALUES (?, ?)").run(key, value);
+}
+
+/**
+ * Bring the knowledge search index up to the current layout.
+ *
+ * The original index held the raw `topic`/`insight` text, which made the memory
+ * useless in Russian: FTS5's default tokenizer has no notion of inflection, so
+ * an entry about "кот был рыжим" could not be found by "котом", "коты" or
+ * "котов" — and raw user text handed straight to MATCH threw SQLite syntax
+ * errors on any colon, dash or caret.
+ *
+ * SQLite cannot stem on its own, so the searchable form is computed in JS and
+ * stored on the row. The migration rebuilds the FTS table and backfills every
+ * entry: they are tiny and the table holds a few dozen of them at most, so a
+ * full rebuild costs nothing and is far easier to reason about than patching.
+ */
+function migrateKnowledgeIndex(): void {
+  const conn = db;
+  if (!conn) return;
+
+  conn.exec(`
+    CREATE TABLE IF NOT EXISTS eva_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+
+  const knowledgeCols = (conn.pragma("table_info(knowledge)") as Array<{ name: string }>).map(
+    (c) => c.name,
+  );
+  if (!knowledgeCols.includes("stems")) {
+    conn.exec("ALTER TABLE knowledge ADD COLUMN stems TEXT NOT NULL DEFAULT ''");
+  }
+
+  // Which columns does the existing FTS table actually have? The original one
+  // was built over topic/insight, and its shape is the only reliable hint that
+  // a pre-migration database is being opened.
+  let ftsCols: string[] = [];
+  try {
+    ftsCols = (conn.pragma("table_info(knowledge_fts)") as Array<{ name: string }>).map(
+      (c) => c.name,
+    );
+  } catch {
+    ftsCols = [];
+  }
+
+  const stored = Number(readMeta("knowledge_index_version") ?? "0");
+  const looksMigrated = ftsCols.includes("stems") && stored >= KNOWLEDGE_INDEX_VERSION;
+
+  if (looksMigrated) {
+    // Only rows that never got an index written still need filling in.
+    const { missing } = conn
+      .prepare("SELECT COUNT(*) as missing FROM knowledge WHERE stems IS NULL OR stems = ''")
+      .get() as { missing: number };
+    if (missing === 0) return;
+  }
+
+  if (ftsCols.length > 0) {
+    conn.exec(`
+      DROP TRIGGER IF EXISTS knowledge_ai;
+      DROP TRIGGER IF EXISTS knowledge_ad;
+      DROP TRIGGER IF EXISTS knowledge_au;
+      DROP TABLE IF EXISTS knowledge_fts;
+    `);
+  }
+
+  const rows = conn
+    .prepare("SELECT id, topic, insight FROM knowledge")
+    .all() as Array<{ id: number; topic: string; insight: string }>;
+  if (rows.length > 0) {
+    const update = conn.prepare("UPDATE knowledge SET stems = ? WHERE id = ?");
+    conn.transaction(() => {
+      for (const row of rows) {
+        update.run(indexText(`${row.topic} ${row.insight}`), row.id);
+      }
+    })();
+  }
+
+  conn.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts
+      USING fts5(stems, content='knowledge', content_rowid='id');
+
+    CREATE TRIGGER IF NOT EXISTS knowledge_ai AFTER INSERT ON knowledge BEGIN
+      INSERT INTO knowledge_fts(rowid, stems) VALUES (new.id, new.stems);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS knowledge_ad AFTER DELETE ON knowledge BEGIN
+      INSERT INTO knowledge_fts(knowledge_fts, rowid, stems)
+        VALUES ('delete', old.id, old.stems);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS knowledge_au AFTER UPDATE ON knowledge BEGIN
+      INSERT INTO knowledge_fts(knowledge_fts, rowid, stems)
+        VALUES ('delete', old.id, old.stems);
+      INSERT INTO knowledge_fts(rowid, stems) VALUES (new.id, new.stems);
+    END;
+  `);
+  conn.exec("INSERT INTO knowledge_fts(knowledge_fts) VALUES('rebuild')");
+  writeMeta("knowledge_index_version", String(KNOWLEDGE_INDEX_VERSION));
+
+  if (rows.length > 0) {
+    console.log(`🔤 Индекс памяти: перестроен для ${rows.length} записей`);
+  }
 }
 
 /**
