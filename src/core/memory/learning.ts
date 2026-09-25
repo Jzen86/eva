@@ -29,6 +29,9 @@ export function markStudyComplete(): void {
 export interface StudyResult {
   topic: string;
   insight: string;
+  /** False when the writer refused the insight as a repeat. */
+  written: boolean;
+  reason: string;
   entriesBefore: number;
   entriesAfter: number;
 }
@@ -47,6 +50,17 @@ export async function runStudySession(
     specialties: string[];
     existing: KnowledgeRow[];
   }) => Promise<{ topic: string; insight: string }>,
+  /**
+   * How the insight is actually persisted. Defaults to a plain write; callers
+   * that have an embedding endpoint pass learnInsight instead, so the memory
+   * arrives with a vector and a dedupe decision rather than one or the other.
+   */
+  learn?: (input: {
+    topic: string;
+    insight: string;
+    source: string;
+    zone?: string;
+  }) => Promise<{ written: boolean; reason: string }>,
 ): Promise<StudyResult> {
   const existing = getAllKnowledge();
   const entriesBefore = existing.length;
@@ -56,13 +70,23 @@ export async function runStudySession(
     existing,
   });
 
-  addKnowledge({ topic, insight, source: "study_session" }, 0.6);
+  let written = true;
+  let reason = "записано";
+  if (learn) {
+    const outcome = await learn({ topic, insight, source: "study_session" });
+    written = outcome.written;
+    reason = outcome.reason;
+  } else {
+    addKnowledge({ topic, insight, source: "study_session" }, 0.6);
+  }
   markStudyComplete();
 
   return {
     topic,
     insight,
+    written,
+    reason,
     entriesBefore,
-    entriesAfter: entriesBefore + 1,
+    entriesAfter: entriesBefore + (written ? 1 : 0),
   };
 }

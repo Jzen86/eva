@@ -23,9 +23,17 @@ import {
   markStudyComplete,
   type LearningConfig,
 } from "./learning.js";
-import { getAllKnowledge, getKnowledgeCount, type KnowledgeRow } from "./knowledge.js";
+import {
+  getAllKnowledge,
+  getKnowledgeCount,
+  getZoneCoverage,
+  getZoneLastStudied,
+  markZoneStudied,
+  trimKnowledge,
+  type KnowledgeRow,
+} from "./knowledge.js";
+import { findLexicalDuplicate, learnInsight, type EmbeddingEndpoint } from "./dedup.js";
 import { loadHistory, extractText } from "./conversations.js";
-import { getDB } from "./db.js";
 import type { LLMClient, LLMMessage } from "../llm/types.js";
 
 /** Knowledge entries fed to the model as "what I already know". */
@@ -63,27 +71,67 @@ const ZONES = [
 ] as const;
 
 /**
- * Sessions since boot that produced no write. Module-level on purpose — but only
- * this counter, deliberately NOT the zone: the zone is derived from how many
- * study insights are already stored, so a restart cannot replay the same zone.
- * A module-level cursor did exactly that, and the 18:33 restart sent two
- * consecutive sessions back to "она сама" instead of rotating.
+ * Sessions since boot that produced no write.
+ *
+ * Kept in the database alongside the zone cursor, not in a module variable: a
+ * module-level counter resets on every restart, which is what once sent two
+ * consecutive sessions back to the same empty zone.
  */
 let noWriteSessions = 0;
 
 /**
- * Next zone = study entries already stored + sessions skipped since boot.
- * A written session bumps the stored count, so the rotation advances on its own;
- * `noWriteSessions` covers the sessions that returned null or a duplicate, which
- * would otherwise stick the cursor on the same empty zone forever.
+ * Which zone to study next.
+ *
+ * The emptiest one wins, and the tie goes to whatever was studied longest ago.
+ * Round-robin was simpler and wrong: it kept handing out the same zone once the
+ * counts drifted, and it had no idea that "сервер и задрот" had nothing in it
+ * at all. Sorting by coverage is what makes the rotation aim somewhere.
  */
-function nextZone(known: KnowledgeRow[]): (typeof ZONES)[number] {
-  const studyDone = known.filter((k) => k.source === STUDY_SOURCE).length;
-  return ZONES[(studyDone + noWriteSessions) % ZONES.length];
+function pickZone(known: KnowledgeRow[]): (typeof ZONES)[number] {
+  const coverage = getZoneCoverage();
+  const lastStudied = getZoneLastStudied();
+  const never = 0;
+
+  let best: (typeof ZONES)[number] = ZONES[0];
+  let bestCount = Number.MAX_SAFE_INTEGER;
+  let bestSeen = Number.MAX_SAFE_INTEGER;
+
+  for (const zone of ZONES) {
+    // Entries that predate the zone column carry no zone at all, so they are
+    // spread across the zones rather than left out of the count entirely.
+    const count = coverage.get(zone.name) ?? 0;
+    const unzoned = known.filter(
+      (k) => k.source === STUDY_SOURCE && !k.zone,
+    ).length;
+    const score = count + unzoned / ZONES.length;
+    const seen = lastStudied[zone.name] ?? never;
+
+    if (score < bestCount || (score === bestCount && seen < bestSeen)) {
+      best = zone;
+      bestCount = score;
+      bestSeen = seen;
+    }
+  }
+  return best;
 }
 
-/** Token-overlap ratio above which an insight counts as already known. */
-const DEDUPE_THRESHOLD = 0.6;
+/**
+ * Next zone, with the skipped sessions folded in.
+ *
+ * `noWriteSessions` matters because a zone that produced nothing twice running
+ * is being refused by the model, not merely empty — advancing past it is what
+ * keeps one dead prompt from blocking the whole rotation.
+ */
+function nextZone(known: KnowledgeRow[]): (typeof ZONES)[number] {
+  const zone = pickZone(known);
+  if (noWriteSessions >= 2) {
+    // Refused repeatedly: take the next emptiest rather than retrying the same.
+    const seen = getZoneLastStudied();
+    const others = ZONES.filter((z) => z.name !== zone.name);
+    return others.sort((a, b) => (seen[a.name] ?? 0) - (seen[b.name] ?? 0))[0] ?? zone;
+  }
+  return zone;
+}
 
 export interface StudyRunOptions {
   /** Clients tried in order: dedicated study model first, then the fast model. */
@@ -96,6 +144,12 @@ export interface StudyRunOptions {
   maxKnowledge: number;
   knowledgeWindow?: number;
   chatWindow?: number;
+  /**
+   * Optional embedding endpoint. Present it and every insight is compared
+   * semantically against what is stored and written with its vector; leave it
+   * out and the run behaves exactly as it did before, lexical dedup only.
+   */
+  embedding?: EmbeddingEndpoint | null;
 }
 
 export interface StudyRunResult {
@@ -149,7 +203,7 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
     if (generated.error) {
       markStudyComplete();
       noWriteSessions++;
-      trimKnowledge(opts.maxKnowledge);
+      trimKnowledge(opts.maxKnowledge, STUDY_SOURCE);
       return { ran: true, wrote: false, zone, error: generated.error, report: "" };
     }
 
@@ -159,7 +213,7 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
       markStudyComplete();
       sessionCount++;
       noWriteSessions++;
-      trimKnowledge(opts.maxKnowledge);
+      trimKnowledge(opts.maxKnowledge, STUDY_SOURCE);
       return {
         ran: true,
         wrote: false,
@@ -172,11 +226,17 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
     // Hard dedupe: the prompt asks the model not to repeat itself, which is a
     // request. This is the check. A false positive only wastes one cheap
     // session; a false negative permanently pollutes every future prompt.
-    if (isDuplicate(insight, known)) {
+    //
+    // Only the lexical half runs here. The semantic half needs an embedding
+    // endpoint, which lives on the study options, and it is applied in the
+    // writer below so a memory is never stored without a vector when one is
+    // available.
+    const duplicate = findLexicalDuplicate(insight, known);
+    if (duplicate) {
       markStudyComplete();
       sessionCount++;
       noWriteSessions++;
-      trimKnowledge(opts.maxKnowledge);
+      trimKnowledge(opts.maxKnowledge, STUDY_SOURCE);
       return {
         ran: true,
         wrote: false,
@@ -188,10 +248,36 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
       };
     }
 
-    // Reuse the upstream session runner. The callback just hands back what we
-    // already generated, so learning.ts needs no changes.
-    await runStudySession(opts.learning, async () => ({ topic, insight }));
-    trimKnowledge(opts.maxKnowledge);
+    // Reuse the upstream session runner. The generator hands back what we
+    // already produced; the writer is passed in so the write goes through the
+    // same dedup-and-embed path every other memory takes.
+    const result = await runStudySession(
+      opts.learning,
+      async () => ({ topic, insight }),
+      // Always passed, not only when embeddings are on: the zone is stamped on
+      // the row either way, and it is what the next rotation reads.
+      (entry) => learnInsight({ ...entry, zone }, {
+        known,
+        embedding: opts.embedding ?? null,
+      }),
+    );
+    trimKnowledge(opts.maxKnowledge, STUDY_SOURCE);
+
+    // The semantic check can still refuse the insight after the lexical one let
+    // it through, so the report follows what actually happened.
+    if (!result.written) {
+      sessionCount++;
+      noWriteSessions++;
+      return {
+        ran: true,
+        wrote: false,
+        topic,
+        insight,
+        zone,
+        reason: result.reason,
+        report: `📚 Сессия #${sessionCount} [${zone}]: «${topic}» — ${result.reason}`,
+      };
+    }
 
     noWriteSessions = 0;
     markStudyComplete();
@@ -234,6 +320,10 @@ interface Generated {
 async function generateInsight(opts: StudyRunOptions): Promise<Generated> {
   const known = getAllKnowledge();
   const zone = nextZone(known);
+  // Recorded before the call, not after: a session that produced nothing still
+  // counts as having looked at this zone, otherwise the tie-break would send
+  // the next session straight back to a zone that clearly refuses to produce.
+  markZoneStudied(zone.name);
   const messages = buildStudyMessages(opts, zone, known);
   let lastError = "";
 
@@ -362,95 +452,9 @@ function parseInsightJson(
   return { topic, insight, reason };
 }
 
-/** Lowercase, drop punctuation, collapse whitespace. */
-function normalize(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/** Content words (drop 1-3 letter noise like "и", "не", "он"). */
-function tokenize(text: string): Set<string> {
-  return new Set(
-    text
-      .split(" ")
-      .map((w) => w.replace(/(?:ов|ий|ая|ое|ые|ам|ах|ом|ем|ешь|ю)$/u, ""))
-      .filter((w) => w.length > 3),
-  );
-}
-
-/** Share of the smaller set contained in the larger (containment, not Jaccard). */
-function containment(a: Set<string>, b: Set<string>): number {
-  if (!a.size || !b.size) return 0;
-  let shared = 0;
-  for (const word of a) if (b.has(word)) shared++;
-  return shared / Math.min(a.size, b.size);
-}
-
-/**
- * True when the candidate insight says something the base already says.
- * Compares against every row, not just the prompt window — the window is only
- * what the model saw, the dedupe has to cover what actually got stored.
- */
-function isDuplicate(insight: string, known: KnowledgeRow[]): boolean {
-  const candidate = normalize(insight);
-  if (!candidate) return false;
-  const candidateTokens = tokenize(candidate);
-  if (!candidateTokens.size) return false;
-
-  for (const row of known) {
-    const existing = normalize(row.insight ?? "");
-    if (!existing) continue;
-    if (existing === candidate) return true;
-    if (containment(candidateTokens, tokenize(existing)) >= DEDUPE_THRESHOLD) return true;
-  }
-  return false;
-}
-
-/**
- * Enforce the max_knowledge cap (nothing else in the codebase does), but by
- * source: chat-driven memory writes are far denser than study sessions, so a
- * plain recency trim would delete the study insights first — exactly backwards.
- * Study rows keep the whole budget; everything else fills what's left.
- */
-function trimKnowledge(max: number): void {
-  if (max <= 0) return;
-  try {
-    const db = getDB();
-    const total = getKnowledgeCount();
-    if (total <= max) return;
-
-    const studyRow = db
-      .prepare("SELECT COUNT(*) AS count FROM knowledge WHERE source IS ?")
-      .get(STUDY_SOURCE) as { count: number };
-    const studyCount = studyRow.count ?? 0;
-    const studyKeep = Math.min(studyCount, max);
-    const otherKeep = Math.max(0, max - studyKeep);
-
-    db.prepare(
-      `DELETE FROM knowledge
-       WHERE source IS ?
-         AND id NOT IN (
-           SELECT id FROM knowledge
-           WHERE source IS ?
-           ORDER BY timestamp DESC, id DESC
-           LIMIT ?
-         )`,
-    ).run(STUDY_SOURCE, STUDY_SOURCE, studyKeep);
-
-    db.prepare(
-      `DELETE FROM knowledge
-       WHERE source IS NOT ?
-         AND id NOT IN (
-           SELECT id FROM knowledge
-           WHERE source IS NOT ?
-           ORDER BY timestamp DESC, id DESC
-           LIMIT ?
-         )`,
-    ).run(STUDY_SOURCE, STUDY_SOURCE, otherKeep);
-  } catch (err) {
-    console.error("⚠️ study: не удалось почистить базу знаний:", err instanceof Error ? err.message : err);
-  }
-}
+// The dedupe comparison and the trim used to live here as local functions. Both
+// are shared logic now — see memory/dedup.ts and memory/knowledge.ts — because
+// the study prompt is the only part of this file that is off limits, not the
+// bookkeeping around it. The old local version had a real defect: it divided by
+// the smaller token set, so a long new insight that merely mentioned a known word
+// scored 1.0 and was discarded as a repeat.

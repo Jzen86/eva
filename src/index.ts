@@ -12,7 +12,7 @@ import { FilesTool } from "./core/tools/files.js";
 import { HttpTool } from "./core/tools/http.js";
 import { BrowserTool } from "./core/tools/browser.js";
 import { WebTool } from "./core/tools/web.js";
-import { memoryTool } from "./core/tools/memory.js";
+import { createMemoryTool } from "./core/tools/memory.js";
 import { selfConfigTool } from "./core/tools/self-config.js";
 import { SchedulerService } from "./core/tools/scheduler.js";
 import { SchedulerStore } from "./core/tools/scheduler-store.js";
@@ -29,6 +29,22 @@ import { SkillSearchTool } from "./core/tools/skill-search.js";
 import { SkillInstallTool } from "./core/tools/skill-install.js";
 import { SendFileTool } from "./core/tools/send-file.js";
 import { SwitchModelTool } from "./core/tools/switch-model.js";
+import type { EmbeddingEndpoint } from "./core/memory/dedup.js";
+
+/**
+ * The embedding endpoint, if the `embed` role is configured.
+ *
+ * A missing endpoint is a supported mode, not a broken one: memory dedup simply
+ * stays lexical. Everything that needs vectors goes through this so there is
+ * one place that knows how an endpoint is resolved.
+ */
+function embeddingEndpointFor(reg: ProviderRegistry | null): EmbeddingEndpoint | null {
+  const ref = reg?.role("embed");
+  if (!ref) return null;
+  const provider = reg?.toConfig().providers[ref.provider];
+  if (!provider?.base_url || !provider.api_key) return null;
+  return { baseUrl: provider.base_url, apiKey: provider.api_key, model: ref.model };
+}
 
 async function main() {
   const config = isConfigured() ? loadConfig() : null;
@@ -92,7 +108,7 @@ async function main() {
   const passwordHash = config.security?.password_hash ?? "default-key-change-me";
   tools.register(new HttpTool({ encryptionKey: passwordHash }));
   tools.register(new BrowserTool());
-  tools.register(memoryTool);
+  tools.register(createMemoryTool({ embedding: embeddingEndpointFor(registry) }));
   tools.register(selfConfigTool);
   tools.register(scheduler.tool);
   tools.register(sshTool);
@@ -141,19 +157,10 @@ async function main() {
   if (skillsmpKey) {
     tools.register(new SkillSearchTool({ apiKey: skillsmpKey }));
     // Embeddings come from the `embed` role, same as everything else.
-    const embedRef = registry?.role("embed");
-    const embedProvider = embedRef ? registry?.toConfig().providers[embedRef.provider] : undefined;
+    const embedEndpoint = embeddingEndpointFor(registry);
     tools.register(new SkillInstallTool({
       apiKey: llmApiKey ?? undefined,
-      ...(embedRef && embedProvider?.base_url && embedProvider.api_key
-        ? {
-            embeddingEndpoint: {
-              baseUrl: embedProvider.base_url,
-              apiKey: embedProvider.api_key,
-              model: embedRef.model,
-            },
-          }
-        : {}),
+      ...(embedEndpoint ? { embeddingEndpoint: embedEndpoint } : {}),
     }));
   }
   // Web tool — conditional on google config
@@ -276,6 +283,9 @@ async function main() {
             specialties: [],
           },
           maxKnowledge: config.memory?.max_knowledge ?? 200,
+          // Present only when an embedding provider is configured; the run
+          // falls back to lexical dedup without it.
+          embedding: embeddingEndpointFor(registry),
         });
         if (result.error) {
           console.error("❌ study:", result.error);

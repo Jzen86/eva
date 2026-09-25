@@ -55,7 +55,28 @@ export function getDB(dbPath?: string): Database.Database {
       insight TEXT NOT NULL,
       source TEXT NOT NULL DEFAULT '',
       confidence REAL NOT NULL DEFAULT 0.5,
-      timestamp INTEGER NOT NULL DEFAULT (unixepoch())
+      timestamp INTEGER NOT NULL DEFAULT (unixepoch()),
+      -- Stemmed text backing the FTS index. Computed in JS: an FTS5 tokenizer
+      -- cannot call out to one, so the value has to be on the row.
+      stems TEXT NOT NULL DEFAULT '',
+      -- Semantic dedup. Null until the row has been compared, and it stays null
+      -- forever on installs with no embedding endpoint — dedup degrades to
+      -- lexical only, which is the pre-existing behaviour.
+      embedding BLOB,
+      -- Which subject area the entry belongs to, so study can rotate over the
+      -- weak spots instead of the whole base every time.
+      zone TEXT NOT NULL DEFAULT '',
+      -- Retrieval bookkeeping: how often a memory actually helped, and when it
+      -- was last pulled. Trim used to go purely by recency, which threw away
+      -- facts that were being used and kept ones nothing referenced.
+      access_count INTEGER NOT NULL DEFAULT 0,
+      last_used INTEGER,
+      -- A corrected fact retires the old row instead of deleting it, so a
+      -- "Женя не ест грибы" that supersedes "Женя ест грибы" leaves a trail and
+      -- a pure DELETE would let the stale version come back on the next study
+      -- pass and overwrite the correction.
+      superseded_at INTEGER,
+      superseded_by INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS events (
@@ -136,6 +157,7 @@ export function getDB(dbPath?: string): Database.Database {
 
   db.exec("CREATE INDEX IF NOT EXISTS idx_conv_user ON conversations(user_id, timestamp)");
 
+  migrateKnowledgeSchema();
   migrateKnowledgeIndex();
 
   db.exec(`CREATE TABLE IF NOT EXISTS service_tokens (
@@ -176,15 +198,68 @@ export function getDB(dbPath?: string): Database.Database {
  */
 const KNOWLEDGE_INDEX_VERSION = 2;
 
-function readMeta(key: string): string | null {
+/** Small key-value store used for schema versions and rotation cursors. */
+export function readMeta(key: string): string | null {
   const row = db!.prepare("SELECT value FROM eva_meta WHERE key = ?").get(key) as
     | { value: string }
     | undefined;
   return row?.value ?? null;
 }
 
-function writeMeta(key: string, value: string): void {
+export function writeMeta(key: string, value: string): void {
   db!.prepare("INSERT OR REPLACE INTO eva_meta (key, value) VALUES (?, ?)").run(key, value);
+}
+
+/** Column names of a table, or an empty list when the table is missing. */
+function columnsOf(conn: Database.Database, table: string): string[] {
+  try {
+    return (conn.pragma(`table_info(${table})`) as Array<{ name: string }>).map((c) => c.name);
+  } catch {
+    return [];
+  }
+}
+
+/** SQLite has no ADD COLUMN IF NOT EXISTS, so check before altering. */
+function addColumnIfMissing(
+  conn: Database.Database,
+  table: string,
+  column: string,
+  definition: string,
+): boolean {
+  if (columnsOf(conn, table).includes(column)) return false;
+  conn.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  return true;
+}
+
+/**
+ * Add the knowledge columns the semantic dedup and zone rotation rely on.
+ *
+ * CREATE TABLE IF NOT EXISTS does nothing at all to a table that already
+ * exists, so an install that upgrades would get none of them without this.
+ * Every column defaults to something harmless, which means a database that was
+ * only half migrated still opens and still works — just without the new
+ * features until the next run finishes the job.
+ */
+function migrateKnowledgeSchema(): void {
+  const conn = db;
+  if (!conn) return;
+
+  const added: string[] = [];
+  const add = (column: string, definition: string): void => {
+    if (addColumnIfMissing(conn, "knowledge", column, definition)) added.push(column);
+  };
+
+  add("stems", "TEXT NOT NULL DEFAULT ''");
+  add("embedding", "BLOB");
+  add("zone", "TEXT NOT NULL DEFAULT ''");
+  add("access_count", "INTEGER NOT NULL DEFAULT 0");
+  add("last_used", "INTEGER");
+  add("superseded_at", "INTEGER");
+  add("superseded_by", "INTEGER");
+
+  if (added.length > 0) {
+    console.log(`🗄 Схема памяти: добавлены колонки ${added.join(", ")}`);
+  }
 }
 
 /**
