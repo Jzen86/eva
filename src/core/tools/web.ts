@@ -78,7 +78,7 @@ export class WebTool implements Tool {
   static readonly MAX_SEARCH_CHARS = 2000
 
   readonly name = "web"
-  readonly description = "Search the web and read web pages. Use 'search' to find information, 'read' to get page content as clean text. For interactive browsing (clicking, forms) use the 'browser' tool. For API calls use the 'http' tool."
+  readonly description = "Search the web and read web pages. Use 'search' to find information, 'read' to get page content as clean text. For interactive browsing (clicking, forms) use the 'browser' tool. For API calls use the 'http' tool. When the question asks for a specific value — a version, a number, a date, a price — put that value in the query: 'latest patch version number', not 'latest news about updates'. A general query returns general pages, and the number is not in them."
   readonly parameters = [
     { name: "action", type: "string", description: "Action: search or read", required: true },
     { name: "query", type: "string", description: "Search query (for action=search)" },
