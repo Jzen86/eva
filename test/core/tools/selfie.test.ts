@@ -1,4 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { SelfieTool } from "../../../src/core/tools/selfie.js";
 
 describe("SelfieTool", () => {
@@ -24,10 +27,78 @@ describe("SelfieTool", () => {
     // with no face there is nothing to mirror, and pretending otherwise would
     // send an empty image_url and return a provider error instead of a sentence
     // the owner can act on.
-    const tool = new SelfieTool({ falApiKey: "key-123", referencePhotoUrl: "" });
+    // The path is named explicitly so the answer does not depend on whether the
+    // machine running the tests happens to have a photo beside its config.
+    const tool = new SelfieTool({
+      falApiKey: "key-123",
+      referencePhotoUrl: "",
+      referencePath: path.join(os.tmpdir(), "eva-no-such-reference.jpg"),
+    });
     const result = await tool.execute({ context: "в кафе" });
     expect(result.success).toBe(false);
     expect(result.output).toContain("фото");
+  });
+
+  it("sends the photo on disk when the config has no URL, which is the normal case", async () => {
+    // The bug this guards: `/setphoto` writes a file, `doctor` reports that file,
+    // `image_gen` reads that file — and the selfie tool read a config key that
+    // nothing in the project has ever written. So the install had a reference
+    // photo, a report saying so, and a selfie tool drawing a stranger. The file
+    // is the reference; a URL is the override.
+    const file = path.join(os.tmpdir(), `eva-ref-${Date.now()}.jpg`);
+    fs.writeFileSync(file, Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]));
+
+    const tool = new SelfieTool({
+      provider: "openrouter",
+      openrouterApiKey: "or-key",
+      openrouterModel: "google/gemini-3.1-flash-lite-image",
+      referencePath: file,
+    });
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        choices: [{ message: { content: "![x](data:image/png;base64,BBBB)" } }],
+      }),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const result = await tool.execute({ context: "в кафе с кофе" });
+    expect(result.success).toBe(true);
+    expect(result.output).not.toContain("лицо не сохранено");
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const parts = body.messages[0].content as Array<{ type: string; image_url?: { url: string } }>;
+    const image = parts.find((p) => p.type === "image_url");
+    expect(image?.image_url?.url).toBe(
+      `data:image/jpeg;base64,${fs.readFileSync(file).toString("base64")}`,
+    );
+
+    fs.unlinkSync(file);
+    vi.unstubAllGlobals();
+  });
+
+  it("prefers a configured URL over the file on disk", async () => {
+    const file = path.join(os.tmpdir(), `eva-ref-${Date.now()}.jpg`);
+    fs.writeFileSync(file, Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]));
+
+    const tool = new SelfieTool({
+      falApiKey: "key-123",
+      referencePhotoUrl: "https://example.com/remote.jpg",
+      referencePath: file,
+    });
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ images: [{ url: "https://fal.media/result.jpg" }] }),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    await tool.execute({ context: "на пляже" });
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.image_url).toBe("https://example.com/remote.jpg");
+
+    fs.unlinkSync(file);
+    vi.unstubAllGlobals();
   });
 
   it("goes ahead on OpenRouter without a reference, and says the face is not preserved", async () => {

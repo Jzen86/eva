@@ -34,6 +34,7 @@ import { FilesTool } from "./tools/files.js";
 import { HttpTool } from "./tools/http.js";
 import { BrowserTool } from "./tools/browser.js";
 import { SelfieTool } from "./tools/selfie.js";
+import { referencePhotoPath, hasReferencePhoto } from "./reference-photo.js";
 import { VoiceTool, voiceBackendAvailable } from "./tools/voice.js";
 import { ImageGenTool } from "./tools/image-gen.js";
 import { WebTool } from "./tools/web.js";
@@ -236,13 +237,19 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
   // image-capable provider she can still make pictures, and requiring a fal key
   // for that would be exactly the kind of mandatory vendor to get rid of.
   const falKey = str(selfies.fal_api_key) || str(video.fal_api_key);
-  const referencePhoto = str(selfies.reference_photo_url);
+  // The reference is a file the owner sent, not a config key. Reading the
+  // config key alone is how the tool ended up registered-but-blank: a fresh
+  // install has the photo on disk and no URL written anywhere, and the selfie
+  // then drew a stranger.
+  const referenceFile = referencePhotoPath();
+  const hasReference = hasReferencePhoto() || Boolean(str(selfies.reference_photo_url));
   const selfieKey = keyFor(selfieSource);
-  if (falKey || (referencePhoto && selfieKey)) {
+  if (falKey || (hasReference && selfieKey)) {
     add(
       new SelfieTool({
         falApiKey: falKey,
-        referencePhotoUrl: referencePhoto || undefined,
+        referencePhotoUrl: str(selfies.reference_photo_url) || undefined,
+        referencePath: referenceFile,
         provider: (selfies.provider as "fal" | "openrouter" | undefined) ?? "fal",
         openrouterApiKey: selfieKey,
         openrouterModel: selfieSource.model,

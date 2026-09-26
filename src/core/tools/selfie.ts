@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Tool, ToolResult } from "./types.js";
 import { uploadToFal } from "../fal-upload.js";
+import { referencePhotoPath } from "../reference-photo.js";
 
 const FAL_ENDPOINT = "https://fal.run/xai/grok-imagine-image/edit";
 /** Default image backend. The `modalities:["image"]` chat extension is an
@@ -44,10 +45,31 @@ export interface SelfieToolConfig {
   openrouterModel?: string;
   /** Point the image backend elsewhere. Needs OpenRouter's modalities extension. */
   imageBaseUrl?: string;
+  /**
+   * The reference photo on disk, which is where the owner actually leaves it.
+   *
+   * `reference_photo_url` used to be the only way in, and nothing writes that
+   * key: `/setphoto` saves a file, `doctor` reads the file, `image_gen` reads the
+   * file. So the selfie tool had a reference configured that no one had ever
+   * set — it drew a stranger while the report said the photo was there, and the
+   * only reason it went unnoticed is that a stranger looks like a picture.
+   *
+   * The URL stays as an override for a genuinely remote reference; the file is
+   * the default, because the file is what exists.
+   */
+  referencePath?: string;
 }
 
 /** Same sentence the dedicated image models use to name the endpoint they want. */
 const WRONG_DOOR = /cannot be used with the chat\/completions endpoint|image generation model|use the \/api\/v1\/images/i;
+
+/** Where the reference lives when the config does not say: the file `/setphoto` writes. */
+function defaultReferenceFile(): string {
+  // A call, not a constant: the path follows the config's directory, and a
+  // cached value captured at import time is wrong for every install that moves
+  // the config after the module loads.
+  return referencePhotoPath();
+}
 
 export class SelfieTool implements Tool {
   name = "selfie";
@@ -67,6 +89,41 @@ export class SelfieTool implements Tool {
   /** Set reference photo path or URL. */
   setReferencePhoto(pathOrUrl: string): void {
     this.config.referencePhotoUrl = pathOrUrl;
+  }
+
+  /**
+   * The reference as a data URI, or null when there is none.
+   *
+   * A configured URL wins — a remote reference is a legitimate thing to want. If
+   * there is no URL, the file is read: that is where the photo actually is, and
+   * relying on a config key nothing writes is how this tool ended up drawing a
+   * stranger while the report said the photo was there.
+   */
+  private referenceDataUri(): string | null {
+    const url = this.config.referencePhotoUrl;
+    if (url) {
+      try {
+        return this.toDataUrl(url);
+      } catch {
+        return null;
+      }
+    }
+    const file = this.config.referencePath ?? defaultReferenceFile();
+    try {
+      if (!fs.existsSync(file)) return null;
+      return this.toDataUrl(file);
+    } catch {
+      return null;
+    }
+  }
+
+  /** The same reference as something fal.ai can fetch. */
+  private async referenceForFal(): Promise<string | null> {
+    const url = this.config.referencePhotoUrl;
+    if (url) return this.resolveFalReferenceUrl(url);
+    const file = this.config.referencePath ?? defaultReferenceFile();
+    if (!fs.existsSync(file)) return null;
+    return this.resolveFalReferenceUrl(file);
   }
 
   /** Resolve reference to a URL that fal.ai can access. */
@@ -113,7 +170,10 @@ export class SelfieTool implements Tool {
       };
     }
 
-    if (!this.config.referencePhotoUrl && (this.config.provider ?? "fal") === "fal") {
+    const hasReference = Boolean(this.config.referencePhotoUrl)
+      || fs.existsSync(this.config.referencePath ?? defaultReferenceFile());
+
+    if (!hasReference && (this.config.provider ?? "fal") === "fal") {
       // Provider-specific, and not a blanket rule. The fal backend has no
       // reference to fall back on — it is a "same face, new pose" endpoint, and
       // without the face there is nothing to do. The OpenRouter one may be a
@@ -126,7 +186,7 @@ export class SelfieTool implements Tool {
       };
     }
 
-    if (!this.config.referencePhotoUrl) {
+    if (!hasReference) {
       console.log("📸 Selfie: референс не задан, лицо не будет сохранено");
     }
 
@@ -141,7 +201,10 @@ export class SelfieTool implements Tool {
 
   private async generateFal(prompt: string, mode: "mirror" | "direct"): Promise<ToolResult> {
     try {
-      const refUrl = await this.resolveFalReferenceUrl(this.config.referencePhotoUrl!);
+      const refUrl = await this.referenceForFal();
+      if (!refUrl) {
+        return { success: false, output: "Референсное фото не найлось — скинь его через /setphoto." };
+      }
       console.log(`📸 Selfie(fal): mode=${mode}, ref=${refUrl.slice(0, 80)}`);
 
       const response = await fetch(FAL_ENDPOINT, {
@@ -303,11 +366,11 @@ export class SelfieTool implements Tool {
 
   private async generateOpenRouter(prompt: string, mode: "mirror" | "direct"): Promise<ToolResult> {
     const primary = this.config.openrouterModel ?? OPENROUTER_DEFAULT_MODEL;
-    const refUrl = this.config.referencePhotoUrl ? this.toDataUrl(this.config.referencePhotoUrl) : "";
+    const refUrl = this.referenceDataUri() ?? "";
 
     const first = await this.callOpenRouterModel(primary, refUrl, prompt, mode);
     if (first.image) {
-      const noFace = refUrl ? "" : " (эта модель не берёт референс — лицо не сохранено)";
+      const noFace = refUrl ? "" : " (референс не найден — лицо не сохранено)";
       return { success: true, output: `Селфи сгенерировано${noFace}`, mediaUrl: first.image };
     }
     if (first.filter) {
@@ -332,3 +395,4 @@ export class SelfieTool implements Tool {
     return { success: false, output: `OpenRouter не вернул изображение (${second.error ?? first.error ?? "unknown"})` };
   }
 }
+
