@@ -19,7 +19,7 @@ import {
 } from "../../core/persona-quest.js";
 import fs from "node:fs";
 import path from "node:path";
-import { writeReferencePhoto } from "../../core/reference-photo.js";
+import { writeReferencePhoto, referencePhotoPath } from "../../core/reference-photo.js";
 
 /** Max Telegram message length. */
 const MAX_MSG_LEN = 4096;
@@ -396,6 +396,25 @@ async function savePhotoFromTelegram(ctx: Context, token: string): Promise<strin
   }
 }
 
+/** Send the reference photo that is actually installed, with its age. */
+async function sendCurrentReference(ctx: Context): Promise<void> {
+  const file = referencePhotoPath();
+  let size = 0;
+  let when = "неизвестно";
+  try {
+    const st = fs.statSync(file);
+    size = st.size;
+    when = st.mtime.toISOString().slice(0, 16).replace("T", " ");
+  } catch {
+    await ctx.reply("Фото не задано. Скинь его с подписью /setphoto.");
+    return;
+  }
+  const { InputFile } = await import("grammy");
+  await ctx.replyWithPhoto(new InputFile(fs.readFileSync(file), "reference.jpg"), {
+    caption: `Текущее фото: ${Math.round(size / 1024)} КБ, заменено ${when} UTC`,
+  });
+}
+
 export function registerHandlers(
   bot: Bot,
   handler: MessageHandler,
@@ -619,11 +638,27 @@ export function registerHandlers(
     await handleWithTyping(ctx, `Сделай селфи: ${body}`);
   });
 
+  // /photo — show the reference that is actually installed.
+  //
+  // Because for a while nobody could tell: the owner changed his mind about a
+  // photo, and the only way to find out which one was in use was for me to read
+  // the file and compare hashes. "Is it the new one?" was unanswerable from the
+  // phone, which is the only place he is. A question about state has to be
+  // answerable where it is asked.
+  bot.command("photo", async (ctx) => {
+    await sendCurrentReference(ctx);
+  });
+
   // /setphoto — set reference photo for selfie generation (saved locally)
   bot.command("setphoto", async (ctx) => {
     const photo = ctx.message?.reply_to_message?.photo ?? ctx.message?.photo;
     if (!photo?.length) {
-      await ctx.reply("Отправь фото или ответь на фото командой /setphoto");
+      // Called with nothing attached, which is what happens when the owner
+      // thinks a photo he already sent has been applied. Showing him the photo
+      // that is in use answers the question he has and names the mistake, where
+      // a bare instruction leaves him guessing.
+      await ctx.reply("Фото не прикреплено, поэтому ничего не изменилось. Вот что сейчас стоит:");
+      await sendCurrentReference(ctx);
       return;
     }
     const saved = await savePhotoFromTelegram(ctx, bot.token);
