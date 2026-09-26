@@ -196,7 +196,7 @@ export function getDB(dbPath?: string): Database.Database {
  *   1 — stems only
  *   2 — stems plus the raw tokens
  */
-const KNOWLEDGE_INDEX_VERSION = 2;
+export const KNOWLEDGE_INDEX_VERSION = 2;
 
 /** Small key-value store used for schema versions and rotation cursors. */
 export function readMeta(key: string): string | null {

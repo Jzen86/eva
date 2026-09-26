@@ -29,6 +29,8 @@ import { SkillSearchTool } from "./core/tools/skill-search.js";
 import { SkillInstallTool } from "./core/tools/skill-install.js";
 import { SendFileTool } from "./core/tools/send-file.js";
 import { SwitchModelTool } from "./core/tools/switch-model.js";
+import { DoctorTool } from "./core/tools/doctor.js";
+import { runDoctor, formatReport } from "./core/doctor.js";
 import type { EmbeddingEndpoint } from "./core/memory/dedup.js";
 
 /**
@@ -44,6 +46,51 @@ function embeddingEndpointFor(reg: ProviderRegistry | null): EmbeddingEndpoint |
   const provider = reg?.toConfig().providers[ref.provider];
   if (!provider?.base_url || !provider.api_key) return null;
   return { baseUrl: provider.base_url, apiKey: provider.api_key, model: ref.model };
+}
+
+/**
+ * `eva doctor` — the same checks the `doctor` tool runs, without starting the
+ * bot.
+ *
+ * The tool is the useful half; this is the half that works when the bot will
+ * not start, or over ssh as the user the service runs as. Exit code is 1 when
+ * something is broken, so a check can gate a restart.
+ */
+async function doctorCli(argv: string[]): Promise<number> {
+  const probe = argv.includes("--probe");
+  const configPath = getConfigPath();
+  const config = isConfigured() ? loadConfig(configPath) : null;
+  const registry = config && getLLMApiKey(config)
+    ? new ProviderRegistry(toRegistryConfig(config))
+    : undefined;
+
+  const report = await runDoctor({
+    configPath,
+    registry,
+    probe: probe
+      ? async (ref) => {
+          if (!registry) return { ok: false, ms: 0, reason: "реестр недоступен" };
+          const started = Date.now();
+          try {
+            const res = await registry.client(ref).chat([
+              { role: "user", content: "Скажи одно слово: ок" },
+            ]);
+            const ms = Date.now() - started;
+            const empty = !res.text.trim() && !res.toolCalls?.length;
+            return empty ? { ok: false, ms, reason: "пустой ответ" } : { ok: true, ms };
+          } catch (err) {
+            return {
+              ok: false,
+              ms: Date.now() - started,
+              reason: err instanceof Error ? err.message.slice(0, 300) : String(err),
+            };
+          }
+        }
+      : undefined,
+  });
+
+  console.log(formatReport(report, configPath));
+  return report.bad > 0 ? 1 : 0;
 }
 
 async function main() {
@@ -119,6 +166,7 @@ async function main() {
     // Let Eva answer "давай поговорим на другой модели" herself. Verified
     // before it sticks: a model that fails the smoke test is rolled back.
     tools.register(new SwitchModelTool({ registry, router: llm, selfSwitchable: true }));
+  tools.register(new DoctorTool({ registry }));
   }
 
   // Selfie tool — uses fal.ai key from selfies config, falls back to video config
@@ -362,7 +410,19 @@ function setupShutdown(scheduler?: SchedulerService, router?: LLMRouter) {
   process.on("SIGTERM", shutdown);
 }
 
-main().catch((err) => {
-  console.error(err instanceof Error ? err.message : err);
-  process.exit(1);
-});
+// The CLI path is checked before main() so a diagnosis works on a box where
+// the bot itself will not come up — which is exactly when it is needed.
+const argv = process.argv.slice(2);
+if (argv[0] === "doctor") {
+  doctorCli(argv.slice(1))
+    .then((code) => process.exit(code))
+    .catch((err) => {
+      console.error(err instanceof Error ? err.message : err);
+      process.exit(1);
+    });
+} else {
+  main().catch((err) => {
+    console.error(err instanceof Error ? err.message : err);
+    process.exit(1);
+  });
+}
