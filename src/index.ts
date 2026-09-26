@@ -14,6 +14,7 @@ import { primeStudyTimer, runStudyIfDue } from "./core/memory/study-runner.js";
 import type { LLMClient } from "./core/llm/types.js";
 import type { Channel } from "./channels/types.js";
 import { buildTools, describeToolset } from "./core/toolsets.js";
+import { describeBrowserInstall } from "./core/tools/browser.js";
 import { runDoctor, formatReport } from "./core/doctor.js";
 import { runInit, nextSteps, InitCancelled } from "./core/init.js";
 import { referencePhotoPath, hasReferencePhoto } from "./core/reference-photo.js";
@@ -185,6 +186,7 @@ async function main() {
   });
   const tools = toolset.tools;
   console.log(describeToolset(toolset));
+  console.log(await describeBrowserInstall(Boolean(toolset.tools.get("browser"))));
 
   // Setup Engine with personality and tools
   const personality = getPersonality(config);

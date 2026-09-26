@@ -1,7 +1,95 @@
 import type { Browser, BrowserContext, Page } from "playwright";
 import type { Tool, ToolParam, ToolResult } from "./types.js";
+import fs from "node:fs";
+import path from "node:path";
 
 const MAX_TEXT_CHARS = 4000;
+
+const PLAYWRIGHT_CACHE = path.join(
+  process.env.HOME ?? "/root",
+  ".cache",
+  "ms-playwright",
+);
+
+/** Browser builds sitting in the cache, newest last: `chromium_headless_shell-1243`. */
+export function installedBrowserBuilds(): string[] {
+  try {
+    return fs
+      .readdirSync(PLAYWRIGHT_CACHE)
+      .filter((name) => name.startsWith("chromium"))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * A one-line warning when the browser cannot launch, for the startup banner.
+ *
+ * The reason this check exists: a `browser` that cannot start is not a tool that
+ * fails sometimes, it is the whole way she reaches the internet. It sat broken
+ * on every single page for the life of the install, saying nothing until someone
+ * asked her to open a page — and the visible result was not a broken tool, it
+ * was a girl answering from memory, sounding like she had forgotten how to look
+ * anything up.
+ *
+ * The path comes from Playwright's own `executablePath()`, which is the same
+ * answer `launch()` gives, so this check cannot drift from the failure it
+ * predicts. A hardcoded path in a diagnostic is how a diagnostic starts lying.
+ *
+ * Returns an empty string when there is nothing to say.
+ */
+export async function describeBrowserInstall(registered: boolean): Promise<string> {
+  if (!registered) return "";
+  let exe: string;
+  try {
+    const { chromium } = await import("playwright");
+    exe = chromium.executablePath();
+  } catch {
+    return "";
+  }
+  if (fs.existsSync(exe)) return "";
+
+  const wanted = exe.match(/chromium(?:_headless_shell)?-(\d+)/)?.[1];
+  const have = installedBrowserBuilds();
+  return (
+    `🌐 browser НЕ РАБОТАЕТ: playwright ждёт сборку ${wanted ?? "?"}, ` +
+    `а на сервере ${have.length ? have.join(", ") : "ничего"}. ` +
+    "Она не откроет ни одной страницы, пока не выполнено: npx playwright install chromium"
+  );
+}
+
+/**
+ * What is actually wrong with the browser, in words.
+ *
+ * The generic version of this message — "Chromium не найден, поставь
+ * npx playwright install chromium" — is what this install got, and it was
+ * wrong: Chromium *was* there, 641 MB of it. The Playwright package had been
+ * upgraded underneath it and wanted build 1243 while the cache held 1223, so
+ * every single page failed with a message telling the owner to install a browser
+ * he had already installed. Nobody acted on it, and a tool that had never once
+ * worked looked like a model that had lost the internet.
+ *
+ * A version skew and a missing browser are the same symptom and opposite fixes,
+ * so the message has to tell them apart.
+ */
+export function describeBrowserMiss(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  const wanted = raw.match(/chromium(?:_headless_shell)?-(\d+)/)?.[1];
+  const present = installedBrowserBuilds();
+
+  if (wanted && present.length && !present.some((b) => b.endsWith(`-${wanted}`))) {
+    const have = present.map((b) => b.replace(/^chromium_?/, "").replace(/-\d+$/, "")).join(", ");
+    return (
+      `Chromium не той версии: playwright ждёт сборку ${wanted}, а в кэше ${have}. ` +
+      "Версии Playwright и браузера разъехались — лечится одной командой, а не поиском chromium."
+    );
+  }
+  if (wanted && !present.length) {
+    return `Браузер не скачан: playwright ждёт сборку ${wanted}, а кэш ${PLAYWRIGHT_CACHE} пуст.`;
+  }
+  return `Chromium не найден: ${raw.slice(0, 200)}.`;
+}
 
 function truncate(text: string, max: number): string {
   if (text.length <= max) return text;
@@ -95,10 +183,7 @@ export class BrowserTool implements Tool {
       // and run a third-party binary belongs to whoever installs the bot, not
       // to whichever page the model decided to open. The fix is one command
       // the owner can see and schedule.
-      throw new Error(
-        `Chromium не найден: ${err instanceof Error ? err.message : String(err)}. ` +
-          "Поставь его на сервере: npx playwright install chromium",
-      );
+      throw new Error(`${describeBrowserMiss(err)} Поставь его на сервере: npx playwright install chromium`);
     }
 
     this.context = await this.browser.newContext({
@@ -148,3 +233,4 @@ export class BrowserTool implements Tool {
     return { success: true, output };
   }
 }
+
