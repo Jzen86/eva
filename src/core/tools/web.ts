@@ -45,6 +45,41 @@ function formatResults(items: Array<{ title: string; link: string; snippet: stri
     .join("\n\n")
 }
 
+/** A question that wants one value back, not a list of pages. */
+const ASKS_FOR_VALUE = /верси|номер|patch|version|update\s+\d|дата|когда|when|date|цена|стоимост|price|cost|how much|сколько|latest|последн|newest|текущ/i;
+
+/** Things a value could look like: a version, a year, an amount. */
+const VALUE_SHAPED = /\b\d+\.\d+(?:\.\d+)?\b|\b20\d\d\b|\b\d[\d\s.,]{1,8}(?:₽|\$|руб|usd)\b/i;
+
+/**
+ * State plainly whether the answer is actually in the results.
+ *
+ * This is the one guard left after everything else was tried. Told which patch is
+ * the latest, she came back with "2.0.6, released 18 September 2026, fixes crashes
+ * on AMD" — and not one of those was in what the search returned. The search had
+ * succeeded; the results were two thousand characters of patch-note landing pages
+ * that never mention a version. A tool reporting success with an answer-shaped
+ * list of links is the same as reporting nothing and letting her fill the gap, and
+ * she filled it, completely.
+ *
+ * So for a question that wants a value, the tool now says which values the
+ * results actually contain. If none, that is a failure with a reason, and she has
+ * to tell the owner she did not find it. A bare page list cannot be confabulated
+ * into a version number; a page list plus "ни одной версии в выдаче" cannot
+ * either.
+ */
+export function stateWhatWasFound(query: string, results: string): string | null {
+  if (!ASKS_FOR_VALUE.test(query)) return null;
+  const values = [...new Set((results.match(new RegExp(VALUE_SHAPED, "g")) ?? []).map((v) => v.trim()))];
+  if (!values.length) {
+    return (
+      "ВНИМАНИЕ: в выдаче нет ни одной версии, даты или суммы — только общие страницы. " +
+      "Ответа на конкретный вопрос в них нет. Скажи Жене, что не нашла, и не называй цифры оттуда."
+    );
+  }
+  return `Числа, которые реально есть в выдаче: ${values.slice(0, 12).join(", ")}. Называй только их; если среди них нет нужного — так и скажи.`;
+}
+
 /**
  * Pull results out of DuckDuckGo's no-JavaScript page.
  *
@@ -75,7 +110,15 @@ export function parseDuckDuckGoHtml(html: string): Array<{ title: string; link: 
 
 export class WebTool implements Tool {
   static readonly MAX_READ_CHARS = 4000
-  static readonly MAX_SEARCH_CHARS = 2000
+  /**
+   * Was 2000, which cut a 3179-character result set in half.
+   *
+   * The cut was announced, so a careful model could have noticed — but what it
+   * means in practice is that a number the owner asked for can be in results 7
+   * through 10, invisible. Halving the set to save a few hundred tokens is a poor
+   * trade against an answer that is simply not there.
+   */
+  static readonly MAX_SEARCH_CHARS = 4000
 
   readonly name = "web"
   readonly description = "Search the web and read web pages. Use 'search' to find information, 'read' to get page content as clean text. For interactive browsing (clicking, forms) use the 'browser' tool. For API calls use the 'http' tool. When the question asks for a specific value — a version, a number, a date, a price — put that value in the query: 'latest patch version number', not 'latest news about updates'. A general query returns general pages, and the number is not in them. For anything 'latest', 'new' or 'current', add the current year to the query: results from earlier years read as current, and the year is in your system prompt."
@@ -167,7 +210,7 @@ export class WebTool implements Tool {
         .map((r) => ({ title: r.title ?? r.url, link: r.url, snippet: r.content ?? "" }))
 
       if (!items.length) return { success: true, output: "No results found." }
-      return { success: true, output: truncate(formatResults(items), WebTool.MAX_SEARCH_CHARS) }
+      return { success: true, output: truncate(this.withFoundNote(query, formatResults(items)), WebTool.MAX_SEARCH_CHARS) }
     } catch (err) {
       return { success: false, output: "", error: (err as Error).message }
     }
@@ -199,7 +242,7 @@ export class WebTool implements Tool {
         return { success: true, output: "No results found." }
       }
 
-      return { success: true, output: truncate(formatResults(data.items), WebTool.MAX_SEARCH_CHARS) }
+      return { success: true, output: truncate(this.withFoundNote(query, formatResults(data.items)), WebTool.MAX_SEARCH_CHARS) }
     } catch (err) {
       return { success: false, output: "", error: (err as Error).message }
     }
@@ -216,6 +259,7 @@ export class WebTool implements Tool {
    * searx instances rate-limit. So this is a working fallback, not a substitute
    * for a credential — and the tool must never claim otherwise.
    */
+  /** The same answer with nothing to install, sign up for, or pay for. */
   private async searchDuckDuckGo(query: string): Promise<ToolResult> {
     try {
       const url = new URL("https://html.duckduckgo.com/html/")
@@ -254,10 +298,21 @@ export class WebTool implements Tool {
       if (!items.length) {
         return { success: true, output: "No results found." }
       }
-      return { success: true, output: truncate(formatResults(items), WebTool.MAX_SEARCH_CHARS) }
+      return { success: true, output: truncate(this.withFoundNote(query, formatResults(items)), WebTool.MAX_SEARCH_CHARS) }
     } catch (err) {
       return { success: false, output: "", error: (err as Error).message }
     }
+  }
+
+  /**
+   * Put the honesty note in front, not at the end.
+   *
+   * A caveat after two thousand characters of links is a caveat nobody reads, and
+   * the links are what she quotes. It has to be the first thing she sees.
+   */
+  private withFoundNote(query: string, results: string): string {
+    const note = stateWhatWasFound(query, results)
+    return note ? `${note}\n\n${results}` : results
   }
 
   private async read(url: string | undefined): Promise<ToolResult> {
@@ -296,3 +351,4 @@ export class WebTool implements Tool {
     }
   }
 }
+

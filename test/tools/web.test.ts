@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest"
-import { WebTool, parseDuckDuckGoHtml } from "../../src/core/tools/web.js"
+import { WebTool, parseDuckDuckGoHtml, stateWhatWasFound } from "../../src/core/tools/web.js"
 
 describe("WebTool", () => {
   it("has correct name and actions", () => {
@@ -31,7 +31,9 @@ describe("WebTool", () => {
 
   it("truncates output to MAX_OUTPUT_CHARS", async () => {
     expect(WebTool.MAX_READ_CHARS).toBe(4000)
-    expect(WebTool.MAX_SEARCH_CHARS).toBe(2000)
+    // Was 2000, which cut a 3179-character result set in half — so a number the
+    // owner asked for could sit in results 7-10, unseen.
+    expect(WebTool.MAX_SEARCH_CHARS).toBe(4000)
   })
 
   // The shape DuckDuckGo's no-JS page actually has, wrapped destinations and all.
@@ -161,3 +163,51 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+describe("stateWhatWasFound", () => {
+  // The exact failure: told which patch is the latest, she answered "2.0.6,
+  // released 18 September 2026, fixes crashes on AMD". The search had succeeded and
+  // the results never contained any of that. A list of links that looks like an
+  // answer is the same as no answer at all, and she filled it in completely.
+  const genericPages = [
+    "1. Patch Notes - full list of updates",
+    "   https://www.stalker2.com/patch-notes",
+    "   A comprehensive archive of changes, tweaks and fixes.",
+    "2. Heart of Chornobyl Patches - SteamDB",
+    "   https://steamdb.info/app/1643320/patchnotes/",
+    "   Curated patch notes and changelogs.",
+  ].join("\n\n");
+
+  it("says the answer is not in the results when no value is there", () => {
+    const note = stateWhatWasFound("latest patch version S.T.A.L.K.E.R. 2 2026", genericPages);
+    expect(note).toContain("ни одной версии");
+    expect(note).toContain("не нашла");
+  });
+
+  it("lists the values that are actually there", () => {
+    const note = stateWhatWasFound("latest patch version", "Patch 2.0.6 and 1.7.1, 2026");
+    expect(note).toContain("2.0.6");
+    expect(note).toContain("1.7.1");
+  })
+
+  it("stays out of the way for a question that wants no value", () => {
+    expect(stateWhatWasFound("расскажи анекдот", "1. Result\n   https://x\n   text")).toBeNull();
+  })
+
+  it("puts the note first, before the links she is about to quote", async () => {
+    const tool = new WebTool({ searxngUrl: "http://127.0.0.1:8888" })
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        results: [{ title: "Patch Notes", url: "https://s2.com/p", content: "Archive of changes" }],
+      }),
+    }))
+
+    const r = await tool.execute({ action: "search", query: "latest patch version" })
+    expect(r.output.startsWith("ВНИМАНИЕ")).toBe(true)
+    expect(r.output.indexOf("ВНИМАНИЕ")).toBeLessThan(r.output.indexOf("https://"))
+  })
+
+  it("keeps the whole result set now", () => {
+    expect(WebTool.MAX_SEARCH_CHARS).toBe(4000)
+  })
+})
