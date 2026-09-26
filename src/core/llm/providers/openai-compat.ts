@@ -225,8 +225,8 @@ async function apiErrorFrom(response: Response, bodyText?: string): Promise<Erro
  */
 async function* bodyChunks(response: Response): AsyncGenerator<string> {
   const body = response.body as unknown as
-    | (ReadableStream<Uint8Array> & AsyncIterable<Uint8Array>)
-    | AsyncIterable<Uint8Array | string>
+    | (ReadableStream<Uint8Array> & { destroy?: () => void })
+    | (AsyncIterable<Uint8Array | string> & { destroy?: () => void })
     | null;
   if (!body) return;
 
@@ -243,13 +243,26 @@ async function* bodyChunks(response: Response): AsyncGenerator<string> {
         yield toText(value);
       }
     } finally {
+      // Release *and* cancel. Releasing alone leaves the socket open when the
+      // consumer stops early — which it always does, at [DONE] — and a bot that
+      // answers all day would accumulate one live connection per answer. The
+      // symptom is invisible for hours and then the process will not exit.
       reader.releaseLock();
+      void reader.cancel().catch(() => {});
     }
     return;
   }
 
-  for await (const chunk of body as AsyncIterable<Uint8Array | string>) {
-    yield toText(chunk);
+  const iterator = (body as AsyncIterable<Uint8Array | string>)[Symbol.asyncIterator]();
+  try {
+    for (;;) {
+      const { done, value } = await iterator.next();
+      if (done) break;
+      if (value !== undefined) yield toText(value);
+    }
+  } finally {
+    await iterator.return?.(undefined as never).catch(() => {});
+    body.destroy?.();
   }
 }
 
