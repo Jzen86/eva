@@ -164,6 +164,24 @@ const configSchema = z.object({
   video: z.record(z.string(), z.any()).optional(),
   selfies: z.record(z.string(), z.any()).optional(),
   sync_so: z.record(z.string(), z.any()).optional(),
+  /**
+   * Powerful tools, off unless switched on here.
+   *
+   * A bot that can run a real browser, reach another host over ssh, or install
+   * npm packages is a different thing from one that cannot — and the second is
+   * what nearly every install actually wants. Defaults stay false, so a fresh
+   * install carries neither the risk nor the 150 MB of Chromium. The startup
+   * line and `eva doctor` both name what is off and why, so nothing is missing
+   * silently.
+   */
+  tools: z
+    .object({
+      browser: z.boolean().optional(),
+      ssh: z.boolean().optional(),
+      npm_install: z.boolean().optional(),
+    })
+    .passthrough()
+    .optional(),
   google: z.object({
     api_key: z.string(),
     cx: z.string(),

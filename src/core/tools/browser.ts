@@ -73,15 +73,32 @@ export class BrowserTool implements Tool {
   private async getPage(): Promise<Page> {
     if (this.page) return this.page;
 
-    const { chromium } = await import("playwright");
+    // Playwright is an optional dependency. The import failing is the normal
+    // case on an install that did not ask for a browser, and it has to read as
+    // "this capability is not here" rather than as a crash.
+    let chromium: typeof import("playwright")["chromium"];
+    try {
+      ({ chromium } = await import("playwright"));
+    } catch {
+      throw new Error(
+        "Браузер не установлен (нет playwright). Включи tools.browser в config.yaml " +
+          "и поставь: npm install playwright && npx playwright install chromium",
+      );
+    }
 
     try {
       this.browser = await chromium.launch({ headless: true });
-    } catch {
-      // Chromium not installed — attempt auto-install
-      const { execSync } = await import("child_process");
-      execSync("npx playwright install chromium", { stdio: "pipe", timeout: 120_000 });
-      this.browser = await chromium.launch({ headless: true });
+    } catch (err) {
+      // Deliberately no auto-install here. The previous version downloaded
+      // ~150 MB of Chromium on the production server, at request time, as the
+      // service user, because a tool call had failed — the decision to fetch
+      // and run a third-party binary belongs to whoever installs the bot, not
+      // to whichever page the model decided to open. The fix is one command
+      // the owner can see and schedule.
+      throw new Error(
+        `Chromium не найден: ${err instanceof Error ? err.message : String(err)}. ` +
+          "Поставь его на сервере: npx playwright install chromium",
+      );
     }
 
     this.context = await this.browser.newContext({

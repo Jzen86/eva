@@ -6,30 +6,13 @@ import { TelegramChannel } from "./channels/telegram/index.js";
 import { LLMRouter } from "./core/llm/router.js";
 import { ProviderRegistry } from "./core/llm/registry.js";
 import { Engine } from "./core/engine.js";
-import { ToolRegistry } from "./core/tools/registry.js";
-import { ShellTool } from "./core/tools/shell.js";
-import { FilesTool } from "./core/tools/files.js";
-import { HttpTool } from "./core/tools/http.js";
-import { BrowserTool } from "./core/tools/browser.js";
-import { WebTool } from "./core/tools/web.js";
-import { createMemoryTool } from "./core/tools/memory.js";
-import { selfConfigTool } from "./core/tools/self-config.js";
 import { SchedulerService } from "./core/tools/scheduler.js";
 import { SchedulerStore } from "./core/tools/scheduler-store.js";
 import { getDB } from "./core/memory/db.js";
 import { primeStudyTimer, runStudyIfDue } from "./core/memory/study-runner.js";
 import type { LLMClient } from "./core/llm/types.js";
 import type { Channel } from "./channels/types.js";
-import { sshTool } from "./core/tools/ssh.js";
-import { npmInstallTool } from "./core/tools/npm-install.js";
-import { SelfieTool } from "./core/tools/selfie.js";
-import { VoiceTool } from "./core/tools/voice.js";
-import { ImageGenTool } from "./core/tools/image-gen.js";
-import { SkillSearchTool } from "./core/tools/skill-search.js";
-import { SkillInstallTool } from "./core/tools/skill-install.js";
-import { SendFileTool } from "./core/tools/send-file.js";
-import { SwitchModelTool } from "./core/tools/switch-model.js";
-import { DoctorTool } from "./core/tools/doctor.js";
+import { buildTools, describeToolset } from "./core/toolsets.js";
 import { runDoctor, formatReport } from "./core/doctor.js";
 import type { EmbeddingEndpoint } from "./core/memory/dedup.js";
 
@@ -144,79 +127,25 @@ async function main() {
   }
 
   // Register tools
-  const tools = new ToolRegistry();
   const schedulerDb = getDB();
   const schedulerStore = new SchedulerStore(schedulerDb);
   schedulerStore.init();
   const scheduler = new SchedulerService(schedulerStore);
-  tools.register(new ShellTool());
-  tools.register(new SendFileTool());
-  tools.register(new FilesTool());
   const passwordHash = config.security?.password_hash ?? "default-key-change-me";
-  tools.register(new HttpTool({ encryptionKey: passwordHash }));
-  tools.register(new BrowserTool());
-  tools.register(createMemoryTool({ embedding: embeddingEndpointFor(registry) }));
-  tools.register(selfConfigTool);
-  tools.register(scheduler.tool);
-  tools.register(sshTool);
-  tools.register(npmInstallTool);
   // channels map is populated later — closure captures the reference
   const channels = new Map<string, Channel>();
-  if (registry && llm) {
-    // Let Eva answer "давай поговорим на другой модели" herself. Verified
-    // before it sticks: a model that fails the smoke test is rolled back.
-    tools.register(new SwitchModelTool({ registry, router: llm, selfSwitchable: true }));
-  tools.register(new DoctorTool({ registry }));
-  }
-
-  // Selfie tool — uses fal.ai key from selfies config, falls back to video config
-  const selfiesConfig = config.selfies as Record<string, string> | undefined;
-  const videoConfig = config.video as Record<string, string> | undefined;
-  // Image generation goes through the `image` role when it is set, so it is not
-  // tied to OpenRouter by construction.
-  const imageCfg = (config.image_gen as Record<string, string> | undefined) ?? {};
-  const imageRef = registry?.role("image") ?? registry?.role("fast");
-  const imageProvider = imageRef ? registry?.toConfig().providers[imageRef.provider] : undefined;
-  const imageKey =
-    imageCfg.api_key ??
-    (imageRef && imageProvider?.api_key ? imageProvider.api_key : getLLMApiKey(config)) ??
-    "";
-  const imageBaseUrl = imageCfg.base_url ?? imageProvider?.base_url;
-  const selfieTool = new SelfieTool({
-    falApiKey: selfiesConfig?.fal_api_key ?? videoConfig?.fal_api_key ?? "",
-    referencePhotoUrl: selfiesConfig?.reference_photo_url,
-    provider: (selfiesConfig?.provider as "fal" | "openrouter" | undefined) ?? "fal",
-    openrouterApiKey: imageKey,
-    openrouterModel: imageCfg.model ?? (imageRef ? imageRef.model : undefined),
-    imageBaseUrl: imageCfg.base_url,
+  // Which tools exist is a function of the config and nothing else, so it can be
+  // asked without starting a bot. See core/toolsets.ts.
+  const toolset = buildTools({
+    config,
+    registry,
+    router: llm,
+    scheduler,
+    passwordHash,
+    embedding: embeddingEndpointFor(registry),
   });
-  tools.register(selfieTool);
-  // Voice tool — lets Eva send voice messages on her own initiative
-  tools.register(new VoiceTool({
-    voiceConfig: (config.voice as Record<string, unknown>) ?? {},
-    falApiKey: (selfiesConfig?.fal_api_key ?? videoConfig?.fal_api_key ?? "") || undefined,
-  }));
-  const llmApiKey = getLLMApiKey(config);
-  if (imageKey) {
-    tools.register(new ImageGenTool({ apiKey: imageKey, baseUrl: imageBaseUrl }));
-  }
-  // SkillsMP tools — search and install agent skills
-  const skillsmpKey = (config as any).skillsmp?.api_key as string | undefined;
-  if (skillsmpKey) {
-    tools.register(new SkillSearchTool({ apiKey: skillsmpKey }));
-    // Embeddings come from the `embed` role, same as everything else.
-    const embedEndpoint = embeddingEndpointFor(registry);
-    tools.register(new SkillInstallTool({
-      apiKey: llmApiKey ?? undefined,
-      ...(embedEndpoint ? { embeddingEndpoint: embedEndpoint } : {}),
-    }));
-  }
-  // Web tool — conditional on google config
-  const googleConfig = (config as any).google as { api_key: string; cx: string } | undefined;
-  if (googleConfig?.api_key && googleConfig?.cx) {
-    tools.register(new WebTool({ apiKey: googleConfig.api_key, cx: googleConfig.cx }));
-  }
-  console.log(`🔧 Зарегистрировано инструментов: ${tools.list().length}`);
+  const tools = toolset.tools;
+  console.log(describeToolset(toolset));
 
   // Setup Engine with personality and tools
   const personality = getPersonality(config);
@@ -258,7 +187,7 @@ async function main() {
         console.log(`🔒 Owner ID ${chatId} сохранён в конфиг`);
       };
       telegram.onSetReferencePhoto = (photoPath) => {
-        selfieTool.setReferencePhoto(photoPath);
+        toolset.instances.selfie?.setReferencePhoto(photoPath);
         console.log(`📸 Референсное фото обновлено: ${photoPath.slice(0, 60)}`);
       };
       telegram.onMessage(async (msg, onProgress) => {
@@ -274,19 +203,24 @@ async function main() {
       });
       // Voice delivery options (Gemini TTS etc.) — must be set before start()
       telegram.streaming = config.telegram.streaming ?? true;
+      const selfiesCfg = (config.selfies as Record<string, unknown> | undefined) ?? {};
+      const videoCfg = (config.video as Record<string, unknown> | undefined) ?? {};
+      const ttsKey = (typeof selfiesCfg.fal_api_key === "string" && selfiesCfg.fal_api_key)
+        || (typeof videoCfg.fal_api_key === "string" && videoCfg.fal_api_key)
+        || undefined;
       telegram.voiceOptions = {
         voiceConfig: (config.voice as Record<string, unknown>) ?? {},
-        falApiKey: (selfiesConfig?.fal_api_key ?? videoConfig?.fal_api_key ?? "") || undefined,
-        avatarPath: path.join(os.homedir(), "\.eva", "reference.jpg"),
+        falApiKey: ttsKey,
+        avatarPath: path.join(os.homedir(), ".eva", "reference.jpg"),
       };
       await telegram.start({
         token: config.telegram.token,
         owner_chat_id: config.telegram.owner_id?.toString() ?? "",
       });
       // Load saved reference photo if exists and no URL in config
-      const savedRef = path.join(os.homedir(), "\.eva", "reference.jpg");
-      if (!selfieTool.config.referencePhotoUrl && fs.existsSync(savedRef)) {
-        selfieTool.setReferencePhoto(savedRef);
+      const savedRef = path.join(os.homedir(), ".eva", "reference.jpg");
+      if (!toolset.instances.selfie?.config.referencePhotoUrl && fs.existsSync(savedRef)) {
+        toolset.instances.selfie?.setReferencePhoto(savedRef);
         console.log("📸 Референсное фото загружено из ~/.eva/reference.jpg");
       }
       console.log("✅ Telegram бот запущен");
