@@ -718,6 +718,12 @@ export function registerHandlers(
       return;
     }
 
+    // A photo without the caption is a photo in the conversation, not a new face.
+    // Say so in the log: the owner sent two "new" references this way, believed
+    // both had been applied, and the file on disk never changed. Nothing looked
+    // broken — which is exactly why it went unnoticed twice.
+    console.log("📷 Фото в чат (референс не менялся — для этого /setphoto на фото)");
+
     // A photo while the constructor is asking for something else is a wrong
     // answer, not a new topic: say which question is open and keep the quest
     // where it is, so it cannot be quietly thrown away by a misfire.

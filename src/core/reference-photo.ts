@@ -43,11 +43,20 @@ export function hasReferencePhoto(configPath?: string): boolean {
   }
 }
 
-/** Human-readable size, for the doctor report. Never the photo itself. */
+/**
+ * Human-readable size and age, for the doctor report. Never the photo itself.
+ *
+ * The age is not decoration. A reference that was never replaced looks exactly
+ * like one that was, from the outside: the report said "фото есть", the owner
+ * sent a new one, the send went into the conversation, and the file stayed as it
+ * was. Two of those in a row looked like the tool ignoring him. Showing when it
+ * was last written makes a stale one obvious on sight.
+ */
 export function describeReferencePhoto(configPath?: string): string {
   try {
     const st = fs.statSync(referencePhotoPath(configPath));
-    return `${referencePhotoPath(configPath)} (${Math.round(st.size / 1024)} КБ)`;
+    const when = st.mtime.toISOString().slice(0, 16).replace("T", " ");
+    return `${referencePhotoPath(configPath)} (${Math.round(st.size / 1024)} КБ, заменено ${when} UTC)`;
   } catch {
     return "нет";
   }
