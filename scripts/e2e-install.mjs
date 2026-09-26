@@ -56,6 +56,17 @@ const check = (ok, what) => {
   if (!ok) fail.push(what);
 };
 
+// 0. The install promise itself. `npm i -g github:Jzen86/eva` works only because
+//    npm builds a git dependency: it clones, installs devDependencies, and runs
+//    `prepare`. Without that script the clone arrives with no dist/, the `bin`
+//    entry names a file that was never created, and the install dies on the
+//    first command with MODULE_NOT_FOUND. Found on a real server, where tsup
+//    was sitting right there and nobody had run a build.
+const pkg = JSON.parse(fs.readFileSync(path.resolve("package.json"), "utf8"));
+check(pkg.scripts?.prepare === "npm run build", "a git install builds itself (prepare script)");
+check(pkg.bin?.eva === "./dist/index.js", "the bin entry names the build output");
+check(fs.existsSync(pkg.bin?.eva ? path.resolve(pkg.bin.eva) : ""), "that file is what this run just built");
+
 // 1. nothing configured yet
 const before = eva(["doctor"], 1);
 check(!fs.existsSync(configPath), "no config before init");

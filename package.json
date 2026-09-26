@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "tsup",
+    "prepare": "npm run build",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
@@ -25,6 +26,7 @@
     "zod": "^3.24.0"
   },
   "//optionalDependencies": "playwright is only used by the browser tool, which is off by default (tools.browser). In `dependencies` it made every install pull ~150 MB of Chromium for a tool nobody asked for. Optional means `npm i -g` stays small, and `npm i playwright` enables it for whoever wants it. The browser tool says exactly what to install when it is missing.",
+  "//prepare": "The install promise is `npm i -g github:Jzen86/eva` and then it runs. That only works because npm builds a git dependency — it clones, installs devDependencies, and runs `prepare`. Without this script the clone arrives with no dist/, the `bin` entry points at a file that was never created, and the install fails at the first command with MODULE_NOT_FOUND. Found on a real server install, where `tsup` was present and nobody had run a build. Do not `npm ci --omit=optional` to install this: tsup's own platform binary is an optional dependency, so omitting optional breaks the build this script runs.",
   "optionalDependencies": {
     "playwright": "^1.58.2"
   },
