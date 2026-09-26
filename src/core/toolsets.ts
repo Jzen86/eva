@@ -198,25 +198,35 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
 
   const explicitModel = str(imageCfg.model);
   const legacyModel = str(selfies.openrouter_model);
-  // The provider always follows the model, so a key and an endpoint can never be
-  // taken from one place and a model from another.
-  const source = explicitModel
-    ? { model: explicitModel, provider: str(selfies.provider) ?? "" }
-    : imageRoleRef
-      ? { model: imageRoleRef.model, provider: imageRoleRef.provider }
-      : legacyModel
-        ? { model: legacyModel, provider: str(selfies.provider) ?? "" }
-        : chatRef
-          ? { model: chatRef.model, provider: chatRef.provider }
-          : null;
 
-  const imageModel = source?.model;
-  const imageSpec = source ? providerSpecs[source.provider] : undefined;
-  const imageKey = str(imageCfg.api_key) || imageSpec?.api_key || getLLMApiKey(config) || "";
-  const imageBaseUrl = str(imageCfg.base_url) || imageSpec?.base_url;
+  /**
+   * Each tool reads its own block first.
+   *
+   * They used to share one resolved model, which quietly welded the expensive
+   * model to both: moving the picture model to a free one would have taken the
+   * selfies with it, and a selfie that has lost its reference photo is not a
+   * cheaper selfie, it is a different picture. So `image_gen` answers to
+   * `image_gen.model` and `selfie` to `selfies.openrouter_model`, and only then do
+   * they share the `image` role or the chat model.
+   */
+  const pick = (own: string | undefined) => {
+    if (own) return { model: own, provider: str(selfies.provider) ?? "" };
+    if (imageRoleRef) return { model: imageRoleRef.model, provider: imageRoleRef.provider };
+    if (legacyModel) return { model: legacyModel, provider: str(selfies.provider) ?? "" };
+    return chatRef ? { model: chatRef.model, provider: chatRef.provider } : null;
+  };
 
-  if (imageKey) {
-    add(new ImageGenTool({ apiKey: imageKey, baseUrl: imageBaseUrl, ...(imageModel ? { model: imageModel } : {}) }), "keyed");
+  const genSource = pick(explicitModel) ?? { model: legacyModel, provider: str(selfies.provider) ?? "" };
+  const selfieSource = pick(legacyModel) ?? genSource;
+
+  const specFor = (s: { provider: string }) => providerSpecs[s.provider];
+  const keyFor = (s: { provider: string }) =>
+    str(imageCfg.api_key) || specFor(s)?.api_key || getLLMApiKey(config) || "";
+  const baseFor = (s: { provider: string }) => str(imageCfg.base_url) || specFor(s)?.base_url;
+
+  const genKey = keyFor(genSource);
+  if (genKey) {
+    add(new ImageGenTool({ apiKey: genKey, baseUrl: baseFor(genSource), model: genSource.model }), "keyed");
   } else {
     decisions.push({ name: "image_gen", tier: "keyed", registered: false, reason: "нет ключа провайдера изображений" });
   }
@@ -227,15 +237,16 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
   // for that would be exactly the kind of mandatory vendor to get rid of.
   const falKey = str(selfies.fal_api_key) || str(video.fal_api_key);
   const referencePhoto = str(selfies.reference_photo_url);
-  if (falKey || (referencePhoto && imageKey)) {
+  const selfieKey = keyFor(selfieSource);
+  if (falKey || (referencePhoto && selfieKey)) {
     add(
       new SelfieTool({
         falApiKey: falKey,
         referencePhotoUrl: referencePhoto || undefined,
         provider: (selfies.provider as "fal" | "openrouter" | undefined) ?? "fal",
-        openrouterApiKey: imageKey,
-        openrouterModel: imageModel,
-        imageBaseUrl: imageBaseUrl || undefined,
+        openrouterApiKey: selfieKey,
+        openrouterModel: selfieSource.model,
+        imageBaseUrl: baseFor(selfieSource) || undefined,
       }),
       "keyed",
     );

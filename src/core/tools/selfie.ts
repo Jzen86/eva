@@ -46,6 +46,9 @@ export interface SelfieToolConfig {
   imageBaseUrl?: string;
 }
 
+/** Same sentence the dedicated image models use to name the endpoint they want. */
+const WRONG_DOOR = /cannot be used with the chat\/completions endpoint|image generation model|use the \/api\/v1\/images/i;
+
 export class SelfieTool implements Tool {
   name = "selfie";
   description =
@@ -110,11 +113,21 @@ export class SelfieTool implements Tool {
       };
     }
 
-    if (!this.config.referencePhotoUrl) {
+    if (!this.config.referencePhotoUrl && (this.config.provider ?? "fal") === "fal") {
+      // Provider-specific, and not a blanket rule. The fal backend has no
+      // reference to fall back on — it is a "same face, new pose" endpoint, and
+      // without the face there is nothing to do. The OpenRouter one may be a
+      // dedicated image model that takes a prompt and cannot take a photo at
+      // all, and refusing up front is what kept the free models unreachable
+      // while the install paid $0.0672 a picture.
       return {
         success: false,
-        output: "Не задано референсное фото. Попроси пользователя отправить своё фото и написать /setphoto.",
+        output: "Не задано референсное фото, а fal требует его: это генерация «то же лицо, другой ракурс». Попроси пользователя скинуть фото через /setphoto.",
       };
+    }
+
+    if (!this.config.referencePhotoUrl) {
+      console.log("📸 Selfie: референс не задан, лицо не будет сохранено");
     }
 
     const mode = this.resolveMode(params, context);
@@ -193,8 +206,14 @@ export class SelfieTool implements Tool {
     prompt: string,
     mode: "mirror" | "direct",
   ): Promise<{ image?: string; filter?: boolean; error?: string }> {
-    console.log(`📸 Selfie(openrouter/${model}): mode=${mode}`);
+    console.log(`📸 Selfie(openrouter/${model}): mode=${mode}${refUrl ? " +референс" : " без референса"}`);
     try {
+      const content: unknown = refUrl
+        ? [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: refUrl } },
+          ]
+        : prompt;
       const response = await fetch(this.imageEndpoint(), {
         method: "POST",
         headers: {
@@ -204,20 +223,19 @@ export class SelfieTool implements Tool {
         body: JSON.stringify({
           model,
           modalities: ["image", "text"],
-          messages: [
-            {
-              role: "user",
-              content: [
-                { type: "text", text: prompt },
-                { type: "image_url", image_url: { url: refUrl } },
-              ],
-            },
-          ],
+          messages: [{ role: "user", content }],
         }),
       });
 
       if (!response.ok) {
         const errText = await response.text();
+        if (WRONG_DOOR.test(errText)) {
+          // A dedicated image model, saying so. Same reasoning as in image_gen:
+          // match the provider's own sentence rather than a list of ids, because
+          // every one of these names has changed during a single afternoon.
+          console.log(`📸 Selfie: ${model} живёт на /images/generations, переключаюсь`);
+          return await this.callImagesEndpoint(model, prompt);
+        }
         console.error(`📸 Selfie openrouter error ${response.status}: ${errText.slice(0, 200)}`);
         return { error: `OpenRouter ${response.status}` };
       }
@@ -244,13 +262,53 @@ export class SelfieTool implements Tool {
     }
   }
 
+  /**
+   * The free door: `POST /images/generations`.
+   *
+   * Takes a prompt, not a conversation, and answers with `data[0].b64_json`. No
+   * reference can travel this way, which is the trade for models that cost
+   * nothing: the picture is free and the face is not hers. Said in the result,
+   * because a selfie of a stranger that looks like a selfie is the failure that
+   * gets noticed a week later.
+   */
+  private async callImagesEndpoint(model: string, prompt: string): Promise<{ image?: string; error?: string }> {
+    try {
+      const response = await fetch(`${this.imageEndpoint().replace(/\/chat\/completions$/, "")}/images/generations`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.config.openrouterApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ model, prompt }),
+      });
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error(`📸 Selfie images-endpoint error ${response.status}: ${errText.slice(0, 200)}`);
+        return { error: `OpenRouter ${response.status}` };
+      }
+      const data = (await response.json()) as {
+        data?: Array<{ b64_json?: string; media_type?: string; url?: string }>;
+        usage?: { completion_tokens?: number };
+      };
+      const first = data.data?.[0];
+      if (first?.url) return { image: first.url };
+      if (first?.b64_json) {
+        return { image: `data:${first.media_type ?? "image/png"};base64,${first.b64_json}` };
+      }
+      return { error: "no image" };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   private async generateOpenRouter(prompt: string, mode: "mirror" | "direct"): Promise<ToolResult> {
     const primary = this.config.openrouterModel ?? OPENROUTER_DEFAULT_MODEL;
-    const refUrl = this.toDataUrl(this.config.referencePhotoUrl!);
+    const refUrl = this.config.referencePhotoUrl ? this.toDataUrl(this.config.referencePhotoUrl) : "";
 
     const first = await this.callOpenRouterModel(primary, refUrl, prompt, mode);
     if (first.image) {
-      return { success: true, output: "Селфи сгенерировано", mediaUrl: first.image };
+      const noFace = refUrl ? "" : " (эта модель не берёт референс — лицо не сохранено)";
+      return { success: true, output: `Селфи сгенерировано${noFace}`, mediaUrl: first.image };
     }
     if (first.filter) {
       return {

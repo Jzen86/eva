@@ -122,30 +122,48 @@ describe("picture tools follow the configured provider, not the chat model", () 
     expect(result.registered).toContain("image_gen");
   });
 
-  it("lets an explicit image_gen block win over the selfies block", () => {
-    // Two blocks, one intent: the more specific one is the one that was written
-    // for this tool.
+  it("lets each tool read its own block, so a free picture model cannot drag selfies with it", () => {
+    // The two tools used to share one resolved model. That welded the expensive
+    // one to both: moving pictures to a free model would have moved the selfies
+    // too, and a selfie without its reference photo is not a cheaper selfie, it
+    // is a different picture.
+    const cfg = base();
+    (cfg as unknown as Record<string, unknown>).image_gen = { model: "vendor/free-draw" };
+    const result = build(cfg);
+
+    expect(selfieInternals(result)?.openrouterModel).toBe("google/gemini-3.1-flash-image");
+    expect(imageInternals(result)?.model).toBe("vendor/free-draw");
+    // The image_gen block names a model but no key, so the key comes from the
+    // provider that model implies — here the same openrouter one.
+    expect(imageInternals(result)?.apiKey).toBe("sk-or-key");
+    expect(selfieInternals(result)?.openrouterApiKey).toBe("sk-or-key");
+  });
+
+  it("uses an explicit key from the block that named the model", () => {
     const cfg = base();
     (cfg as unknown as Record<string, unknown>).image_gen = {
       model: "vendor/draw-1",
-      base_url: "https://draw.test/v1",
       api_key: "draw-key",
+      base_url: "https://draw.test/v1",
     };
-    const got = selfieInternals(build(cfg));
-    expect(got?.openrouterModel).toBe("vendor/draw-1");
-    expect(got?.openrouterApiKey).toBe("draw-key");
-    expect(got?.imageBaseUrl).toBe("https://draw.test/v1");
+    const result = build(cfg);
+    expect(imageInternals(result)?.model).toBe("vendor/draw-1");
+    expect(imageInternals(result)?.apiKey).toBe("draw-key");
+    expect(imageInternals(result)?.baseUrl).toBe("https://draw.test/v1");
   });
 
-  it("falls back to the image role when there is one, above everything else", () => {
+  it("follows the image role when a tool's own block says nothing", () => {
+    // `selfies.openrouter_model` is set here, so the selfie tool takes it; the
+    // image_gen block is empty, so that tool falls through to the role.
     const cfg = base();
     (cfg as unknown as Record<string, unknown>).models = {
       fast: { provider: "google", model: "gemini-3.5-flash-lite" },
       image: { provider: "openrouter", model: "vendor/imager" },
     };
-    const got = selfieInternals(build(cfg));
-    expect(got?.openrouterModel).toBe("vendor/imager");
-    expect(got?.openrouterApiKey).toBe("sk-or-key");
+    const result = build(cfg);
+    expect(imageInternals(result)?.model).toBe("vendor/imager");
+    expect(imageInternals(result)?.apiKey).toBe("sk-or-key");
+    expect(selfieInternals(result)?.openrouterModel).toBe("google/gemini-3.1-flash-image");
   });
 
   it("falls back to the chat model only as a last resort", () => {

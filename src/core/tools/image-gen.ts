@@ -76,6 +76,18 @@ function softenPrompt(prompt: string): string {
   return p;
 }
 
+/**
+ * Is this the provider saying "wrong door, use the other one"?
+ *
+ * Dedicated image models — the cheap and free ones — refuse `chat/completions`
+ * in so many words and name the endpoint they do accept. Matching on their own
+ * sentence rather than on a list of model ids means a model that is renamed, or
+ * one that moves from the premium set to the cheap set, keeps working without
+ * anyone editing this file. Every id in this area has turned over at least once
+ * today.
+ */
+const WRONG_DOOR = /cannot be used with the chat\/completions endpoint|image generation model|use the \/api\/v1\/images/i;
+
 export class ImageGenTool implements Tool {
   name = "image_gen";
   description =
@@ -94,6 +106,13 @@ export class ImageGenTool implements Tool {
   private model: string;
   private baseUrl: string;
   private referencePath: string;
+  /**
+   * Set once the provider has said this model lives on `/images/generations`.
+   * Cached because a chat bot generates more than one picture.
+   */
+  private dedicatedEndpoint = false;
+  /** True when a reference was asked for but this path cannot carry one. */
+  private referenceDropped = false;
 
   constructor(config: ImageGenToolConfig) {
     this.apiKey = config.apiKey;
@@ -115,14 +134,57 @@ export class ImageGenTool implements Tool {
     }
   }
 
+  /**
+   * The cheap door: `POST /images/generations`.
+   *
+   * Free and twenty-five times cheaper picture models live here, and the request
+   * is not the chat one at all — a prompt, not a conversation, and the answer
+   * comes back as `data[0].b64_json` instead of a message with an image in it.
+   *
+   * There is no reference photo on this path: the endpoint takes a prompt, and a
+   * model that does not accept an image input cannot keep a face. So when the
+   * model lands here, `referenceDropped` is set and the caller is told, because a
+   * silently different face is worse than a slower honest one.
+   */
+  private async callImagesEndpoint(prompt: string, controller: AbortController): Promise<{ image?: string; error?: string }> {
+    const response = await fetch(`${this.baseUrl}/images/generations`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: this.model, prompt }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      console.error(`image_gen images-endpoint error ${response.status} (${this.model}): ${text.slice(0, 200)}`);
+      return { error: `OpenRouter error: ${response.status}` };
+    }
+    const json = JSON.parse(await response.text()) as {
+      data?: Array<{ b64_json?: string; media_type?: string; url?: string }>;
+    };
+    const first = json.data?.[0];
+    if (first?.url) return { image: first.url };
+    if (first?.b64_json) {
+      return { image: `data:${first.media_type ?? "image/png"};base64,${first.b64_json}` };
+    }
+    return { error: "Модель не вернула картинку" };
+  }
+
   private async callModel(prompt: string, useReference: boolean): Promise<{ image?: string; error?: string; filter?: boolean }> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 90_000);
+    // Generous, because the cheap models are slow: the free one takes ~37s, and
+    // a timeout that fires mid-render is a paid-for picture nobody sees.
+    const timer = setTimeout(() => controller.abort(), 150_000);
     try {
-      const ref = useReference ? this.referenceDataUrl() : null;
+      const ref = this.dedicatedEndpoint ? null : useReference ? this.referenceDataUrl() : null;
+      if (useReference && !ref && this.dedicatedEndpoint) this.referenceDropped = true;
       const text = ref
         ? `Keep the EXACT same person/face as in the reference image — same facial features, hair and identity; do NOT invent a new face. Only change pose, clothes, background and lighting. Scene: ${prompt}`
         : prompt;
+
+      if (this.dedicatedEndpoint) {
+        return await this.callImagesEndpoint(text, controller);
+      }
+
       const content: unknown = ref
         ? [
             { type: "text", text },
@@ -146,6 +208,14 @@ export class ImageGenTool implements Tool {
 
       if (!response.ok) {
         const errText = await response.text();
+        if (WRONG_DOOR.test(errText)) {
+          // The provider named the other endpoint. Take it, remember it, and say
+          // so in the log rather than reporting a 404 to the model as a failure.
+          this.dedicatedEndpoint = true;
+          console.log(`image_gen: ${this.model} живёт на /images/generations, переключаюсь`);
+          if (useReference) this.referenceDropped = true;
+          return await this.callImagesEndpoint(text, controller);
+        }
         const filtered = /moderation|content_filter|blocked/i.test(errText);
         console.error(`image_gen error ${response.status} (${this.model}): ${errText.slice(0, 200)}`);
         return { error: `OpenRouter error: ${response.status}`, filter: filtered };
@@ -186,13 +256,15 @@ export class ImageGenTool implements Tool {
 
     const first = await this.callModel(safe, true);
     if (first.image) {
-      console.log(`image_gen OK (${this.model}, +reference)`);
-      return { success: true, output: "Image generated successfully", mediaUrl: first.image };
+      const dropped = this.referenceDropped ? " (референс не поддерживается этой моделью — лицо может быть другим)" : "";
+      console.log(`image_gen OK (${this.model}${this.referenceDropped ? ", /images/generations, без референса" : ", +reference"})${dropped}`);
+      return { success: true, output: `Image generated successfully${dropped}`, mediaUrl: first.image };
     }
 
     // Reference tripped moderation (or failed) → retry without reference so spicy/semi-nude still works
     // (face then is not guaranteed, but the request isn't lost).
     if (first.filter) {
+      this.referenceDropped = false;
       const second = await this.callModel(safe, false);
       if (second.image) {
         console.log(`image_gen OK (${this.model}, no-reference fallback after filter)`);
