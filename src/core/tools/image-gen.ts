@@ -2,11 +2,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Tool, ToolResult } from "./types.js";
+import { referencePhotoPath } from "../reference-photo.js";
 
 /** Working OpenRouter image model (gemini-2.0-flash-exp:free no longer exists). */
 const MODEL = "google/gemini-2.5-flash-image";
 const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
-const DEFAULT_REFERENCE = path.join(os.homedir(), ".eva", "reference.jpg");
+const DEFAULT_REFERENCE = referencePhotoPath();
 
 export interface ImageGenToolConfig {
   apiKey: string;

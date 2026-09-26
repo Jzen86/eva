@@ -25,6 +25,9 @@ const configPath = path.join(home, ".eva", "config.yaml");
 const token = "123456789:AAF-e2e-fake-token";
 const key = "sk-e2e-fake-key-0000000000";
 const model = "gpt-4o-mini";
+const agentName = "Лида";
+const persona = "молчаливая, наблюдательная";
+const rule = "на «ты», коротко";
 
 const env = { ...process.env, EVA_CONFIG_PATH: configPath };
 
@@ -67,6 +70,7 @@ check(!fs.existsSync(configPath), "no config before init");
 // that matters is the one about content below.
 const init = eva([
   "init", "--token", token, "--provider", "openai", "--key", key, "--model", model,
+  "--name", agentName, "--persona", persona, "--ops", rule,
 ], null);
 check(fs.existsSync(configPath), "init wrote a config");
 check(init.stdout.includes(configPath), "init says where it wrote it");
@@ -84,7 +88,12 @@ const reloaded = execFileSync(process.execPath, [
        provider: Object.keys(c.providers ?? {}),
        base: c.providers?.openai?.base_url,
        model: c.models?.fast?.model,
-       persona: typeof c.agent?.personality?.persona,
+       name: c.agent?.name,
+       // The value, not its typeof. The typeof of a missing key is the string
+       // "undefined", and a check of the form typeof(x) === "string" therefore
+       // passes on it forever while asserting nothing at all.
+       persona: c.agent?.personality?.persona ?? null,
+       ops: c.agent?.personality?.ops ?? null,
      }));
    })`,
 ], { env, encoding: "utf8" });
@@ -93,18 +102,48 @@ check(parsed.token === token, "token round-trips through YAML");
 check(parsed.provider[0] === "openai", "provider written");
 check(parsed.base === "https://api.openai.com/v1", "preset endpoint filled in");
 check(parsed.model === model, "model written");
-check(typeof parsed.persona === "string", "persona written");
+check(parsed.name === agentName, "name written");
+check(parsed.persona === persona, "persona written exactly as the owner gave it");
+check(
+  Array.isArray(parsed.ops) && parsed.ops[0] === rule,
+  "one rule asked for becomes one rule in ops",
+);
 
-// 4. init again is a no-op, not a destruction
+// 4. the photo: given a path, copied next to the config, and visible to doctor
+const photo = path.join(home, "portrait.png");
+fs.writeFileSync(photo, Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]));
+const withPhoto = eva([
+  "init", "--token", token, "--provider", "openai", "--key", key, "--model", model,
+  "--photo", photo, "--force",
+], null);
+const photoPath = path.join(path.dirname(configPath), "reference.jpg");
+check(fs.existsSync(photoPath), "photo copied next to the config");
+check(
+  withPhoto.stdout.includes(photoPath) && !withPhoto.stdout.includes("Фото не сохранилось"),
+  "init says where the photo went",
+);
+// A wrong path is a typo the owner fixes in chat; it must not take the config
+// with it.
+const typo = eva([
+  "init", "--token", token, "--provider", "openai", "--key", key, "--model", model,
+  "--photo", path.join(home, "ghost.jpg"), "--force",
+], null);
+check(
+  fs.existsSync(configPath) && typo.stdout.includes("Фото не сохранилось"),
+  "a wrong photo path does not take the working config with it",
+);
+
+// 5. init again is a no-op, not a destruction
 const again = eva(["init"]);
 check(again.stdout.includes("--force"), "second init refuses to clobber");
 
-// 5. doctor on the result
+// 6. doctor on the result
 const doctor = eva(["doctor"], null);
 check(doctor.stdout.length > 0, "doctor printed a report");
 check(!doctor.stdout.includes(key), "doctor printed no secret");
+check(/фото есть/.test(doctor.stdout), "doctor reports the photo it found");
 
-// 5a. and a failure it does not recognise is reported without a guess, while a
+// 6a. and a failure it does not recognise is reported without a guess, while a
 // known one names the fix. Both are the whole point of the check.
 const broken = eva([
   "init", "--token", token, "--provider", "openai", "--key", "sk-wrong", "--model", model, "--force",
@@ -115,7 +154,7 @@ check(
   "a known native-module failure is translated, not dumped",
 );
 
-// 6. --help does not start a bot
+// 7. --help does not start a bot
 const help = eva(["--help"]);
 check(help.stdout.includes("eva init") && help.stdout.includes("eva doctor"), "help lists the commands");
 

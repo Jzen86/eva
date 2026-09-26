@@ -157,6 +157,80 @@ describe("runInit", () => {
     expect(askImpl.mock.calls[0]?.[0]).toContain("зовут");
   });
 
+  it("asks who she is, so a fresh install is not a stranger", async () => {
+    const askImpl = vi.fn(async (_q: string, fb?: string) => fb ?? "x");
+    await run([], { askImpl, askHiddenImpl: async () => "s" });
+    const asked = askImpl.mock.calls.map((c) => c[0]).join("\n");
+    expect(asked).toContain("Пол");
+    expect(asked).toContain("Характер");
+    expect(asked).toContain("Фото");
+  });
+
+  it("writes the character the owner described, and nothing they did not", async () => {
+    const askImpl = vi.fn(async (q: string, fb?: string) => {
+      if (q.includes("зовут")) return "Лида";
+      if (q.includes("Пол")) return "female";
+      if (q.includes("Характер")) return "молчаливая, наблюдательная";
+      if (q.includes("общается")) return "на «ты», коротко";
+      return fb ?? "x";
+    });
+    const askHiddenImpl = vi.fn(async (q: string) =>
+      q.includes("токен") ? TOKEN : KEY,
+    );
+    await run([], { askImpl, askHiddenImpl });
+
+    const p = loadConfig(configPath)?.agent?.personality as Record<string, unknown>;
+    expect(loadConfig(configPath)?.agent?.name).toBe("Лида");
+    expect(p.persona).toBe("молчаливая, наблюдательная");
+    // One rule asked is one rule: a list is what the prompt renders reliably,
+    // and the owner adds the rest in chat.
+    expect(p.ops).toEqual(["на «ты», коротко"]);
+  });
+
+  it("keeps her a stranger when the owner skips every question", async () => {
+    const askImpl = vi.fn(async (_q: string, fb?: string) => fb ?? "");
+    await run([], { askImpl, askHiddenImpl: async () => "s" });
+    const p = loadConfig(configPath)?.agent?.personality as Record<string, unknown>;
+    expect(p.persona).toBeUndefined();
+    expect(p.ops).toBeUndefined();
+  });
+
+  it("copies the photo next to the config, so the running bot finds it", async () => {
+    const src = path.join(dir, "portrait.png");
+    fs.writeFileSync(src, Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]));
+    const result = await run([
+      "--token", TOKEN, "--provider", "openai", "--key", KEY, "--model", "m",
+      "--photo", src,
+    ]);
+    const dest = path.join(dir, "reference.jpg");
+    expect(fs.existsSync(dest)).toBe(true);
+    expect(fs.readFileSync(dest).length).toBe(7);
+    expect(result.config?.agent?.name).toBe("Ева");
+  });
+
+  it("keeps a working bot when the photo path is wrong", async () => {
+    // A typo in a path is a ten-second fix with /setphoto. A config that was
+    // never written is a bot that does not run — so the typo must lose.
+    await run([
+      "--token", TOKEN, "--provider", "openai", "--key", KEY, "--model", "m",
+      "--photo", path.join(dir, "nope.jpg"),
+    ]);
+    expect(fs.existsSync(configPath)).toBe(true);
+    expect(loadConfig(configPath)?.telegram?.token).toBe(TOKEN);
+    expect(said.join("\n")).toMatch(/Фото не сохранилось/);
+  });
+
+  it("refuses to call a private key a photo", async () => {
+    const src = path.join(dir, "id_rsa");
+    fs.writeFileSync(src, "-----BEGIN OPENSSH PRIVATE KEY-----");
+    await run([
+      "--token", TOKEN, "--provider", "openai", "--key", KEY, "--model", "m",
+      "--photo", src,
+    ]);
+    expect(fs.existsSync(path.join(dir, "reference.jpg"))).toBe(false);
+    expect(loadConfig(configPath)?.telegram?.token).toBe(TOKEN);
+  });
+
   it("refuses a keyless install instead of writing a broken one", async () => {
     await expect(run(["--token", TOKEN, "--key", ""])).rejects.toThrow(/ключ/i);
     expect(fs.existsSync(configPath)).toBe(false);

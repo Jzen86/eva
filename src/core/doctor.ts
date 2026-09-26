@@ -33,6 +33,7 @@ import {
   type EvaConfig,
 } from "./config.js";
 import type { ModelRef, ProviderRegistry } from "./llm/registry.js";
+import { hasReferencePhoto, describeReferencePhoto } from "./reference-photo.js";
 
 export type Severity = "ok" | "warn" | "bad";
 
@@ -278,6 +279,15 @@ function configSection(configPath: string): DoctorSection {
       ),
     );
   }
+
+  // The face. Never `bad` — a bot with no photo still works, and the only
+  // thing missing is selfies; the check exists so the owner is not the one
+  // discovering that later, from a failed selfie.
+  checks.push(
+    hasReferencePhoto(configPath)
+      ? ok("config.photo", `фото есть: ${describeReferencePhoto(configPath)}`)
+      : warn("config.photo", "фото не задано", "Скинь фото в чат — она запомнит лицо (/setphoto)."),
+  );
 
   const ownerBound = config.telegram?.owner_id !== undefined;
   checks.push(

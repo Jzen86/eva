@@ -15,6 +15,7 @@ import type { Channel } from "./channels/types.js";
 import { buildTools, describeToolset } from "./core/toolsets.js";
 import { runDoctor, formatReport } from "./core/doctor.js";
 import { runInit, nextSteps, InitCancelled } from "./core/init.js";
+import { referencePhotoPath, hasReferencePhoto } from "./core/reference-photo.js";
 import type { EmbeddingEndpoint } from "./core/memory/dedup.js";
 
 /**
@@ -210,17 +211,19 @@ async function main() {
       telegram.voiceOptions = {
         voiceConfig: (config.voice as Record<string, unknown>) ?? {},
         falApiKey: ttsKey,
-        avatarPath: path.join(os.homedir(), ".eva", "reference.jpg"),
+        avatarPath: referencePhotoPath(),
       };
       await telegram.start({
         token: config.telegram.token,
         owner_chat_id: config.telegram.owner_id?.toString() ?? "",
       });
-      // Load saved reference photo if exists and no URL in config
-      const savedRef = path.join(os.homedir(), ".eva", "reference.jpg");
-      if (!toolset.instances.selfie?.config.referencePhotoUrl && fs.existsSync(savedRef)) {
+      // Load the saved reference photo unless the config names a URL. The path
+      // belongs to reference-photo.ts; this is the only place that decides
+      // whether to use it.
+      const savedRef = referencePhotoPath();
+      if (!toolset.instances.selfie?.config.referencePhotoUrl && hasReferencePhoto()) {
         toolset.instances.selfie?.setReferencePhoto(savedRef);
-        console.log("📸 Референсное фото загружено из ~/.eva/reference.jpg");
+        console.log("📸 Референсное фото: ~/.eva/reference.jpg");
       }
       console.log("✅ Telegram бот запущен");
     } catch (err) {
@@ -376,12 +379,13 @@ function usage(): void {
     [
       "Ева — телеграм-бот с памятью и любым провайдером LLM.",
       "",
-      "  eva init      развернуть конфиг: токен бота + ключ провайдера",
+      "  eva init      развернуть конфиг: токен бота + ключ провайдера + кто она",
       "  eva           запустить бота (то же, что systemctl start eva)",
       "  eva doctor    проверить, что не сломано [--probe — живые запросы к моделям]",
       "",
       "eva init без флагов спрашивает всё нужное и прячет ввод ключей.",
       "eva init --token T --provider openai --key K --model gpt-4o-mini — без вопросов.",
+      "Флаги личности: --name --gender --persona --ops --photo. Всё это меняется в чате.",
     ].join("\n"),
   );
 }

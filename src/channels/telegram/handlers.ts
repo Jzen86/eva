@@ -6,7 +6,7 @@ import { sendVideoNote } from "./video.js";
 import { applyPending, discard, peek, describe } from "../../core/pending.js";
 import fs from "node:fs";
 import path from "node:path";
-import os from "node:os";
+import { referencePhotoPath } from "../../core/reference-photo.js";
 
 /** Max Telegram message length. */
 const MAX_MSG_LEN = 4096;
@@ -356,6 +356,36 @@ export type SetReferencePhotoFn = (url: string) => void;
 /** Callback when first user claims ownership. */
 export type OnOwnerClaimedFn = (chatId: number) => void;
 
+/**
+ * Download a photo out of a Telegram message and store it as her face.
+ *
+ * `/setphoto` exists in two forms — a command, and a caption on a photo sent as
+ * a message — and they were two copies of the same twenty lines. The copy that
+ * survived edits and the copy that did not were, of course, different, and the
+ * difference was found by reading rather than by a failure. Returns where the
+ * photo went, or null if Telegram would not give it up.
+ */
+async function savePhotoFromTelegram(ctx: Context, token: string): Promise<string | null> {
+  const photo = ctx.message?.photo;
+  if (!photo?.length) return null;
+  try {
+    const file = await ctx.api.getFile(photo[photo.length - 1].file_id);
+    const url = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+
+    // The destination path belongs to reference-photo.ts. A plain segment
+    // everywhere: on Linux `"\.eva"` is a literal filename, not a directory,
+    // and the photo lands in a file called `\.eva`.
+    const dest = referencePhotoPath();
+    fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
+    return dest;
+  } catch {
+    return null;
+  }
+}
+
 export function registerHandlers(
   bot: Bot,
   handler: MessageHandler,
@@ -548,21 +578,11 @@ export function registerHandlers(
       await ctx.reply("Отправь фото или ответь на фото командой /setphoto");
       return;
     }
-    try {
-      const fileId = photo[photo.length - 1].file_id;
-      const file = await ctx.api.getFile(fileId);
-      const token = bot.token;
-      const fileUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
-      // Download and save locally
-      const res = await fetch(fileUrl);
-      const buffer = Buffer.from(await res.arrayBuffer());
-      // A plain segment: on Linux "\.eva" is a literal filename, not a
-      // directory, and the reference photo lands in a file called "\.eva".
-      const savePath = path.join(os.homedir(), ".eva", "reference.jpg");
-      fs.writeFileSync(savePath, buffer);
-      onSetReferencePhoto?.(savePath);
-      await ctx.reply("✅ Фото сохранено как референс для селфи");
-    } catch {
+    const saved = await savePhotoFromTelegram(ctx, bot.token);
+    if (saved) {
+      onSetReferencePhoto?.(saved);
+      await ctx.reply("✅ Фото сохранено — теперь это её лицо.");
+    } else {
       await ctx.reply("Не удалось обработать фото");
     }
   });
@@ -612,21 +632,11 @@ export function registerHandlers(
 
     // /setphoto — save reference photo
     if (caption === "/setphoto") {
-      const photo = ctx.message.photo;
-      try {
-        const fileId = photo[photo.length - 1].file_id;
-        const file = await ctx.api.getFile(fileId);
-        const token = bot.token;
-        const fileUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
-        const res = await fetch(fileUrl);
-        const buffer = Buffer.from(await res.arrayBuffer());
-        // A plain segment: on Linux "\.eva" is a literal filename, not a
-      // directory, and the reference photo lands in a file called "\.eva".
-      const savePath = path.join(os.homedir(), ".eva", "reference.jpg");
-        fs.writeFileSync(savePath, buffer);
-        onSetReferencePhoto?.(savePath);
-        await ctx.reply("✅ Фото сохранено как референс для селфи");
-      } catch {
+      const saved = await savePhotoFromTelegram(ctx, bot.token);
+      if (saved) {
+        onSetReferencePhoto?.(saved);
+        await ctx.reply("✅ Фото сохранено — теперь это её лицо.");
+      } else {
         await ctx.reply("Не удалось обработать фото");
       }
       return;

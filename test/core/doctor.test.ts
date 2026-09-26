@@ -148,6 +148,25 @@ llm:
     expect(find(withoutOps, "config.ops")?.severity).toBe("warn");
   });
 
+  it("reports a missing photo as a warning with the way to fix it", async () => {
+    // Never `bad`: a bot with no photo works, and the only thing missing is
+    // selfies. `bad` here would train the owner to ignore the red lines.
+    writeConfig(GOOD_CONFIG);
+    const report = await runDoctor({ configPath });
+    const check = find(report, "config.photo");
+    expect(check?.severity).toBe("warn");
+    expect(check?.fix).toContain("/setphoto");
+  });
+
+  it("reports the photo once it is there, with a size and no image bytes", async () => {
+    writeConfig(GOOD_CONFIG);
+    const photo = path.join(path.dirname(configPath), "reference.jpg");
+    fs.writeFileSync(photo, Buffer.alloc(2048, 0x41));
+    const check = find(await runDoctor({ configPath }), "config.photo");
+    expect(check?.severity).toBe("ok");
+    expect(check?.detail).toContain("2 КБ");
+  });
+
   it("puts the trusted-binaries list in the report, because trust is not a setting you forget you made", async () => {
     writeConfig(GOOD_CONFIG);
     const clean = await runDoctor({ configPath });
