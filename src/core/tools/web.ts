@@ -162,7 +162,17 @@ export class WebTool implements Tool {
     }
   }
 
-  /** The same answer with nothing to install, sign up for, or pay for. */
+  /**
+   * The keyless engine, for an install with no search credential.
+   *
+   * Honest scope: this works, and it is not a guarantee. DuckDuckGo's no-JS page
+   * answers a fresh request and then starts answering `202 anomaly` — a bot
+   * check — and from a server IP it stays that way. Every other keyless engine
+   * measured refused us outright: Mojeek serves an empty shell, Brave and
+   * Startpage answer 429 and a captcha, s.jina.ai now wants an API key, and
+   * searx instances rate-limit. So this is a working fallback, not a substitute
+   * for a credential — and the tool must never claim otherwise.
+   */
   private async searchDuckDuckGo(query: string): Promise<ToolResult> {
     try {
       const url = new URL("https://html.duckduckgo.com/html/")
@@ -180,7 +190,24 @@ export class WebTool implements Tool {
         return { success: false, output: "", error: `DuckDuckGo error ${res.status}` }
       }
 
-      const items = parseDuckDuckGoHtml(await res.text())
+      const html = await res.text()
+      // A bot check comes back as 200/202 with a page that says "anomaly" and
+      // holds no results. Reporting that as "no results found" is the worst
+      // possible answer: it tells her the information does not exist, and she
+      // concludes she cannot search. It is the exact failure this whole change
+      // was meant to end.
+      if (/anomaly|unfortunately, bots|are you a robot/i.test(html)) {
+        return {
+          success: false,
+          output: "",
+          error:
+            "Поиск без ключа не прошёл: DuckDuckGo считает бота и не отдаёт выдачу. Это не «ничего не найдено». " +
+            "Спроси владельца про ключ google.cx (бесплатно, 3 минуты) — либо до тех пор бери адрес напрямую " +
+            "через http или browser.",
+        }
+      }
+
+      const items = parseDuckDuckGoHtml(html)
       if (!items.length) {
         return { success: true, output: "No results found." }
       }

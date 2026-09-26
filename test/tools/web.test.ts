@@ -85,6 +85,22 @@ describe("WebTool", () => {
     vi.unstubAllGlobals()
   })
 
+  it("says a bot check is not an empty result set", async () => {
+    // The failure this exists to prevent. A 202 anomaly page is not an answer of
+    // "nothing found": it is the engine refusing a bot, and reporting it as an
+    // empty result set is what convinces her that searching does not work.
+    const tool = new WebTool({})
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve("<html><body>Unfortunately, bots use DuckDuckGo too</body></html>"),
+    }))
+
+    const result = await tool.execute({ action: "search", query: "test" })
+    expect(result.success).toBe(false)
+    expect(result.output).not.toContain("No results found")
+    expect(result.error).toContain("google.cx")
+  })
+
   it("prefers Google when it is configured and working", async () => {
     const tool = new WebTool({ apiKey: "good", cx: "here" })
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
