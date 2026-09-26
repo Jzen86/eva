@@ -3,7 +3,14 @@ import type { Tool, ToolResult } from "./types.js"
 export interface WebToolConfig {
   apiKey?: string
   cx?: string
+  /** A SearXNG instance. It is the first thing tried, because it is free, local and has no quota. */
+  searxngUrl?: string
+  /** Two-letter code for the results' language. */
+  language?: string
 }
+
+/** Where the sibling service on this very server listens; overridable, not mandatory. */
+export const DEFAULT_SEARXNG_URL = "http://127.0.0.1:8888";
 
 function truncate(text: string, max: number): string {
   if (text.length <= max) return text
@@ -101,33 +108,69 @@ export class WebTool implements Tool {
   }
 
   /**
-   * Search, preferring Google's index when it is configured.
+   * Search, in order of what is actually available on this machine.
    *
-   * The tool used to require Google's Programmable Search: both a key and a `cx`
-   * from a search engine somebody has to build by hand in a browser. Without
-   * those two values the tool did not exist, and every start said so —
-   * `web (нет google.api_key + google.cx)`. What she did instead was reach for
-   * `browser`, fail, then `http`, then `shell` with `curl`: three tools to do
-   * what one search would have done. It read like a model that had forgotten how;
-   * it was a credential, and an installable one at that.
+   * The order used to start at Google's Programmable Search, which needs a key
+   * and a `cx` from a search engine somebody has to build by hand in a browser.
+   * Without both, `web` did not exist, and every start said so. What she did
+   * instead was reach for `browser`, fail, then `http`, then `shell` with curl:
+   * three tools to do what one search would have done, which reads as a model
+   * that has lost the habit.
    *
-   * A hard dependency on one vendor's search is exactly what this fork set out
-   * to remove, and it was still here. So: Google when configured, a keyless
-   * engine when not. Search now always works, and the install needs nothing.
+   * Meanwhile a SearXNG instance was running on the same server the whole time,
+   * put there for the neighbour bot, free, local and without a quota. Nobody
+   * looked for it. So: SearXNG first, Google if it was ever configured, and a
+   * keyless public engine last. Nothing has to be installed for search to work.
    */
   private async search(query: string | undefined): Promise<ToolResult> {
     if (!query) {
       return { success: false, output: "", error: "Missing required parameter: query" }
     }
 
+    // SearXNG first. It is already running on this server for the neighbour bot,
+    // it needs no key, no account and no quota, and it aggregates a dozen engines
+    // — so it answers the question the owner actually has. Everyone was looking
+    // for a key to configure while a working search sat on localhost the whole
+    // time, and the symptom was a girl who seemed to have forgotten the internet.
+    const searxng = await this.searchSearxNg(query);
+    if (searxng?.success) return searxng;
+    if (searxng?.error) console.log(`🔍 web: SearXNG не ответил (${searxng.error}), дальше по списку`);
+
     if (this.config.apiKey && this.config.cx) {
       const google = await this.searchGoogle(query)
       if (google?.success) return google
-      // A Google failure is not a reason to return nothing when the other engine
-      // is right there — that is how a search ends up looking unavailable.
       console.log(`🔍 web: Google не ответил (${google?.error ?? "?"}), пробую без ключа`)
     }
     return this.searchDuckDuckGo(query)
+  }
+
+  private async searchSearxNg(query: string): Promise<ToolResult> {
+    const base = (this.config.searxngUrl ?? DEFAULT_SEARXNG_URL).replace(/\/+$/, "")
+    try {
+      const url = new URL(`${base}/search`)
+      url.searchParams.set("q", query)
+      url.searchParams.set("format", "json")
+      if (this.config.language) url.searchParams.set("language", this.config.language)
+
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 15_000)
+      const res = await fetch(url.toString(), { signal: controller.signal })
+      clearTimeout(timer)
+
+      if (!res.ok) return { success: false, output: "", error: `SearXNG ${res.status}` }
+
+      const data = await res.json() as {
+        results?: Array<{ title?: string; url?: string; content?: string }>
+      }
+      const items = (data.results ?? [])
+        .filter((r): r is { title: string; url: string; content: string } => Boolean(r.url))
+        .map((r) => ({ title: r.title ?? r.url, link: r.url, snippet: r.content ?? "" }))
+
+      if (!items.length) return { success: true, output: "No results found." }
+      return { success: true, output: truncate(formatResults(items), WebTool.MAX_SEARCH_CHARS) }
+    } catch (err) {
+      return { success: false, output: "", error: (err as Error).message }
+    }
   }
 
   private async searchGoogle(query: string): Promise<ToolResult> {

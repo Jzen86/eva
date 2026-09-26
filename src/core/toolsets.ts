@@ -148,15 +148,22 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
 
   // --- keyed: one key away, then they work --------------------------------
 
-  // Search needs no credentials. Google's Custom Search was the only backend and
-  // it needs a key plus a `cx` from a search engine a person has to build by
-  // hand, so a plain install had no `web` tool at all and the log announced it
-  // on every start. Without it she went for `browser`, failed, then `http`, then
-  // `shell` and curl — three tools to fake a search, which looks exactly like a
-  // model that lost the habit. Google is still used when it is configured.
+  // Search needs no credentials. The neighbour bot's SearXNG has been listening
+  // on localhost the whole time, and the tool was asking for a Google `cx` from
+  // a search engine a person has to build by hand instead — so a plain install
+  // had no `web` at all, the startup line announced it every start, and she went
+  // for `browser`, then `http`, then curl: three tools to fake a search, which
+  // looks exactly like a model that lost the internet. Local first, Google if it
+  // was configured, keyless engine last.
   const googleConfig = config.google as { api_key?: string; cx?: string } | undefined;
+  const searchConfig = config.search as { searxng_url?: string; language?: string } | undefined;
   add(
-    new WebTool({ apiKey: googleConfig?.api_key, cx: googleConfig?.cx }),
+    new WebTool({
+      apiKey: googleConfig?.api_key,
+      cx: googleConfig?.cx,
+      searxngUrl: searchConfig?.searxng_url,
+      language: searchConfig?.language,
+    }),
     googleConfig?.api_key && googleConfig.cx ? "keyed" : "core",
   );
 

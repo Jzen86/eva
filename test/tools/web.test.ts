@@ -55,27 +55,30 @@ describe("WebTool", () => {
 
   it("searches with no credentials at all", async () => {
     // The reason this tool exists now: on a plain install there is no `cx`, and
-    // without a search she reached for browser, then http, then curl.
+    // without a search she reached for browser, then http, then curl. The local
+    // instance is tried first and is absent here, so the chain must carry on.
     const tool = new WebTool({})
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      text: () => Promise.resolve(ddgPage),
-    }))
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 500, text: () => Promise.resolve("down") })
+      .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve(ddgPage) }))
 
     const result = await tool.execute({ action: "search", query: "stalker 2 patch" })
     expect(result.success).toBe(true)
     expect(result.output).toContain("https://www.stalker2.com/patch-notes")
     expect(result.output).toContain("1. Patch Notes")
 
-    const url = String(vi.mocked(fetch).mock.calls[0][0])
-    expect(url).toContain("duckduckgo.com")
-    vi.unstubAllGlobals()
+    const first = String(vi.mocked(fetch).mock.calls[0][0])
+    const second = String(vi.mocked(fetch).mock.calls[1][0])
+    expect(first).toContain("127.0.0.1:8888")
+    expect(second).toContain("duckduckgo.com")
   })
 
   it("falls back to the keyless engine when Google is configured but fails", async () => {
-    // A dead Google credential must not read as "no internet".
+    // A dead Google credential must not read as "no internet". SearXNG is asked
+    // first and declines, so the two mocks here are SearXNG then Google.
     const tool = new WebTool({ apiKey: "bad", cx: "gone" })
     vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 500, text: () => Promise.resolve("down") })
       .mockResolvedValueOnce({ ok: false, status: 403, text: () => Promise.resolve("forbidden") })
       .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve(ddgPage) }))
 
@@ -90,10 +93,12 @@ describe("WebTool", () => {
     // "nothing found": it is the engine refusing a bot, and reporting it as an
     // empty result set is what convinces her that searching does not work.
     const tool = new WebTool({})
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      text: () => Promise.resolve("<html><body>Unfortunately, bots use DuckDuckGo too</body></html>"),
-    }))
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 500, text: () => Promise.resolve("down") })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: () => Promise.resolve("<html><body>Unfortunately, bots use DuckDuckGo too</body></html>"),
+      }))
 
     const result = await tool.execute({ action: "search", query: "test" })
     expect(result.success).toBe(false)
@@ -101,18 +106,54 @@ describe("WebTool", () => {
     expect(result.error).toContain("google.cx")
   })
 
-  it("prefers Google when it is configured and working", async () => {
-    const tool = new WebTool({ apiKey: "good", cx: "here" })
+  it("asks the local SearXNG first, because it is there and it is free", async () => {
+    // The instance the neighbour bot put on this server was listening the whole
+    // time, while the tool asked for a Google `cx` to be created by hand.
+    const tool = new WebTool({ searxngUrl: "http://127.0.0.1:8888", language: "ru" })
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ items: [{ title: "From Google", link: "https://g.example", snippet: "s" }] }),
+      json: () => Promise.resolve({
+        results: [{ title: "Патч-ноты", url: "https://s2.com/patch", content: "Патч 2.0.5" }],
+      }),
     }))
+
+    const result = await tool.execute({ action: "search", query: "патч сталкер 2" })
+    expect(result.success).toBe(true)
+    expect(result.output).toContain("https://s2.com/patch")
+    expect(result.output).toContain("Патч 2.0.5")
+
+    const url = new URL(String(vi.mocked(fetch).mock.calls[0][0]))
+    expect(url.origin).toBe("http://127.0.0.1:8888")
+    expect(url.searchParams.get("format")).toBe("json")
+    expect(url.searchParams.get("language")).toBe("ru")
+  })
+
+  it("falls through to the keyless engine when SearXNG is not there", async () => {
+    // It lives on this server but not on every install, so its absence must not
+    // be the end of the search.
+    const tool = new WebTool({ searxngUrl: "http://127.0.0.1:8888" })
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 500, text: () => Promise.resolve("down") })
+      .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve(ddgPage) }))
+
+    const result = await tool.execute({ action: "search", query: "test" })
+    expect(result.success).toBe(true)
+    expect(result.output).toContain("https://www.stalker2.com/patch-notes")
+  })
+
+  it("prefers Google when it is configured and working", async () => {
+    const tool = new WebTool({ apiKey: "good", cx: "here", searxngUrl: "http://127.0.0.1:1" })
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 500, text: () => Promise.resolve("down") })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ items: [{ title: "From Google", link: "https://g.example", snippet: "s" }] }),
+      }))
 
     const result = await tool.execute({ action: "search", query: "test" })
     expect(result.output).toContain("From Google")
-    const url = String(vi.mocked(fetch).mock.calls[0][0])
+    const url = String(vi.mocked(fetch).mock.calls[1][0])
     expect(url).toContain("googleapis.com")
-    vi.unstubAllGlobals()
   })
 })
 
