@@ -17,7 +17,6 @@ export class TelegramChannel implements Channel {
   private bot: Bot | null = null;
   private handler: MessageHandler | null = null;
   private ownerChatId: number | null = null;
-  private _avatarUrl: string | null = null;
   private _onSetReferencePhoto: SetReferencePhotoFn | undefined;
   private _onOwnerClaimed: OnOwnerClaimedFn | undefined;
 
@@ -26,9 +25,6 @@ export class TelegramChannel implements Channel {
 
   /** Native draft streaming (sendMessageDraft). Set false to avoid the vanishing preview message. */
   streaming?: boolean;
-
-  /** Bot avatar URL fetched at startup. */
-  get avatarUrl(): string | null { return this._avatarUrl; }
 
   /** Set callback for /setphoto command. */
   set onSetReferencePhoto(fn: SetReferencePhotoFn) { this._onSetReferencePhoto = fn; }
@@ -45,21 +41,53 @@ export class TelegramChannel implements Channel {
       throw new Error("TelegramChannel: call onMessage() before start()");
     }
 
-    // Fetch bot avatar for selfie reference
-    try {
-      const me = await this.bot.api.getMe();
-      const photos = await this.bot.api.getUserProfilePhotos(me.id, { limit: 1 });
-      if (photos.total_count > 0) {
-        const fileId = photos.photos[0][photos.photos[0].length - 1].file_id;
-        const file = await this.bot.api.getFile(fileId);
-        this._avatarUrl = `https://api.telegram.org/file/bot${config.token}/${file.file_path}`;
-      }
-    } catch {
-      // Non-critical — selfie will use config fallback
-    }
+    // The bot's own Telegram avatar used to be fetched here "for the selfie
+    // reference" and then read by nobody: a dead field, and a wrong idea besides
+    // — a bot account's profile picture is not a woman's face. The reference is
+    // the owner's photo in `~/.eva/reference.jpg`, and the selfie tool reads
+    // that file. Three API calls at every start, in exchange for nothing.
 
     registerHandlers(this.bot, this.handler, this.ownerChatId, this._onSetReferencePhoto, this._onOwnerClaimed, this.voiceOptions, this.streaming ?? true);
+    await this.publishCommands();
     this.bot.start();
+  }
+
+  /**
+   * Tell Telegram which commands exist, so the client's menu lists them.
+   *
+   * Handlers are not a menu. A phone shows a slash list that the server fills in
+   * through `setMyCommands`, and nothing here had ever called it — so `/photo`
+   * and `/setphoto` worked, and the owner had no way to learn they existed. That
+   * is the worst shape of a working feature: invisible. It is also how two
+   * replacement references went unused, since a command he cannot see is a
+   * command he does not send.
+   *
+   * Best-effort: a bot that refuses to start because it could not publish a menu
+   * is worse than one with a stale menu.
+   */
+  private async publishCommands(): Promise<void> {
+    const commands = [
+      { command: "help", description: "Что она умеет" },
+      { command: "status", description: "Состояние: модель, память, задачи" },
+      { command: "photo", description: "Показать фото, которое сейчас её лицо" },
+      { command: "setphoto", description: "Сменить фото: скинь его с этой подписью" },
+      { command: "selfie", description: "Селфи (или спроси её словами)" },
+      { command: "persona", description: "Собрать её личность заново" },
+      { command: "voice", description: "Голосовое сообщение" },
+      { command: "settings", description: "Настройки" },
+      { command: "pending", description: "Что awaits подтверждения" },
+      { command: "yes", description: "Подтвердить последнее" },
+      { command: "no", description: "Отклонить последнее" },
+      { command: "cancel", description: "Отменить текущий вопрос" },
+      { command: "study", description: "Режим «study»: отвечает подробнее" },
+    ];
+    try {
+      await this.bot?.api.setMyCommands(commands);
+    } catch (err) {
+      console.error(
+        `⚠️ Не удалось опубликовать список команд: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   async stop(): Promise<void> {
