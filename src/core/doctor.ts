@@ -229,6 +229,32 @@ function configSection(configPath: string): DoctorSection {
       : bad("config.secrets", "ни одного ключа не задано", "Без ключей провайдера и токена телеграма я не работаю."),
   );
 
+  // What the bot may do without asking. Trusted binaries are the ones it may
+  // run in their writing modes too, so the list belongs in the report: a
+  // decision made once and forgotten is still a decision, and "why did she push
+  // to that repo" deserves an answer sitting in the output.
+  const trusted = Array.isArray(config.tools?.shell_trust)
+    ? (config.tools?.shell_trust as unknown[]).filter((b): b is string => typeof b === "string")
+    : [];
+  const enabledTools = Object.entries(config.tools ?? {})
+    .filter(([k, v]) => v === true && k !== "shell_trust")
+    .map(([k]) => k);
+  checks.push(
+    trusted.length > 0
+      ? warn(
+          "config.tools.trust",
+          `без спроса выполняются целиком: ${trusted.join(", ")}`,
+          "Это не «разрешено читать», а «разрешено писать без подтверждения». " +
+            "Убери имя из tools.shell_trust в config.yaml, если не доверяешь.",
+        )
+      : ok("config.tools.trust", "доверенных бинарников нет — запись ждёт /yes"),
+  );
+  checks.push(
+    enabledTools.length > 0
+      ? ok("config.tools", `включено по флагу: ${enabledTools.join(", ")}`)
+      : ok("config.tools", "инструменты по требованию выключены (browser, ssh, npm_install)"),
+  );
+
   // Identity: is there actually a personality, or just a name?
   const p = config.agent?.personality;
   const hasCharacter = Boolean(p?.persona || p?.custom_instructions || p?.tone || p?.style);

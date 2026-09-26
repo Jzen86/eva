@@ -40,7 +40,7 @@ import { WebTool } from "./tools/web.js";
 import { SkillSearchTool } from "./tools/skill-search.js";
 import { SkillInstallTool } from "./tools/skill-install.js";
 import { selfConfigTool } from "./tools/self-config.js";
-import { sshTool } from "./tools/ssh.js";
+import { SshTool } from "./tools/ssh.js";
 import { npmInstallTool } from "./tools/npm-install.js";
 import { SwitchModelTool } from "./tools/switch-model.js";
 import { DoctorTool } from "./tools/doctor.js";
@@ -105,6 +105,17 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
   const decisions: ToolDecision[] = [];
   const tools = new ToolRegistry();
 
+  /**
+   * Widenings of the read-only allowlist, from `tools.shell_trust`.
+   *
+   * The default list covers the diagnostics, not git or docker: those have too
+   * many write modes for a table to be honest, so they wait for /yes. An owner
+   * who wants one unattended can name it here rather than us guessing.
+   */
+  const shellTrust = Array.isArray(config.tools?.shell_trust)
+    ? (config.tools?.shell_trust as string[]).filter((b): b is string => typeof b === "string")
+    : [];
+
   const add = (tool: Tool, tier: ToolTier, reason?: string): void => {
     if (reason) {
       decisions.push({ name: tool.name, tier, registered: false, reason });
@@ -116,7 +127,7 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
 
   // --- core: nothing but an LLM config ------------------------------------
 
-  add(new ShellTool(), "core");
+  add(new ShellTool({ shellTrust }), "core");
   add(new SendFileTool(), "core");
   add(new FilesTool(), "core");
   add(selfConfigTool, "core");
@@ -224,7 +235,7 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
   }
 
   if (optIn(config, "ssh")) {
-    add(sshTool, "opt-in");
+    add(new SshTool({ shellTrust }), "opt-in");
   } else {
     decisions.push({ name: "ssh", tier: "opt-in", registered: false, reason: "не включён: tools.ssh: true" });
   }

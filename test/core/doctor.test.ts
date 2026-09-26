@@ -148,6 +148,25 @@ llm:
     expect(find(withoutOps, "config.ops")?.severity).toBe("warn");
   });
 
+  it("puts the trusted-binaries list in the report, because trust is not a setting you forget you made", async () => {
+    writeConfig(GOOD_CONFIG);
+    const clean = await runDoctor({ configPath });
+    expect(find(clean, "config.tools.trust")?.severity).toBe("ok");
+    expect(find(clean, "config.tools")?.detail).toContain("выключены");
+
+    writeConfig(GOOD_CONFIG.replace("memory:\n  max_knowledge: 200\n",
+      "tools:\n  ssh: true\n  shell_trust:\n    - git\n    - docker\nmemory:\n  max_knowledge: 200\n"));
+    const trusting = await runDoctor({ configPath });
+    const trust = find(trusting, "config.tools.trust");
+    expect(trust?.severity).toBe("warn");
+    expect(trust?.detail).toContain("git");
+    expect(trust?.detail).toContain("docker");
+    // The line has to say what trusting a binary means, or the warning reads
+    // like a permissions notice and gets filed away.
+    expect(trust?.fix).toContain("без подтверждения");
+    expect(find(trusting, "config.tools")?.detail).toContain("ssh");
+  });
+
   it("names secrets by length and never prints a value", async () => {
     writeConfig(GOOD_CONFIG);
     const report = await runDoctor({ configPath });

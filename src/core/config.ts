@@ -179,6 +179,15 @@ const configSchema = z.object({
       browser: z.boolean().optional(),
       ssh: z.boolean().optional(),
       npm_install: z.boolean().optional(),
+      /**
+       * Extra binaries `shell` may run unattended.
+       *
+       * The default list is diagnostics only — the binaries that cannot write
+       * in any mode. git, docker and curl are not in it because each has enough
+       * write modes that a table of them would be a fiction; they wait for
+       * /yes. Name one here to widen that for this install.
+       */
+      shell_trust: z.array(z.string()).optional(),
     })
     .passthrough()
     .optional(),
