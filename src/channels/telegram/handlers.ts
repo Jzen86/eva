@@ -19,7 +19,7 @@ import {
 } from "../../core/persona-quest.js";
 import fs from "node:fs";
 import path from "node:path";
-import { referencePhotoPath } from "../../core/reference-photo.js";
+import { writeReferencePhoto } from "../../core/reference-photo.js";
 
 /** Max Telegram message length. */
 const MAX_MSG_LEN = 4096;
@@ -387,13 +387,10 @@ async function savePhotoFromTelegram(ctx: Context, token: string): Promise<strin
     const res = await fetch(url);
     if (!res.ok) return null;
 
-    // The destination path belongs to reference-photo.ts. A plain segment
-    // everywhere: on Linux `"\.eva"` is a literal filename, not a directory,
-    // and the photo lands in a file called `\.eva`.
-    const dest = referencePhotoPath();
-    fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
-    return dest;
+    // The write belongs to reference-photo.ts: the destination, the empty check
+    // and the rollback of the previous photo all live there. Writing the file
+    // from here is what left `/setphoto` with no way back from a bad photo.
+    return writeReferencePhoto(Buffer.from(await res.arrayBuffer()));
   } catch {
     return null;
   }
@@ -766,3 +763,4 @@ export function registerHandlers(
     await handleWithTyping(ctx, userText);
   });
 }
+

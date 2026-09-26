@@ -63,6 +63,53 @@ export class ReferencePhotoError extends Error {
   }
 }
 
+/** Where the previous photo is kept, so a swap is not a one-way door. */
+export function previousReferencePhotoPath(configPath?: string): string {
+  const current = referencePhotoPath(configPath);
+  return path.join(path.dirname(current), `reference.prev${path.extname(current)}`);
+}
+
+/**
+ * Put a photo in place — the one place that writes it.
+ *
+ * Two writers used to exist: `saveReferencePhoto` for a file on disk, and the
+ * Telegram handler writing `fs.writeFileSync` straight to the path. Same
+ * destination, different rules — the downloader skipped the checks and neither
+ * kept the old one, so `/setphoto` was a one-way door: a worse photo replaced a
+ * good one and there was nothing to go back to. Trying reference photos against
+ * each other is how this actually gets decided, so the previous one is kept.
+ *
+ * Returns where the photo went.
+ */
+export function writeReferencePhoto(buffer: Buffer, configPath?: string): string {
+  if (buffer.length === 0) {
+    throw new ReferencePhotoError("Файл пустой");
+  }
+  const dest = referencePhotoPath(configPath);
+  try {
+    if (fs.statSync(dest).size > 0) {
+      const previous = previousReferencePhotoPath(configPath);
+      fs.copyFileSync(dest, previous);
+      try {
+        fs.chmodSync(previous, 0o600);
+      } catch {
+        // No POSIX modes on some filesystems; see the note below.
+      }
+    }
+  } catch {
+    // No photo there yet, so there is nothing to roll back to. Fine.
+  }
+  fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(dest, buffer);
+  try {
+    fs.chmodSync(dest, 0o600);
+  } catch {
+    // Windows and some network filesystems have no POSIX modes. A photo is not
+    // a credential; failing to chmod is not a reason to refuse the install.
+  }
+  return dest;
+}
+
 /**
  * Copy a photo into place.
  *
@@ -90,14 +137,5 @@ export function saveReferencePhoto(source: string, configPath?: string): string 
     );
   }
 
-  const dest = referencePhotoPath(configPath);
-  fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
-  fs.copyFileSync(src, dest);
-  try {
-    fs.chmodSync(dest, 0o600);
-  } catch {
-    // Windows and some network filesystems have no POSIX modes. A photo is not
-    // a credential; failing to chmod is not a reason to refuse the install.
-  }
-  return dest;
+  return writeReferencePhoto(fs.readFileSync(src), configPath);
 }
