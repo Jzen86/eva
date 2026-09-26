@@ -1,5 +1,22 @@
 import { buildPersonalityPrompt } from "./personality.js";
 
+/**
+ * The moment, in words a model can use.
+ *
+ * Both halves matter. The date tells her what "latest" means; the weekday tells
+ * her whether a human would already know a thing that came out an hour ago, which
+ * is the difference between looking it up and being smug about not looking it up.
+ */
+export function formatMoment(now: Date = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const days = ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"];
+  return (
+    `${pad(now.getDate())}.${pad(now.getMonth() + 1)}.${now.getFullYear()}, ` +
+    `${days[now.getDay()]}, ${pad(now.getHours())}:${pad(now.getMinutes())} ` +
+    `(по времени сервера)`
+  );
+}
+
 export interface PromptConfig {
   name: string;
   gender?: "female" | "male" | "neutral";
@@ -77,6 +94,20 @@ ${genderBlock}
   if (chatId) {
     prompt += `\nID диалога: ${chatId}`;
   }
+
+  // What day it is, before anything else.
+  //
+  // Without this she cannot tell fresh from stale, and neither can anyone reading
+  // her answers. Asked which patch is the latest, she came back with a number
+  // from the search snippets and called it the current one — while the number was
+  // over a year old, and neither of us could tell from the text, because not one
+  // of us knew the date either. "Latest" is meaningless to a model with no idea
+  // what latest means: it cannot place a snippet in time.
+  //
+  // Also: cheap to state, and it is the difference between an answer that carries
+  // a date and one that quietly guesses.
+  const now = new Date();
+  prompt += `\nСейчас: ${formatMoment(now)}. Если спрашивают про «последнее», «новое», «актуальное» — считай ответ устаревшим, если в нём нет даты или версии новее этого года. Про цифры, версии, даты и цены всегда сверяйся через web и говори, когда сверила.`;
 
   // Personality
   const personalityParts: string[] = [];

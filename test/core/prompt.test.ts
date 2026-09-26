@@ -1,7 +1,25 @@
 import { describe, it, expect } from "vitest";
-import { buildSystemPrompt } from "../../src/core/prompt.js";
+import { buildSystemPrompt, formatMoment } from "../../src/core/prompt.js";
 
 describe("buildSystemPrompt", () => {
+  it("tells her what day it is", () => {
+    // She asked which patch was the latest and answered with the newest number in
+    // a search snippet — from the year before. Nobody could have caught it, least
+    // of all her: nothing in the prompt had ever said what year it is. "Latest" is
+    // not a word you can use without a date.
+    const prompt = buildSystemPrompt({ name: "Eva", gender: "female" });
+    expect(prompt).toMatch(/Сейчас: \d{2}\.\d{2}\.\d{4}/);
+    expect(prompt).toMatch(/последнее|новое|актуальное/);
+  });
+
+  it("formats the moment with a weekday and a time", () => {
+    // The time half matters too: a human would know a thing from an hour ago, and
+    // she should not be confidently behind on gossip.
+    expect(formatMoment(new Date(2026, 8, 26, 14, 7))).toBe(
+      "26.09.2026, суббота, 14:07 (по времени сервера)",
+    );
+  });
+
   it("includes the agent name", () => {
     const prompt = buildSystemPrompt({ name: "Бетси" });
     expect(prompt).toContain("Бетси");
