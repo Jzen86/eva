@@ -173,16 +173,50 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
     decisions.push({ name: "skill_install", tier: "keyed", registered: false, reason: why });
   }
 
-  // Image generation resolves through the `image` role, falling back to `fast`,
-  // so a provider that speaks the chat API is enough — no separate service and
-  // no hardcoded vendor on the happy path.
+  // Where pictures come from, decided once and used by both picture tools.
+  //
+  // In order: an explicit `image_gen` block, the registry's `image` role, the
+  // legacy `selfies.openrouter_model`, and only then the chat model.
+  //
+  // The last step is the one that used to be the only one, and it is a trap: it
+  // works by accident, for as long as the chat model happens to sit on the
+  // provider that can draw. This install has `selfies.provider: openrouter` and
+  // `selfies.openrouter_model: google/gemini-3.1-flash-image` written down, and
+  // the old code used neither — it borrowed `fast`, which was a chat model on
+  // openrouter. Move the chat model to another provider, as any normal evening
+  // of switching models does, and the picture tools silently follow it to an
+  // endpoint that cannot draw, holding a text model and the wrong provider's key,
+  // with nothing in any log. Found on the live install the day `fast` moved to
+  // google, which is the only reason it was ever noticed.
   const imageCfg = (config.image_gen as Record<string, unknown> | undefined) ?? {};
-  const imageRef = registry?.role("image") ?? registry?.role("fast");
-  const imageProvider = imageRef ? registry?.toConfig().providers[imageRef.provider] : undefined;
-  const imageKey = str(imageCfg.api_key) || imageProvider?.api_key || getLLMApiKey(config) || "";
-  const imageBaseUrl = str(imageCfg.base_url) || imageProvider?.base_url;
+  const selfies = (config.selfies as Record<string, unknown> | undefined) ?? {};
+  const video = (config.video as Record<string, unknown> | undefined) ?? {};
+
+  const providerSpecs = registry?.toConfig().providers ?? {};
+  const imageRoleRef = registry?.role("image");
+  const chatRef = registry?.role("fast");
+
+  const explicitModel = str(imageCfg.model);
+  const legacyModel = str(selfies.openrouter_model);
+  // The provider always follows the model, so a key and an endpoint can never be
+  // taken from one place and a model from another.
+  const source = explicitModel
+    ? { model: explicitModel, provider: str(selfies.provider) ?? "" }
+    : imageRoleRef
+      ? { model: imageRoleRef.model, provider: imageRoleRef.provider }
+      : legacyModel
+        ? { model: legacyModel, provider: str(selfies.provider) ?? "" }
+        : chatRef
+          ? { model: chatRef.model, provider: chatRef.provider }
+          : null;
+
+  const imageModel = source?.model;
+  const imageSpec = source ? providerSpecs[source.provider] : undefined;
+  const imageKey = str(imageCfg.api_key) || imageSpec?.api_key || getLLMApiKey(config) || "";
+  const imageBaseUrl = str(imageCfg.base_url) || imageSpec?.base_url;
+
   if (imageKey) {
-    add(new ImageGenTool({ apiKey: imageKey, baseUrl: imageBaseUrl }), "keyed");
+    add(new ImageGenTool({ apiKey: imageKey, baseUrl: imageBaseUrl, ...(imageModel ? { model: imageModel } : {}) }), "keyed");
   } else {
     decisions.push({ name: "image_gen", tier: "keyed", registered: false, reason: "нет ключа провайдера изображений" });
   }
@@ -191,8 +225,6 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
   // the owner. The second case matters — with a reference photo and an
   // image-capable provider she can still make pictures, and requiring a fal key
   // for that would be exactly the kind of mandatory vendor to get rid of.
-  const selfies = (config.selfies as Record<string, unknown> | undefined) ?? {};
-  const video = (config.video as Record<string, unknown> | undefined) ?? {};
   const falKey = str(selfies.fal_api_key) || str(video.fal_api_key);
   const referencePhoto = str(selfies.reference_photo_url);
   if (falKey || (referencePhoto && imageKey)) {
@@ -202,7 +234,7 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
         referencePhotoUrl: referencePhoto || undefined,
         provider: (selfies.provider as "fal" | "openrouter" | undefined) ?? "fal",
         openrouterApiKey: imageKey,
-        openrouterModel: str(imageCfg.model) || (imageRef ? imageRef.model : undefined),
+        openrouterModel: imageModel,
         imageBaseUrl: imageBaseUrl || undefined,
       }),
       "keyed",
