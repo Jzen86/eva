@@ -1,7 +1,7 @@
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
-import { isConfigured, loadConfig, patchConfig, getConfigPath, getAgentName, getPersonality, getPersonalitySliders, getLLMApiKey, toRegistryConfig } from "./core/config.js";
+import { isConfigured, loadConfig, patchConfig, getConfigPath, getAgentName, getPersonality, getPersonalitySliders, getLLMApiKey, toRegistryConfig, type EvaConfig } from "./core/config.js";
 import { TelegramChannel } from "./channels/telegram/index.js";
 import { LLMRouter } from "./core/llm/router.js";
 import { ProviderRegistry } from "./core/llm/registry.js";
@@ -14,6 +14,7 @@ import type { LLMClient } from "./core/llm/types.js";
 import type { Channel } from "./channels/types.js";
 import { buildTools, describeToolset } from "./core/toolsets.js";
 import { runDoctor, formatReport } from "./core/doctor.js";
+import { runInit, nextSteps, InitCancelled } from "./core/init.js";
 import type { EmbeddingEndpoint } from "./core/memory/dedup.js";
 
 /**
@@ -43,9 +44,7 @@ async function doctorCli(argv: string[]): Promise<number> {
   const probe = argv.includes("--probe");
   const configPath = getConfigPath();
   const config = isConfigured() ? loadConfig(configPath) : null;
-  const registry = config && getLLMApiKey(config)
-    ? new ProviderRegistry(toRegistryConfig(config))
-    : undefined;
+  const registry = registryFor(config);
 
   const report = await runDoctor({
     configPath,
@@ -344,8 +343,51 @@ function setupShutdown(scheduler?: SchedulerService, router?: LLMRouter) {
   process.on("SIGTERM", shutdown);
 }
 
+/**
+ * The registry a config describes, or undefined when the config cannot make
+ * one — a diagnosis is still worth running without it, and that case is exactly
+ * the one where a diagnosis is needed.
+ */
+function registryFor(config: EvaConfig | null): ProviderRegistry | undefined {
+  return config && getLLMApiKey(config) ? new ProviderRegistry(toRegistryConfig(config)) : undefined;
+}
+
+async function initCli(argv: string[]): Promise<number> {
+  try {
+    const result = await runInit(argv);
+    if (result.alreadyDone) return 0;
+    console.log("");
+    for (const step of nextSteps()) console.log(`  ${step}`);
+    // A bad check right after init means the config just written is wrong, and
+    // saying so here is cheaper than finding out from a silent bot.
+    return result.report && result.report.bad > 0 ? 1 : 0;
+  } catch (err) {
+    if (err instanceof InitCancelled) {
+      // Not a failure: nobody asked for anything to be destroyed by it.
+      console.log("Отменено. Ничего не изменено.");
+      return 0;
+    }
+    throw err;
+  }
+}
+
+function usage(): void {
+  console.log(
+    [
+      "Ева — телеграм-бот с памятью и любым провайдером LLM.",
+      "",
+      "  eva init      развернуть конфиг: токен бота + ключ провайдера",
+      "  eva           запустить бота (то же, что systemctl start eva)",
+      "  eva doctor    проверить, что не сломано [--probe — живые запросы к моделям]",
+      "",
+      "eva init без флагов спрашивает всё нужное и прячет ввод ключей.",
+      "eva init --token T --provider openai --key K --model gpt-4o-mini — без вопросов.",
+    ].join("\n"),
+  );
+}
+
 // The CLI path is checked before main() so a diagnosis works on a box where
-// the bot itself will not come up — which is exactly when it is needed.
+// the bot itself will not come up - which is exactly when it is needed.
 const argv = process.argv.slice(2);
 if (argv[0] === "doctor") {
   doctorCli(argv.slice(1))
@@ -354,6 +396,15 @@ if (argv[0] === "doctor") {
       console.error(err instanceof Error ? err.message : err);
       process.exit(1);
     });
+} else if (argv[0] === "init") {
+  initCli(argv.slice(1))
+    .then((code) => process.exit(code))
+    .catch((err) => {
+      console.error(err instanceof Error ? err.message : err);
+      process.exit(1);
+    });
+} else if (argv[0] === "--help" || argv[0] === "-h" || argv[0] === "help") {
+  usage();
 } else {
   main().catch((err) => {
     console.error(err instanceof Error ? err.message : err);

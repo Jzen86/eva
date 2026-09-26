@@ -632,6 +632,7 @@ async function section(
   try {
     return await build();
   } catch (err) {
+    const known = explain(err);
     return {
       title,
       checks: [
@@ -639,13 +640,55 @@ async function section(
           name,
           // One line. Native-module loaders like to list every path they tried,
           // and fourteen lines of "Tried:" is not a report, it is a scrollback.
-          `раздел не отработал: ${firstLine(err)}`,
-          "Скорее всего, это и есть поломка. Начни отсюда.",
+          known?.what ?? `раздел не отработал: ${firstLine(err)}`,
+          known?.do ?? "Скорее всего, это и есть поломка. Начни отсюда.",
         ),
       ],
     };
   }
 }
+
+/**
+ * The failures a fresh install actually hits, translated into what to do.
+ *
+ * better-sqlite3 compiles from source, and on a bare Linux box that needs a
+ * toolchain. Without it the loader says "Could not locate the bindings file.
+ * Tried:" and then lists fourteen paths — which tells the person nothing about
+ * the one thing that would have fixed it. This is the most likely first-run
+ * failure there is, so it gets a sentence instead of a search.
+ */
+const KNOWN_FAILURES: Array<{ match: RegExp; what: string; do: string }> = [
+  {
+    match: /bindings file|NODE_MODULE_VERSION|better_sqlite3\.node|ERR_DLOPEN_FAILED|compiled against a different Node/i,
+    what: "не собралась нативная часть better-sqlite3 — память работать не будет",
+    do: "Поставь тулчейн и переустанови: apt install -y build-essential python3 && npm i -g github:Jzen86/eva",
+  },
+  {
+    match: /EACCES|permission denied/i,
+    what: "нет прав на файлы бота",
+    do: "Сервис должен ходить от того же пользователя, которому принадлежит ~/.eva",
+  },
+  {
+    match: /ENOSPC|no space left/i,
+    what: "кончилось место на диске",
+    do: "Освободи место, потом запусти eva doctor ещё раз",
+  },
+  {
+    match: /ENOTFOUND|EAI_AGAIN|ETIMEDOUT|fetch failed/i,
+    what: "сеть недоступна",
+    do: "Проверь DNS и прокси: curl -I https://api.telegram.org",
+  },
+];
+
+function explain(err: unknown): { what: string; do: string } | undefined {
+  const code = err instanceof Error ? (err as NodeJS.ErrnoException).code ?? "" : "";
+  const text = err instanceof Error ? `${err.message}\n${code}` : String(err);
+  const hit = KNOWN_FAILURES.find((f) => f.match.test(text));
+  return hit ? { what: hit.what, do: hit.do } : undefined;
+}
+
+/** Exported for tests: which of the known first-install failures this is. */
+export const explainFailure = explain;
 
 /** The first line of an error, no matter how it was stringified. */
 function firstLine(err: unknown): string {

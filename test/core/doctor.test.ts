@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
-import { runDoctor, formatReport, type DoctorReport, type Check } from "../../src/core/doctor.js";
+import { runDoctor, formatReport, explainFailure, type DoctorReport, type Check } from "../../src/core/doctor.js";
 import { DoctorTool } from "../../src/core/tools/doctor.js";
 import { ProviderRegistry, type RegistryConfig } from "../../src/core/llm/registry.js";
 import { getDB, closeDB, writeMeta, KNOWLEDGE_INDEX_VERSION } from "../../src/core/memory/db.js";
@@ -469,5 +469,50 @@ describe("DoctorTool", () => {
     const cheap = await tool.execute({ action: "summary" });
     expect(calls).toBe(0);
     expect(cheap.success).toBe(true);
+  });
+});
+
+describe("explainFailure", () => {
+  // better-sqlite3 building from source on a bare Linux box is the single most
+  // likely reason a first install comes up broken, and the loader's own message
+  // ("Could not locate the bindings file. Tried:" + fourteen paths) does not
+  // name the one command that fixes it.
+  it("names the toolchain when the native sqlite module is missing", () => {
+    const err = new Error(
+      "Could not locate the bindings file. Tried:\n" +
+        "  * node_modules/better-sqlite3/build/Release/better_sqlite3.node\n" +
+        "  * node_modules/better-sqlite3/prebuilds/...",
+    );
+    const what = explainFailure(err);
+    expect(what?.what).toContain("better-sqlite3");
+    expect(what?.do).toContain("build-essential");
+  });
+
+  it("catches the same failure when it arrives as an errno-style code", () => {
+    const err = Object.assign(new Error("was compiled against a different Node.js version"), {
+      code: "ERR_DLOPEN_FAILED",
+    });
+    expect(explainFailure(err)?.what).toContain("better-sqlite3");
+  });
+
+  it("explains a permissions failure in terms of the user the service runs as", () => {
+    const err = Object.assign(new Error("permission denied"), { code: "EACCES" });
+    expect(explainFailure(err)?.do).toContain("пользовател");
+  });
+
+  it("explains a full disk, which otherwise reads as corruption", () => {
+    const err = Object.assign(new Error("write failed"), { code: "ENOSPC" });
+    expect(explainFailure(err)?.what).toContain("место");
+  });
+
+  it("explains a network failure, which otherwise reads as a bad key", () => {
+    const err = Object.assign(new Error("request failed"), { code: "ENOTFOUND" });
+    expect(explainFailure(err)?.do).toContain("DNS");
+  });
+
+  it("says nothing clever about an error it does not recognise", () => {
+    // Guessing is worse than the raw line: a wrong fix costs more time than no
+    // fix, and the section is still reported as broken either way.
+    expect(explainFailure(new Error("something odd"))).toBeUndefined();
   });
 });

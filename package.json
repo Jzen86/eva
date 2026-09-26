@@ -12,17 +12,21 @@
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "e2e": "tsup && node scripts/e2e-install.mjs"
   },
   "dependencies": {
     "@grammyjs/auto-retry": "^2.0.2",
     "better-sqlite3": "^11.8.0",
     "grammy": "^1.35.0",
     "openai": "^4.80.0",
-    "playwright": "^1.58.2",
     "ws": "^8.19.0",
     "yaml": "^2.7.0",
     "zod": "^3.24.0"
+  },
+  "//optionalDependencies": "playwright is only used by the browser tool, which is off by default (tools.browser). In `dependencies` it made every install pull ~150 MB of Chromium for a tool nobody asked for. Optional means `npm i -g` stays small, and `npm i playwright` enables it for whoever wants it. The browser tool says exactly what to install when it is missing.",
+  "optionalDependencies": {
+    "playwright": "^1.58.2"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
