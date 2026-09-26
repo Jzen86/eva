@@ -99,7 +99,7 @@ export class WebTool implements Tool {
         signal: controller.signal,
         headers: {
           "Accept": "text/markdown",
-          "User-Agent": "Betsy/1.0 (AI Assistant)",
+          "User-Agent": "Eva/1.0 (AI Assistant)",
         },
       })
       clearTimeout(timer)

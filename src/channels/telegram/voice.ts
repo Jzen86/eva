@@ -216,7 +216,7 @@ export async function sendVoiceResponse(
   const ogg = await synthesizeVoiceOgg(text, voiceConfig, falApiKey);
   if (!ogg) return false;
 
-  const tmpFile = path.join(os.tmpdir(), `betsy-tts-${Date.now()}.ogg`);
+  const tmpFile = path.join(os.tmpdir(), `eva-tts-${Date.now()}.ogg`);
   try {
     fs.writeFileSync(tmpFile, ogg);
     const { InputFile } = await import("grammy");

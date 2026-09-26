@@ -10,7 +10,7 @@ export interface VoiceToolConfig {
 }
 
 /**
- * Lets Betsy send a voice message on her own initiative (not only via /voice).
+ * Lets Eva send a voice message on her own initiative (not only via /voice).
  * Synthesizes OGG/Opus and returns it as mediaPath; the Telegram channel
  * delivers .ogg mediaPath as a real voice note.
  */
@@ -39,7 +39,7 @@ export class VoiceTool implements Tool {
       return { success: false, output: "Не удалось синтезировать голос (проверь ключ/модель TTS)." };
     }
 
-    const file = path.join(os.tmpdir(), `betsy-voice-${Date.now()}.ogg`);
+    const file = path.join(os.tmpdir(), `eva-voice-${Date.now()}.ogg`);
     fs.writeFileSync(file, ogg);
     return { success: true, output: "Голосовое готово и отправлено.", mediaPath: file };
   }

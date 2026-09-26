@@ -71,7 +71,7 @@ export async function sendVideoNote(
     return sendVoiceResponse(ctx, text, voiceConfig, falApiKey);
   }
 
-  const tmpFile = path.join(os.tmpdir(), `betsy-video-${Date.now()}.mp4`);
+  const tmpFile = path.join(os.tmpdir(), `eva-video-${Date.now()}.mp4`);
   try {
     fs.writeFileSync(tmpFile, video);
     const { InputFile } = await import("grammy");
