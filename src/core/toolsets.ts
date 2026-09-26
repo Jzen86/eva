@@ -148,12 +148,17 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
 
   // --- keyed: one key away, then they work --------------------------------
 
+  // Search needs no credentials. Google's Custom Search was the only backend and
+  // it needs a key plus a `cx` from a search engine a person has to build by
+  // hand, so a plain install had no `web` tool at all and the log announced it
+  // on every start. Without it she went for `browser`, failed, then `http`, then
+  // `shell` and curl — three tools to fake a search, which looks exactly like a
+  // model that lost the habit. Google is still used when it is configured.
   const googleConfig = config.google as { api_key?: string; cx?: string } | undefined;
-  if (googleConfig?.api_key && googleConfig.cx) {
-    add(new WebTool({ apiKey: googleConfig.api_key, cx: googleConfig.cx }), "keyed");
-  } else {
-    decisions.push({ name: "web", tier: "keyed", registered: false, reason: "нет google.api_key + google.cx" });
-  }
+  add(
+    new WebTool({ apiKey: googleConfig?.api_key, cx: googleConfig?.cx }),
+    googleConfig?.api_key && googleConfig.cx ? "keyed" : "core",
+  );
 
   const skillsKey = str((config.skillsmp as { api_key?: string } | undefined)?.api_key);
   // Decisions are recorded under the tools' real names, not under a group

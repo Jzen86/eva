@@ -96,8 +96,10 @@ describe("buildTools", () => {
   it("does not advertise a service that is not configured", () => {
     const result = build(MINIMAL);
     // The whole point. Each of these used to be registered unconditionally and
-    // failed at call time.
-    for (const name of ["web", "skill_search", "skill_install", "selfie", "voice", "browser", "ssh", "npm_install"]) {
+    // failed at call time. `web` is not in the list any more: search has a
+    // keyless backend, so needing a Google credential to have a search tool is
+    // the bug, not the guarantee.
+    for (const name of ["skill_search", "skill_install", "selfie", "voice", "browser", "ssh", "npm_install"]) {
       expect(result.registered, `${name} не должен регистрироваться без своего сервиса`).not.toContain(name);
       expect(reason(result, name), `${name} должен объяснить, почему выключен`).toBeTruthy();
     }
@@ -114,7 +116,11 @@ describe("buildTools", () => {
     const line = describeToolset(build(MINIMAL));
     expect(line).toMatch(/Инструментов: \d+/);
     expect(line).toContain("отключено");
-    expect(line).toContain("web");
+    // `voice` is here because it used to be reported missing on a machine whose
+    // TTS worked, over a gate that had nothing to do with TTS. `web` is here
+    // because it used to be reported missing on every plain install, over a
+    // credential nobody had. A list that cries wolf is a list nobody reads.
+    expect(line).toContain("voice");
   });
 
   // --- keyed tools: a key turns them on ----------------------------------
@@ -124,11 +130,22 @@ describe("buildTools", () => {
     expect(build(cfg).registered).toContain("web");
   });
 
-  it("leaves web off with a google key but no cx — half a key is not a key", () => {
+  it("gives a plain install a working search, with no credentials at all", () => {
+    // The bug this closes. `web` needed a Google key AND a `cx` from a search
+    // engine a person builds by hand, so a normal install had no search at all
+    // and the startup line said so every time. What she did instead was try
+    // `browser`, then `http`, then `shell` with curl — three tools to fake a
+    // search, which reads as a model that has forgotten how to use the internet.
+    const result = build(MINIMAL);
+    expect(result.registered).toContain("web");
+    expect(result.disabled.map((d) => d.name)).not.toContain("web");
+  });
+
+  it("keeps web on with only half a Google credential, and simply does not use it", () => {
+    // Half a key is half a key: the tool stays registered on the keyless
+    // engine, and the unused Google path is not reported as a broken tool.
     const cfg = { ...MINIMAL, google: { api_key: "k" } } as unknown as EvaConfig;
-    const result = build(cfg);
-    expect(result.registered).not.toContain("web");
-    expect(reason(result, "web")).toContain("cx");
+    expect(build(cfg).registered).toContain("web");
   });
 
   it("turns skills on with a skillsmp key", () => {
