@@ -123,12 +123,6 @@ const configSchema = z.object({
 
   security: z.object({
     password_hash: z.string().optional(),
-    tools: z.object({
-      shell: z.boolean().default(true),
-      ssh: z.boolean().default(false),
-      browser: z.boolean().default(true),
-      npm_install: z.boolean().default(true),
-    }).optional(),
   }).optional(),
 
   llm: llmSchema.optional(),

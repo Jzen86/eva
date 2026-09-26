@@ -42,10 +42,23 @@ describe("minimalConfig", () => {
     expect(cfg.providers?.openai?.base_url).toBe("https://api.openai.com/v1");
   });
 
-  it("carries a personality, because a companion with no character is a search box", () => {
+  it("writes no character, because this repository is a base, not somebody's Eva", () => {
+    // It used to write «Дерзкая и своя…» plus three standing rules into every
+    // install. Nobody asked for that personality, and a default that is a
+    // person is a person the owner did not choose and cannot see. She starts as
+    // nobody; doctor says so, and he tells her who she is in one sentence.
     const personality = minimalConfig(answers()).agent?.personality as Record<string, unknown>;
-    expect(String(personality.persona).length).toBeGreaterThan(40);
-    expect(Array.isArray(personality.ops)).toBe(true);
+    expect(personality.persona).toBeUndefined();
+    expect(personality.ops).toBeUndefined();
+    expect(personality.custom_instructions).toBeUndefined();
+    // The name is a product, not a person: it is what the bot answers to.
+    expect(minimalConfig(answers()).agent?.name).toBe(answers().agentName);
+  });
+
+  it("points the owner at the one thing that makes her hers", () => {
+    // Silence here reads as "nothing left to do", and the owner finds out
+    // weeks later that he got a generic bot.
+    expect(nextSteps().join("\n")).toContain("Кто она");
   });
 
   it("leaves the owner id for the bot to learn on first message", () => {

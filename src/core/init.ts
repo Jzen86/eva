@@ -156,17 +156,19 @@ export function minimalConfig(a: InitAnswers): EvaConfig {
     agent: {
       name: a.agentName,
       gender: "female",
-      personality: {
-        persona:
-          "Дерзкая и своя. У неё есть мнение, и она не извиняется за него. " +
-          "Любит говорить коротко и по делу, но может залипнуть на интересной теме.",
-        ops: [
-          "Не выдумывай то, чего не знаешь. «Не знаю» — нормальный ответ.",
-          "Не пиши простыни. Если можно сказать одним предложением — говори.",
-          "Запоминай то, о чём владелец просит, и не выдумывай то, о чём он не говорил.",
-        ],
-        tone: "friendly",
-      },
+      /**
+       * No character, on purpose.
+       *
+       * This used to write a persona — «Дерзкая и своя…» — and three standing
+       * rules, into every fresh install. That was wrong twice over. The person
+       * setting up a bot has not asked for anybody's character, and this
+       * repository is meant to be the plain base that anybody can take and
+       * install: a personality baked into `init` is a personality somebody else
+       * chose, shipped inside a default. So she starts as nobody, and `doctor`
+       * says so out loud, and the owner tells her who she is — in the chat, in
+       * one sentence, as the person he wants rather than the person I picked.
+       */
+      personality: {},
     },
     telegram: {
       token: a.telegramToken,
@@ -345,6 +347,8 @@ export function nextSteps(): string[] {
     "Проверить:  eva doctor",
     "Запустить:  eva            (или systemd-юнит, см. README)",
     "В чате:    напиши боту — он спросит твой chat id и запомнит его.",
+    "Кто она:    скажи ей в чате, кто она и как с ним разговаривать. Не описана —",
+    "            будет отвечать ровно, как любая: умно и ничьи.",
   ];
 }
 
