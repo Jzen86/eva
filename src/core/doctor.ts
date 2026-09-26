@@ -34,6 +34,7 @@ import {
 } from "./config.js";
 import type { ModelRef, ProviderRegistry } from "./llm/registry.js";
 import { hasReferencePhoto, describeReferencePhoto } from "./reference-photo.js";
+import { voiceBackendAvailable } from "./tools/voice.js";
 
 export type Severity = "ok" | "warn" | "bad";
 
@@ -75,6 +76,13 @@ export interface DoctorOptions {
   dbPath?: string;
   /** Live check of one model. Only run when asked — it costs a request. */
   probe?: (ref: ModelRef) => Promise<{ ok: boolean; ms: number; reason?: string }>;
+  /**
+   * Make a real call to an outside service — fal, the TTS backend — and report
+   * whether it answered. Opt-in for the same reason the model probe is: it costs
+   * money and takes seconds, and a diagnosis that runs on every `doctor` would
+   * be a diagnosis nobody runs.
+   */
+  probeMedia?: (which: "fal" | "voice") => Promise<{ ok: boolean; ms: number; reason?: string }>;
 }
 
 function ok(name: string, detail: string): Check {
@@ -626,6 +634,79 @@ function runtimeSection(): DoctorSection {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * The services this install depends on outside the LLM providers.
+ *
+ * Written because the report said "ключ есть" and that was taken — including by
+ * me — to mean "работает". On this machine the fal key is valid, the account is
+ * locked for lack of funds, and every call returns 403 `User is locked. Reason:
+ * TOP_UP`. A presence check cannot see that, and neither could the startup line:
+ * the tool registered, and the feature died at the first request.
+ *
+ * So a probe here makes a real call, and the failure is reported in the owner's
+ * terms. Without `--probe` the line says the key is present and says out loud
+ * that this is not the same as working, because guessing costs an hour of
+ * "почему кружок не отправился".
+ */
+async function mediaSection(
+  config: EvaConfig | null,
+  probeMedia?: DoctorOptions["probeMedia"],
+): Promise<DoctorSection> {
+  if (!config) {
+    return {
+      title: "Внешние сервисы",
+      checks: [warn("media.config", "конфиг не читается — про внешние сервисы сказать нечего")],
+    };
+  }
+  const checks: Check[] = [];
+  const selfies = (config.selfies ?? {}) as Record<string, unknown>;
+  const video = (config.video ?? {}) as Record<string, unknown>;
+  const voice = (config.voice ?? {}) as Record<string, unknown>;
+  const falKey = String(selfies.fal_api_key ?? "") || String(video.fal_api_key ?? "");
+
+  if (falKey) {
+    if (!probeMedia) {
+      checks.push(
+        warn(
+          "media.fal",
+          `fal: ключ есть (${falKey.length} символов) — но это не значит, что он работает`,
+          "Запусти `eva doctor --probe`: без него аккаунт без средств выглядит как рабочий ключ.",
+        ),
+      );
+    } else {
+      const res = await probeMedia("fal");
+      checks.push(
+        res.ok
+          ? ok("media.fal", `fal: отвечает (${res.ms} мс)`)
+          : bad("media.fal", `fal: ключ есть, но не работает — ${res.reason ?? "неизвестная причина"}`,
+              "Видео и кружки через fal не поедут, пока это не исправлено."),
+      );
+    }
+  } else {
+    checks.push(
+      ok("media.fal", "fal не настроен — и не нужен, если есть другой бэкенд"),
+    );
+  }
+
+  const backend = voiceBackendAvailable(voice, falKey || undefined);
+  if (backend.ok) {
+    if (!probeMedia) {
+      checks.push(ok("media.voice", `голос: ${backend.why}`));
+    } else {
+      const res = await probeMedia("voice");
+      checks.push(
+        res.ok
+          ? ok("media.voice", `голос через ${backend.backend}: отвечает (${res.ms} мс)`)
+          : bad("media.voice", `голос через ${backend.backend}: ключ есть, но не работает — ${res.reason ?? "причина неизвестна"}`),
+      );
+    }
+  } else {
+    checks.push(warn("media.voice", `голос выключен: ${backend.why}`, "Пропиши tts_provider и ключ в секции voice."));
+  }
+
+  return { title: "Внешние сервисы", checks };
+}
+
 export async function runDoctor(opts: DoctorOptions = {}): Promise<DoctorReport> {
   const configPath = opts.configPath ?? getConfigPath();
 
@@ -641,6 +722,11 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<DoctorReport>
   sections.push(
     await section("Провайдеры и модели", "section.providers", () =>
       providerSection(opts.registry, opts.probe),
+    ),
+  );
+  sections.push(
+    await section("Внешние сервисы", "section.media", () =>
+      mediaSection(loadConfig(configPath), opts.probeMedia),
     ),
   );
   sections.push(await section("Память", "section.memory", () => memorySection(opts.dbPath)));

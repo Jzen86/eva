@@ -445,10 +445,115 @@ llm:
       providerIds: () => { throw new Error("registry exploded"); },
     } as unknown as ProviderRegistry;
     const report = await runDoctor({ configPath, registry: broken, dbPath });
-    expect(report.sections.length).toBe(4);
+    expect(report.sections.length).toBe(5);
     expect(find(report, "config.present")?.severity).toBe("ok");
     expect(find(report, "section.providers")?.severity).toBe("bad");
     expect(find(report, "memory.db")?.severity).toBe("ok");
+  });
+});
+
+describe("the outside services section", () => {
+  let dir: string;
+  let configPath: string;
+  let dbPath: string;
+
+  const write = (body: string) => {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(configPath, body, "utf-8");
+  };
+
+  beforeEach(() => {
+    dir = path.join(os.tmpdir(), `eva-media-${crypto.randomUUID()}`);
+    configPath = path.join(dir, "config.yaml");
+    dbPath = path.join(dir, "eva.db");
+  });
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+    closeDB();
+  });
+
+  const withFal = (extra = "") => `
+agent:
+  name: Ева
+telegram:
+  token: "123456:AAtelegramtokenvalue"
+  owner_id: 42
+selfies:
+  fal_api_key: "fal-key-value"
+${extra}`;
+
+  it("says a fal key is present is not the same as a fal key that works", async () => {
+    // The sentence that would have saved an hour of "почему кружок не ушёл".
+    write(withFal());
+    const report = await runDoctor({ configPath, dbPath });
+    const fal = find(report, "media.fal");
+    expect(fal?.severity).toBe("warn");
+    expect(fal?.detail).toMatch(/не значит, что он работает/);
+    expect(fal?.fix).toMatch(/--probe/);
+  });
+
+  it("reports a locked account as bad, with the service's own words", async () => {
+    write(withFal());
+    const report = await runDoctor({
+      configPath,
+      dbPath,
+      probeMedia: async () => ({ ok: false, ms: 300, reason: "403 User is locked. Reason: TOP_UP." }),
+    });
+    const fal = find(report, "media.fal");
+    expect(fal?.severity).toBe("bad");
+    expect(fal?.detail).toContain("ключ есть, но не работает");
+    expect(fal?.detail).toContain("TOP_UP");
+  });
+
+  it("says fal is fine when it answers", async () => {
+    write(withFal());
+    const report = await runDoctor({
+      configPath,
+      dbPath,
+      probeMedia: async (which) =>
+        which === "fal" ? { ok: true, ms: 210, reason: undefined } : { ok: true, ms: 90, reason: undefined },
+    });
+    expect(find(report, "media.fal")?.detail).toMatch(/отвечает/);
+  });
+
+  it("does not call fal at all when it is not configured", async () => {
+    // No key means nothing to probe, and a probe that runs anyway would turn a
+    // free diagnosis into a paid one.
+    write(`agent:\n  name: Ева\ntelegram:\n  token: "123456:AAtelegramtokenvalue"\n  owner_id: 42\n`);
+    let asked = 0;
+    const report = await runDoctor({
+      configPath,
+      dbPath,
+      probeMedia: async () => { asked += 1; return { ok: true, ms: 1, reason: undefined }; },
+    });
+    expect(asked).toBe(0);
+    expect(find(report, "media.fal")?.severity).toBe("ok");
+  });
+
+  it("registers voice on Gemini with no fal account anywhere", async () => {
+    // The feature that worked and was reported as missing, because the gate
+    // asked about fal and nothing else.
+    write(`${withFal()}`);
+    write(withFal(`voice:
+  tts_provider: gemini
+  gemini_api_key: "goog-key"
+`));
+    const report = await runDoctor({
+      configPath,
+      dbPath,
+      probeMedia: async (which) =>
+        which === "voice" ? { ok: true, ms: 120, reason: undefined } : { ok: true, ms: 210, reason: undefined },
+    });
+    expect(find(report, "media.voice")?.detail).toMatch(/gemini/);
+    expect(find(report, "media.voice")?.severity).toBe("ok");
+  });
+
+  it("names the missing key when voice cannot work", async () => {
+    write(withFal(`voice:\n  tts_provider: gemini\n`));
+    const report = await runDoctor({ configPath, dbPath });
+    const voice = find(report, "media.voice");
+    expect(voice?.severity).toBe("warn");
+    expect(voice?.detail).toContain("gemini_api_key");
   });
 });
 

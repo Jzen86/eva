@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isConfigured, loadConfig, patchConfig, getConfigPath, getAgentName, getPersonality, getPersonalitySliders, getLLMApiKey, toRegistryConfig, type EvaConfig } from "./core/config.js";
 import { TelegramChannel } from "./channels/telegram/index.js";
+import { synthesizeVoiceOgg } from "./channels/telegram/voice.js";
 import { LLMRouter } from "./core/llm/router.js";
 import { ProviderRegistry } from "./core/llm/registry.js";
 import { Engine } from "./core/engine.js";
@@ -61,6 +62,44 @@ async function doctorCli(argv: string[]): Promise<number> {
             const ms = Date.now() - started;
             const empty = !res.text.trim() && !res.toolCalls?.length;
             return empty ? { ok: false, ms, reason: "пустой ответ" } : { ok: true, ms };
+          } catch (err) {
+            return {
+              ok: false,
+              ms: Date.now() - started,
+              reason: err instanceof Error ? err.message.slice(0, 300) : String(err),
+            };
+          }
+        }
+      : undefined,
+    // Outside services get a real call too, for the same reason and with the
+    // same bill: a key in a config file is not a working key. On this machine the
+    // fal key is valid and the account is locked, which no presence check can
+    // see and which the startup line used to imply was fine.
+    probeMedia: probe
+      ? async (which) => {
+          const started = Date.now();
+          try {
+            if (which === "voice") {
+              const voice = (config?.voice ?? {}) as Record<string, unknown>;
+              const falKey = String((config?.selfies as Record<string, unknown> | undefined)?.fal_api_key ?? "") || undefined;
+              const bytes = await synthesizeVoiceOgg("Проверка связи.", voice, falKey);
+              const ms = Date.now() - started;
+              return bytes && bytes.length > 0
+                ? { ok: true, ms }
+                : { ok: false, ms, reason: "синтезатор вернул пусто" };
+            }
+            const falKey = String((config?.selfies as Record<string, unknown> | undefined)?.fal_api_key ?? "")
+              || String((config?.video as Record<string, unknown> | undefined)?.fal_api_key ?? "");
+            const res = await fetch("https://fal.run/fal-ai/flux/schnell", {
+              method: "POST",
+              headers: { Authorization: `Key ${falKey}`, "Content-Type": "application/json" },
+              // 64x64, one image: the cheapest thing that still exercises the
+              // account rather than the model's manners.
+              body: JSON.stringify({ prompt: "a red dot on white", image_size: { width: 64, height: 64 }, num_images: 1 }),
+            });
+            const body = (await res.text()).replace(/\s+/g, " ").slice(0, 200);
+            const ms = Date.now() - started;
+            return res.ok ? { ok: true, ms } : { ok: false, ms, reason: `${res.status} ${body}` };
           } catch (err) {
             return {
               ok: false,

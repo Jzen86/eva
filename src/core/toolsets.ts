@@ -34,7 +34,7 @@ import { FilesTool } from "./tools/files.js";
 import { HttpTool } from "./tools/http.js";
 import { BrowserTool } from "./tools/browser.js";
 import { SelfieTool } from "./tools/selfie.js";
-import { VoiceTool } from "./tools/voice.js";
+import { VoiceTool, voiceBackendAvailable } from "./tools/voice.js";
 import { ImageGenTool } from "./tools/image-gen.js";
 import { WebTool } from "./tools/web.js";
 import { SkillSearchTool } from "./tools/skill-search.js";
@@ -243,15 +243,20 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
     decisions.push({ name: "selfie", tier: "keyed", registered: false, reason: "нет selfies.fal_api_key и референс-фото" });
   }
 
-  // Voice: sending herself a voice note needs a TTS backend, and the only one
-  // wired up is fal. No key, no tool — rather than a tool that always fails.
-  if (falKey) {
-    add(
-      new VoiceTool({ voiceConfig: (config.voice as Record<string, unknown>) ?? {}, falApiKey: falKey }),
-      "keyed",
-    );
+  // Voice: sending herself a voice note needs a TTS backend that can actually
+  // answer. The gate used to be "is there a fal key", which is neither necessary
+  // nor sufficient. Not necessary: this machine synthesizes fine through Gemini
+  // and the tool stayed unregistered because no fal account existed — a feature
+  // that works, reported as missing. Not sufficient: a fal key on a locked
+  // account passes the check and then fails on every call. Ask the synthesizer's
+  // own preconditions per provider, and name the one that failed, because
+  // "voice is off" is useless to whoever has to fix it.
+  const voiceCfg = (config.voice as Record<string, unknown> | undefined) ?? {};
+  const voiceBackend = voiceBackendAvailable(voiceCfg, falKey || undefined);
+  if (voiceBackend.ok) {
+    add(new VoiceTool({ voiceConfig: voiceCfg, falApiKey: falKey || undefined }), "keyed");
   } else {
-    decisions.push({ name: "voice", tier: "keyed", registered: false, reason: "нет TTS-бэкенда (selfies.fal_api_key)" });
+    decisions.push({ name: "voice", tier: "keyed", registered: false, reason: `нет TTS-бэкенда: ${voiceBackend.why}` });
   }
 
   // --- opt-in: a deliberate decision --------------------------------------

@@ -147,11 +147,44 @@ describe("buildTools", () => {
     expect(build(cfg).registered).toContain("selfie");
   });
 
-  it("turns voice on only with a TTS backend", () => {
-    const cfg = { ...MINIMAL, selfies: { fal_api_key: "fal-key" } } as unknown as EvaConfig;
+  it("turns voice on when the configured TTS backend can answer", () => {
+    // A fal key used to be the whole test. It is not: the synthesizer reaches
+    // fal only through minimax, so a fal key with the default
+    // tts_provider=openai registered a tool that could only ever fail.
+    const cfg = {
+      ...MINIMAL,
+      selfies: { fal_api_key: "fal-key" },
+      voice: { tts_provider: "minimax" },
+    } as unknown as EvaConfig;
     const result = build(cfg);
     expect(result.registered).toContain("voice");
     expect(result.registered).toContain("selfie");
+  });
+
+  it("turns voice on through Gemini with no fal account anywhere", () => {
+    // The feature that worked and was reported as missing, because the gate
+    // asked about fal and nothing else.
+    const cfg = {
+      ...MINIMAL,
+      voice: { tts_provider: "gemini", gemini_api_key: "goog-key" },
+    } as unknown as EvaConfig;
+    expect(build(cfg).registered).toContain("voice");
+  });
+
+  it("says which key is missing instead of just that voice is off", () => {
+    // "voice is off" is useless to whoever has to fix it.
+    const cfg = {
+      ...MINIMAL,
+      voice: { tts_provider: "gemini" },
+    } as unknown as EvaConfig;
+    expect(reason(build(cfg), "voice")).toContain("gemini_api_key");
+  });
+
+  it("does not register voice on a fal key alone", () => {
+    // A registered tool that always fails is worse than an absent one: the model
+    // calls it, it errors, and the feature looks broken rather than unconfigured.
+    const cfg = { ...MINIMAL, selfies: { fal_api_key: "fal-key" } } as unknown as EvaConfig;
+    expect(build(cfg).registered).not.toContain("voice");
   });
 
   // --- opt-in tools: a deliberate decision --------------------------------
