@@ -213,34 +213,64 @@ async function apiErrorFrom(response: Response, bodyText?: string): Promise<Erro
   );
 }
 
+/**
+ * Chunks of a response body, whichever shape the transport hands back.
+ *
+ * The SDK's own `asResponse()` on a streaming call does not always give a web
+ * ReadableStream — on Node it has been a plain async-iterable stream — so this
+ * asks for the reader and falls back rather than assuming. Incremental delivery
+ * is not optional here: it is what makes her answers appear word by word in the
+ * chat, and a fallback that quietly buffered the whole body would work and feel
+ * broken at the same time.
+ */
+async function* bodyChunks(response: Response): AsyncGenerator<string> {
+  const body = response.body as unknown as
+    | (ReadableStream<Uint8Array> & AsyncIterable<Uint8Array>)
+    | AsyncIterable<Uint8Array | string>
+    | null;
+  if (!body) return;
+
+  const decoder = new TextDecoder();
+  const toText = (chunk: Uint8Array | string): string =>
+    typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+
+  if (typeof (body as ReadableStream<Uint8Array>).getReader === "function") {
+    const reader = (body as ReadableStream<Uint8Array>).getReader();
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        yield toText(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    return;
+  }
+
+  for await (const chunk of body as AsyncIterable<Uint8Array | string>) {
+    yield toText(chunk);
+  }
+}
+
 /** Split an SSE body into parsed `data:` payloads. */
 async function* ssePayloads(response: Response): AsyncGenerator<Record<string, unknown>> {
-  const body = response.body;
-  if (!body) return;
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
   let buffer = "";
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let nl: number;
-      while ((nl = buffer.indexOf("\n")) >= 0) {
-        const line = buffer.slice(0, nl).trim();
-        buffer = buffer.slice(nl + 1);
-        if (!line.startsWith("data:")) continue;
-        const payload = line.slice(5).trim();
-        if (!payload || payload === "[DONE]") return;
-        try {
-          yield JSON.parse(payload) as Record<string, unknown>;
-        } catch {
-          // A partial or non-JSON frame is not worth failing a whole answer over.
-        }
+  for await (const piece of bodyChunks(response)) {
+    buffer += piece;
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (!line.startsWith("data:")) continue;
+      const payload = line.slice(5).trim();
+      if (!payload || payload === "[DONE]") return;
+      try {
+        yield JSON.parse(payload) as Record<string, unknown>;
+      } catch {
+        // A partial or non-JSON frame is not worth failing a whole answer over.
       }
     }
-  } finally {
-    reader.releaseLock();
   }
 }
 
