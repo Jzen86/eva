@@ -6,14 +6,21 @@ import { buildPersonalityPrompt } from "./personality.js";
  * Both halves matter. The date tells her what "latest" means; the weekday tells
  * her whether a human would already know a thing that came out an hour ago, which
  * is the difference between looking it up and being smug about not looking it up.
+ *
+ * The offset is explicit and the label says so. The first version read the
+ * server's clock and called it "server time" — which is true, useless, and
+ * actively misleading: the box runs in UTC and the owner is four hours ahead, so
+ * "today" rolled over at the wrong hour and every near-midnight answer was a day
+ * out. A clock without a zone is not a clock.
  */
-export function formatMoment(now: Date = new Date()): string {
+export function formatMoment(now: Date = new Date(), offsetHours = 4): string {
+  const shifted = new Date(now.getTime() + offsetHours * 60 * 60 * 1000);
   const pad = (n: number) => String(n).padStart(2, "0");
   const days = ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"];
   return (
-    `${pad(now.getDate())}.${pad(now.getMonth() + 1)}.${now.getFullYear()}, ` +
-    `${days[now.getDay()]}, ${pad(now.getHours())}:${pad(now.getMinutes())} ` +
-    `(по времени сервера)`
+    `${pad(shifted.getUTCDate())}.${pad(shifted.getUTCMonth() + 1)}.${shifted.getUTCFullYear()}, ` +
+    `${days[shifted.getUTCDay()]}, ${pad(shifted.getUTCHours())}:${pad(shifted.getUTCMinutes())} ` +
+    `(UTC${offsetHours >= 0 ? "+" : ""}${offsetHours})`
   );
 }
 
@@ -31,6 +38,8 @@ export interface PromptConfig {
     customInstructions?: string;
   };
   personalitySliders?: Record<string, number>;
+  /** Hours to add to UTC for the date she is given. The box is not in the owner's timezone. */
+  timezoneOffsetHours?: number;
   owner?: {
     name?: string;
     addressAs?: string;
@@ -107,7 +116,7 @@ ${genderBlock}
   // Also: cheap to state, and it is the difference between an answer that carries
   // a date and one that quietly guesses.
   const now = new Date();
-  prompt += `\nСейчас: ${formatMoment(now)}. Если спрашивают про «последнее», «новое», «актуальное» — считай ответ устаревшим, если в нём нет даты или версии новее этого года. Про цифры, версии, даты и цены всегда сверяйся через web и говори, когда сверила.`;
+  prompt += `\nСейчас: ${formatMoment(now, config.timezoneOffsetHours ?? 4)}. Если спрашивают про «последнее», «новое», «актуальное» — считай ответ устаревшим, если в нём нет даты или версии новее этого года. Про цифры, версии, даты и цены всегда сверяйся через web и говори, когда сверила.`;
 
   // Personality
   const personalityParts: string[] = [];

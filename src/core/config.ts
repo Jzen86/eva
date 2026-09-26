@@ -118,6 +118,16 @@ const configSchema = z.object({
     // `neutral` came along with the option, because the self_config tool has
     // always promised it and the schema used to reject it with a stack trace.
     gender: z.enum(["female", "male", "neutral"]).default("neutral"),
+    /**
+     * Hours to add to UTC for the date she is given.
+     *
+     * A field rather than a constant, because the box's clock is not the owner's:
+     * the server runs in UTC and the owner is four hours ahead, so a date read
+     * from the machine rolls over at the wrong hour and every answer near midnight
+     * lands on the wrong day. It is configurable for the ordinary reason too — he
+     * travels, and the date she quotes should follow him.
+     */
+    timezone_offset_hours: z.number().int().min(-12).max(14).default(4),
     personality: personalitySchema,
   }).default({ name: "Eva" }),
 

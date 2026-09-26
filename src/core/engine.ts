@@ -102,6 +102,7 @@ export class Engine {
           customInstructions: personality.customInstructions,
         },
         personalitySliders: getPersonalitySliders(config),
+        timezoneOffsetHours: config.agent?.timezone_offset_hours,
         owner: config.owner,
       };
     } catch (err) {

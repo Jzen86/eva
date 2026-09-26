@@ -12,12 +12,28 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toMatch(/последнее|новое|актуальное/);
   });
 
-  it("formats the moment with a weekday and a time", () => {
+  it("formats the moment with a weekday, a time and the zone", () => {
     // The time half matters too: a human would know a thing from an hour ago, and
-    // she should not be confidently behind on gossip.
-    expect(formatMoment(new Date(2026, 8, 26, 14, 7))).toBe(
-      "26.09.2026, суббота, 14:07 (по времени сервера)",
+    // she should not be confidently behind on gossip. Built from UTC so the
+    // assertion does not depend on the timezone of whatever machine runs the tests.
+    expect(formatMoment(new Date(Date.UTC(2026, 8, 26, 10, 7)), 4)).toBe(
+      "26.09.2026, суббота, 14:07 (UTC+4)",
     );
+  });
+
+  it("adds the offset instead of reading the box's clock", () => {
+    // The server runs in UTC and the owner is four hours ahead. Reading the
+    // machine's own clock was right on average and wrong for four hours out of
+    // every day, which is exactly the part that matters near midnight.
+    const instant = new Date(Date.UTC(2026, 8, 26, 23, 30));
+    // 23:30 UTC is already the next day at UTC+4, and the weekday has to follow.
+    expect(formatMoment(instant, 4)).toBe("27.09.2026, воскресенье, 03:30 (UTC+4)");
+    expect(formatMoment(instant, 0)).toBe("26.09.2026, суббота, 23:30 (UTC+0)");
+  });
+
+  it("says which zone it is using, so the date is never ambiguous", () => {
+    const prompt = buildSystemPrompt({ name: "Eva", timezoneOffsetHours: 4 });
+    expect(prompt).toMatch(/\(UTC\+4\)/);
   });
 
   it("includes the agent name", () => {
