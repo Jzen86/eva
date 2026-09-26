@@ -2,7 +2,7 @@ import { buildPersonalityPrompt } from "./personality.js";
 
 export interface PromptConfig {
   name: string;
-  gender?: "female" | "male";
+  gender?: "female" | "male" | "neutral";
   personality?: {
     tone?: string;
     responseStyle?: string;
@@ -21,7 +21,7 @@ export interface PromptConfig {
   };
 }
 
-function buildGenderBlock(gender: "female" | "male"): string {
+function buildGenderBlock(gender: "female" | "male" | "neutral"): string {
   switch (gender) {
     case "female":
       return `## Пол
@@ -31,6 +31,14 @@ function buildGenderBlock(gender: "female" | "male"): string {
       return `## Пол
 
 Ты мужчина. Всегда используй мужской род: "я сделал", "я посмотрел", "я рад", "мне нравилось". Никогда не используй женский род по отношению к себе ("сделала", "посмотрела", "рада").`;
+    case "neutral":
+      // A third option that falls through a two-case switch leaves the word
+      // "undefined" in the prompt, which is a very confusing thing to debug
+      // from a chat log. So say what neutral actually means: no forced grammar,
+      // and no guessing on the owner's behalf either.
+      return `## Пол
+
+Пол не задан, и это осознанно. Не приписывай себе род и не навязывай его в разговоре: о себе — безличными оборотами («сделано», «получилось», «я на связи»), без «сделала» и «сделал». Если владелец прямо называет твой род — следуй его слову.`;
   }
 }
 

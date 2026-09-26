@@ -37,7 +37,6 @@ import {
 } from "./config.js";
 import { PROVIDER_PRESETS, ProviderRegistry } from "./llm/registry.js";
 import { runDoctor, formatReport, type DoctorReport } from "./doctor.js";
-import { saveReferencePhoto } from "./reference-photo.js";
 
 export interface InitAnswers {
   telegramToken: string;
@@ -47,13 +46,6 @@ export interface InitAnswers {
   baseUrl?: string;
   model: string;
   agentName: string;
-  /** Who she is, in the owner's words. Absent means the owner has not said yet. */
-  gender?: string;
-  persona?: string;
-  /** Standing rules about how she talks. One line becomes one rule. */
-  ops?: string;
-  /** Path to a photo to copy into `~/.eva/reference.jpg`. */
-  photoPath?: string;
   /** Random per install; encrypts what the http tool stores. */
   securityKey?: string;
   /** Non-interactive: take everything from flags and ask nothing. */
@@ -163,23 +155,19 @@ export function minimalConfig(a: InitAnswers): EvaConfig {
   return {
     agent: {
       name: a.agentName,
-      gender: (a.gender as "female" | "male") || "female",
       /**
-       * A personality the owner asked for, or none at all.
+       * No character, and no gender, on purpose.
        *
        * This used to write a persona — «Дерзкая и своя…» — and three standing
-       * rules, into every fresh install. That was wrong twice over. The person
+       * rules into every fresh install. That was wrong twice over. The person
        * setting up a bot has not asked for anybody's character, and this
        * repository is meant to be the plain base that anybody can take and
        * install: a personality baked into `init` is a personality somebody else
-       * chose, shipped inside a default. So init asks instead of deciding, and
-       * what the owner skips stays empty — `doctor` says so out loud, and the
-       * owner tells her who she is later, in the chat, in one sentence.
+       * chose, shipped inside a default. So she installs as nobody, `doctor`
+       * says so out loud, and the owner builds the person in the chat with
+       * `/persona` — where the answers and the photo actually are.
        */
-      personality: {
-        ...(a.persona ? { persona: a.persona } : {}),
-        ...(a.ops ? { ops: [a.ops] } : {}),
-      },
+      personality: {},
     },
     telegram: {
       token: a.telegramToken,
@@ -257,10 +245,6 @@ function parseArgs(argv: string[]): ParsedArgs {
       case "--model": out.model = value(); break;
       case "--base-url": out.baseUrl = value(); break;
       case "--name": out.agentName = value(); break;
-      case "--gender": out.gender = value(); break;
-      case "--persona": out.persona = value(); break;
-      case "--ops": out.ops = value(); break;
-      case "--photo": out.photoPath = value(); break;
       case "--force": out.force = true; break;
       default: break;
     }
@@ -313,10 +297,6 @@ export async function runInit(argv: string[], opts: InitOptions = {}): Promise<I
     baseUrl: pick(args.baseUrl, opts.answers?.baseUrl),
     model: pick(args.model, opts.answers?.model) ?? "",
     agentName: pick(args.agentName, opts.answers?.agentName) ?? (silent ? DEFAULT_AGENT_NAME : ""),
-    gender: pick(args.gender, opts.answers?.gender),
-    persona: pick(args.persona, opts.answers?.persona),
-    ops: pick(args.ops, opts.answers?.ops),
-    photoPath: pick(args.photoPath, opts.answers?.photoPath),
     securityKey: opts.answers?.securityKey,
     silent,
   };
@@ -328,24 +308,6 @@ export async function runInit(argv: string[], opts: InitOptions = {}): Promise<I
     answers.providerId ||= await askPrompt(`Провайдер (${PRESET_IDS.join(", ")})`, "openrouter");
     answers.providerKey ||= await askSecret("Ключ провайдера:");
     answers.model ||= await askPrompt("Модель для fast и strong", DEFAULT_MODEL);
-
-    // Who she is. A photo, a gender, a character, one rule about talking. All
-    // skippable, all changeable later in the chat — the point is that a fresh
-    // install is not a stranger, not that these answers are final. They are
-    // asked in one block because they belong together, and skipped without a
-    // lecture because the owner may have no photo on the server and no patience
-    // for a questionnaire.
-    console.log("\nКто она. Всё это потом меняется в чате — просто командами.\n");
-    answers.photoPath ||= await askPrompt(
-      "Фото: путь к файлу на сервере (Enter — скинешь в чат через /setphoto)",
-      "",
-    );
-    answers.gender ||= await askPrompt("Пол (female/male, Enter — не важно)", "female");
-    answers.persona ||= await askPrompt("Характер, своими словами (Enter — пропустить)", "");
-    answers.ops ||= await askPrompt(
-      "Как общается: одно главное правило (Enter — пропустить)",
-      "",
-    );
   }
 
   if (!answers.telegramToken) throw new InitCancelled();
@@ -364,21 +326,6 @@ export async function runInit(argv: string[], opts: InitOptions = {}): Promise<I
   const config = minimalConfig(answers);
   writeInitialConfig(configPath, config);
   console.log(`\n✅ Конфиг записан: ${configPath}`);
-
-  // The photo comes after the config on purpose. A wrong path is a typo the
-  // owner can fix with /setphoto in ten seconds, while a config that was never
-  // written is a bot that does not run at all — so the typo loses.
-  if (answers.photoPath) {
-    try {
-      const dest = saveReferencePhoto(answers.photoPath, configPath);
-      console.log(`📸 Фото сохранено: ${dest}`);
-    } catch (err) {
-      console.log(
-        `⚠️  Фото не сохранилось: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      console.log("   Это не помешало боту работать. Скинь фото в чат командой /setphoto.");
-    }
-  }
 
   let report: DoctorReport | undefined;
   if (opts.verify !== false) {
@@ -399,8 +346,8 @@ export function nextSteps(): string[] {
     "Проверить:  eva doctor",
     "Запустить:  eva            (или systemd-юнит, см. README)",
     "В чате:    напиши боту — он спросит твой chat id и запомнит его.",
-    "Кто она:    всё, что пропустил, дописывается в чате словами — «запомни, ты».",
-    "            Фото: скинь его в чат, она запомнит лицо (/setphoto).",
+    "Оживить:   /persona — четыре вопроса: фото, пол, характер, общение.",
+    "            Свежий бот работает как машина, пока в неё не вложился ты.",
   ];
 }
 

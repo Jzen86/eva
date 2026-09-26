@@ -26,8 +26,6 @@ const token = "123456789:AAF-e2e-fake-token";
 const key = "sk-e2e-fake-key-0000000000";
 const model = "gpt-4o-mini";
 const agentName = "Лида";
-const persona = "молчаливая, наблюдательная";
-const rule = "на «ты», коротко";
 
 const env = { ...process.env, EVA_CONFIG_PATH: configPath };
 
@@ -70,12 +68,13 @@ check(!fs.existsSync(configPath), "no config before init");
 // that matters is the one about content below.
 const init = eva([
   "init", "--token", token, "--provider", "openai", "--key", key, "--model", model,
-  "--name", agentName, "--persona", persona, "--ops", rule,
+  "--name", agentName,
 ], null);
 check(fs.existsSync(configPath), "init wrote a config");
 check(init.stdout.includes(configPath), "init says where it wrote it");
 check(init.stdout.includes("eva doctor"), "init says how to verify");
 check(!init.stdout.includes(token) && !init.stdout.includes(key), "init printed no secret");
+check(init.stdout.includes("/persona"), "init points at the constructor in the chat");
 
 // 3. the file loads
 const reloaded = execFileSync(process.execPath, [
@@ -94,6 +93,7 @@ const reloaded = execFileSync(process.execPath, [
        // passes on it forever while asserting nothing at all.
        persona: c.agent?.personality?.persona ?? null,
        ops: c.agent?.personality?.ops ?? null,
+       gender: c.agent?.gender ?? null,
      }));
    })`,
 ], { env, encoding: "utf8" });
@@ -103,35 +103,25 @@ check(parsed.provider[0] === "openai", "provider written");
 check(parsed.base === "https://api.openai.com/v1", "preset endpoint filled in");
 check(parsed.model === model, "model written");
 check(parsed.name === agentName, "name written");
-check(parsed.persona === persona, "persona written exactly as the owner gave it");
-check(
-  Array.isArray(parsed.ops) && parsed.ops[0] === rule,
-  "one rule asked for becomes one rule in ops",
-);
+// A fresh install is a machine, not somebody else's person: no character, no
+// standing rules, and no gender decided on the owner's behalf. The constructor
+// in the chat is what turns her into somebody.
+check(parsed.persona === null, "init installs her with no character");
+check(parsed.ops === null, "init installs her with no standing rules");
+check(parsed.gender === null, "init does not pick a gender for her");
 
-// 4. the photo: given a path, copied next to the config, and visible to doctor
+// 4. the photo is not asked for on a server console, where it cannot be given
 const photo = path.join(home, "portrait.png");
 fs.writeFileSync(photo, Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]));
 const withPhoto = eva([
   "init", "--token", token, "--provider", "openai", "--key", key, "--model", model,
   "--photo", photo, "--force",
 ], null);
-const photoPath = path.join(path.dirname(configPath), "reference.jpg");
-check(fs.existsSync(photoPath), "photo copied next to the config");
 check(
-  withPhoto.stdout.includes(photoPath) && !withPhoto.stdout.includes("Фото не сохранилось"),
-  "init says where the photo went",
+  !fs.existsSync(path.join(home, ".eva", "reference.jpg")),
+  "init does not take a photo, even if one is sitting on the server",
 );
-// A wrong path is a typo the owner fixes in chat; it must not take the config
-// with it.
-const typo = eva([
-  "init", "--token", token, "--provider", "openai", "--key", key, "--model", model,
-  "--photo", path.join(home, "ghost.jpg"), "--force",
-], null);
-check(
-  fs.existsSync(configPath) && typo.stdout.includes("Фото не сохранилось"),
-  "a wrong photo path does not take the working config with it",
-);
+check(!withPhoto.stdout.includes("Фото"), "init says nothing about a photo");
 
 // 5. init again is a no-op, not a destruction
 const again = eva(["init"]);
@@ -141,7 +131,11 @@ check(again.stdout.includes("--force"), "second init refuses to clobber");
 const doctor = eva(["doctor"], null);
 check(doctor.stdout.length > 0, "doctor printed a report");
 check(!doctor.stdout.includes(key), "doctor printed no secret");
-check(/фото есть/.test(doctor.stdout), "doctor reports the photo it found");
+// A fresh install has no face, and doctor says so with a fix instead of leaving
+// the owner to wonder. `warn`, not `bad`: the bot works without a photo.
+check(/фото не задано/.test(doctor.stdout), "doctor reports the missing photo");
+// And the character is empty too, which is the state the constructor exists for.
+check(/личность/i.test(doctor.stdout), "doctor says the personality is undescribed");
 
 // 6a. and a failure it does not recognise is reported without a guess, while a
 // known one names the fix. Both are the whole point of the check.

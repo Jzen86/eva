@@ -286,7 +286,7 @@ function configSection(configPath: string): DoctorSection {
   checks.push(
     hasReferencePhoto(configPath)
       ? ok("config.photo", `фото есть: ${describeReferencePhoto(configPath)}`)
-      : warn("config.photo", "фото не задано", "Скинь фото в чат — она запомнит лицо (/setphoto)."),
+      : warn("config.photo", "фото не задано", "/persona спросит фото первым, /setphoto — в любой момент."),
   );
 
   const ownerBound = config.telegram?.owner_id !== undefined;

@@ -3,6 +3,14 @@ import type { LLMClient, LLMMessage, ContentPart, ToolDefinition } from "./llm/t
 import type { ToolRegistry } from "./tools/registry.js";
 import type { ToolResult } from "./tools/types.js";
 import { buildSystemPrompt, type PromptConfig } from "./prompt.js";
+import {
+  getConfigPath,
+  getAgentName,
+  getPersonality,
+  getPersonalitySliders,
+  loadConfig,
+  type EvaConfig,
+} from "./config.js";
 import { searchKnowledge } from "./memory/knowledge.js";
 import { saveMessage, loadHistory, extractText } from "./memory/conversations.js";
 import { compactHistory } from "./memory/compaction.js";
@@ -48,6 +56,60 @@ export class Engine {
 
   constructor(deps: EngineDeps) {
     this.deps = deps;
+  }
+
+  /**
+   * Who she is, read from disk at request time.
+   *
+   * This used to be the snapshot taken at startup, and that made a personality
+   * written from the chat — `/persona`, or a `self_config` call the owner
+   * confirmed with `/yes` — take effect only after someone restarted the bot.
+   * The owner's words were «потом командами можно поменять», and the honest
+   * reading of the code was «потом, после рестарта, а про рестарт никто не
+   * говорил». A change to who she is has to be in her next answer, because the
+   * whole point of making the change is to see her be different.
+   *
+   * Cost: one small YAML parse per message, against a model call that takes
+   * seconds. Not a trade-off worth optimising away.
+   *
+   * On a read that fails — a hand-edited file mid-write, a half-flushed save —
+   * the startup snapshot stays. A bot that suddenly forgets her name because
+   * the config was unreadable for one message is worse than one that is a
+   * message late, and the failure gets logged either way.
+   */
+  private liveConfig(): PromptConfig {
+    let config: EvaConfig | null = null;
+    try {
+      config = loadConfig(getConfigPath());
+    } catch (err) {
+      console.error(
+        `Identity not reloaded, keeping the startup snapshot: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return this.deps.config;
+    }
+    if (!config) return this.deps.config;
+
+    try {
+      const personality = getPersonality(config);
+      return {
+        name: getAgentName(config),
+        gender: config.agent?.gender ?? "female",
+        personality: {
+          tone: personality.tone,
+          responseStyle: personality.style,
+          persona: personality.persona,
+          ops: personality.ops,
+          customInstructions: personality.customInstructions,
+        },
+        personalitySliders: getPersonalitySliders(config),
+        owner: config.owner,
+      };
+    } catch (err) {
+      console.error(
+        `Identity not rebuilt, keeping the startup snapshot: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return this.deps.config;
+    }
   }
 
   private hydrateUser(userId: string): void {
@@ -369,7 +431,7 @@ export class Engine {
       } catch {}
     }
 
-    let prompt = buildSystemPrompt(this.deps.config, userMessage, chatId, connectedServiceNames);
+    let prompt = buildSystemPrompt(this.liveConfig(), userMessage, chatId, connectedServiceNames);
 
     // Search knowledge base for context relevant to the user's message
     try {

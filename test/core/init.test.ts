@@ -56,9 +56,10 @@ describe("minimalConfig", () => {
   });
 
   it("points the owner at the one thing that makes her hers", () => {
-    // Silence here reads as "nothing left to do", and the owner finds out
-    // weeks later that he got a generic bot.
-    expect(nextSteps().join("\n")).toContain("Кто она");
+    // Silence here reads as "nothing left to do", and the owner finds out weeks
+    // later that he got a bot with nobody inside. The closing lines have to
+    // name the constructor.
+    expect(nextSteps().join("\n")).toContain("/persona");
   });
 
   it("leaves the owner id for the bot to learn on first message", () => {
@@ -157,78 +158,34 @@ describe("runInit", () => {
     expect(askImpl.mock.calls[0]?.[0]).toContain("зовут");
   });
 
-  it("asks who she is, so a fresh install is not a stranger", async () => {
+  it("asks nothing about who she is, because that is a conversation, not a setting", async () => {
+    // The constructor lives in the chat. Asking for a character on an ssh
+    // session produces the same four blank answers every time — the owner is on
+    // a server, the photo is on his phone — so init stays technical and the
+    // person gets built where he already is.
     const askImpl = vi.fn(async (_q: string, fb?: string) => fb ?? "x");
     await run([], { askImpl, askHiddenImpl: async () => "s" });
     const asked = askImpl.mock.calls.map((c) => c[0]).join("\n");
-    expect(asked).toContain("Пол");
-    expect(asked).toContain("Характер");
-    expect(asked).toContain("Фото");
+    expect(asked).toContain("зовут");
+    expect(asked).not.toMatch(/Характер|Пол \(|Фото:/);
+    expect(asked).not.toMatch(/Кто она/);
   });
 
-  it("writes the character the owner described, and nothing they did not", async () => {
-    const askImpl = vi.fn(async (q: string, fb?: string) => {
-      if (q.includes("зовут")) return "Лида";
-      if (q.includes("Пол")) return "female";
-      if (q.includes("Характер")) return "молчаливая, наблюдательная";
-      if (q.includes("общается")) return "на «ты», коротко";
-      return fb ?? "x";
-    });
-    const askHiddenImpl = vi.fn(async (q: string) =>
-      q.includes("токен") ? TOKEN : KEY,
+  it("installs her as nobody: no character, no gender, no photo", async () => {
+    const askImpl = vi.fn(async (q: string, fb?: string) =>
+      q.includes("зовут") ? "Лида" : fb ?? "x",
     );
-    await run([], { askImpl, askHiddenImpl });
-
-    const p = loadConfig(configPath)?.agent?.personality as Record<string, unknown>;
-    expect(loadConfig(configPath)?.agent?.name).toBe("Лида");
-    expect(p.persona).toBe("молчаливая, наблюдательная");
-    // One rule asked is one rule: a list is what the prompt renders reliably,
-    // and the owner adds the rest in chat.
-    expect(p.ops).toEqual(["на «ты», коротко"]);
-  });
-
-  it("keeps her a stranger when the owner skips every question", async () => {
-    const askImpl = vi.fn(async (_q: string, fb?: string) => fb ?? "");
     await run([], { askImpl, askHiddenImpl: async () => "s" });
-    const p = loadConfig(configPath)?.agent?.personality as Record<string, unknown>;
+    const cfg = loadConfig(configPath)!;
+    // The name is a product — it is what she answers to. Everything else is
+    // the owner's to give, later, in the chat.
+    expect(cfg.agent?.name).toBe("Лида");
+    const p = cfg.agent?.personality as Record<string, unknown>;
     expect(p.persona).toBeUndefined();
     expect(p.ops).toBeUndefined();
-  });
-
-  it("copies the photo next to the config, so the running bot finds it", async () => {
-    const src = path.join(dir, "portrait.png");
-    fs.writeFileSync(src, Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]));
-    const result = await run([
-      "--token", TOKEN, "--provider", "openai", "--key", KEY, "--model", "m",
-      "--photo", src,
-    ]);
-    const dest = path.join(dir, "reference.jpg");
-    expect(fs.existsSync(dest)).toBe(true);
-    expect(fs.readFileSync(dest).length).toBe(7);
-    expect(result.config?.agent?.name).toBe("Ева");
-  });
-
-  it("keeps a working bot when the photo path is wrong", async () => {
-    // A typo in a path is a ten-second fix with /setphoto. A config that was
-    // never written is a bot that does not run — so the typo must lose.
-    await run([
-      "--token", TOKEN, "--provider", "openai", "--key", KEY, "--model", "m",
-      "--photo", path.join(dir, "nope.jpg"),
-    ]);
-    expect(fs.existsSync(configPath)).toBe(true);
-    expect(loadConfig(configPath)?.telegram?.token).toBe(TOKEN);
-    expect(said.join("\n")).toMatch(/Фото не сохранилось/);
-  });
-
-  it("refuses to call a private key a photo", async () => {
-    const src = path.join(dir, "id_rsa");
-    fs.writeFileSync(src, "-----BEGIN OPENSSH PRIVATE KEY-----");
-    await run([
-      "--token", TOKEN, "--provider", "openai", "--key", KEY, "--model", "m",
-      "--photo", src,
-    ]);
+    // Not written as female: a bot that announces a gender before anybody said
+    // so is a default that is a decision.
     expect(fs.existsSync(path.join(dir, "reference.jpg"))).toBe(false);
-    expect(loadConfig(configPath)?.telegram?.token).toBe(TOKEN);
   });
 
   it("refuses a keyless install instead of writing a broken one", async () => {

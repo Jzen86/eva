@@ -111,7 +111,13 @@ const providerSchema = z.object({
 const configSchema = z.object({
   agent: z.object({
     name: z.string().default("Eva"),
-    gender: z.enum(["female", "male"]).default("female"),
+    // `neutral` is the default on purpose. A fresh install is a machine until
+    // the owner builds a person with `/persona`, and a bot that announces
+    // herself as a woman before anybody said so is a default that is a
+    // decision. It was `female` here, quietly deciding on the owner's behalf.
+    // `neutral` came along with the option, because the self_config tool has
+    // always promised it and the schema used to reject it with a stack trace.
+    gender: z.enum(["female", "male", "neutral"]).default("neutral"),
     personality: personalitySchema,
   }).default({ name: "Eva" }),
 

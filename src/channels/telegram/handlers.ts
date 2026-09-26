@@ -4,6 +4,19 @@ import type { MessageHandler } from "../types.js";
 import { sendVoiceResponse } from "./voice.js";
 import { sendVideoNote } from "./video.js";
 import { applyPending, discard, peek, describe } from "../../core/pending.js";
+import { loadConfig, patchConfig } from "../../core/config.js";
+import {
+  start as startQuest,
+  answerText as answerQuestText,
+  answerPhoto as answerQuestPhoto,
+  expired as questExpired,
+  questionFor,
+  describeExisting,
+  applyAnswers,
+  summary as summaryAnswers,
+  type Quest,
+  type Turn,
+} from "../../core/persona-quest.js";
 import fs from "node:fs";
 import path from "node:path";
 import { referencePhotoPath } from "../../core/reference-photo.js";
@@ -399,6 +412,10 @@ export function registerHandlers(
   // Mutable so the first user can claim ownership at runtime.
   let currentOwner = ownerChatId;
 
+  // The personality constructor, mid-flight. Local to this process and to the
+  // owner: one bot, one owner, one half-built person at a time.
+  let quest: Quest | null = null;
+
   bot.use(async (ctx, next) => {
     const chatId = ctx.chat?.id;
     if (!chatId) return next();
@@ -436,6 +453,40 @@ export function registerHandlers(
     // Fallback: call raw API via grammy's raw method
     await (apiObj as unknown as { raw: { sendMessageDraft: (body: Record<string, unknown>) => Promise<unknown> } })
       .raw.sendMessageDraft({ chat_id: chatId, draft_id: draftId, text });
+  }
+
+  /**
+   * One turn of the constructor: either the next question, or the write.
+   *
+   * The write happens here rather than after the last answer so that a failed
+   * config save is reported to the one person who can fix it, instead of
+   * swallowed into a log nobody reads. The quest is dropped either way — a
+   * constructor that cannot save is not worth resuming.
+   */
+  async function finishOrContinue(ctx: Context, turn: Turn): Promise<void> {
+    if (!turn.finished) {
+      quest = turn.next;
+      await ctx.reply(turn.reply);
+      return;
+    }
+    const answers = turn.answers;
+    quest = null;
+    let saved: boolean;
+    try {
+      patchConfig((config) => applyAnswers(answers, config));
+      saved = true;
+    } catch (err) {
+      saved = false;
+      console.error(`Persona not saved: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (!saved) {
+      await ctx.reply("Собрала, но записать не смогла — конфиг не пишется. Смотри `eva doctor`.");
+      return;
+    }
+    // The engine reads her identity from disk per request, so the change is live
+    // from this message on — no restart, which is the whole point of building
+    // her here rather than in the config.
+    await ctx.reply(`Готово: ${summaryAnswers(answers)}.\n\nДальше я такая. Меняется в любой момент — скажи «запомни, ты…» или /persona заново.`);
   }
 
   /** Handle message with native draft streaming and tool progress. */
@@ -626,6 +677,34 @@ export function registerHandlers(
     );
   });
 
+  // /persona — the personality constructor. Four questions, asked here in the
+  // chat rather than in `init`, because this is where the owner and the photo
+  // are. `/cancel` throws the half-built quest away, and an abandoned one
+  // expires, so a forgotten constructor never eats a real message later.
+  bot.command("persona", async (ctx) => {
+    if (quest) {
+      await ctx.reply(`Мы уже собираем её. Сейчас спрашиваю:\n\n${questionFor(quest.step)}\n\n/cancel — забить.`);
+      return;
+    }
+    const config = loadConfig();
+    quest = startQuest();
+    await ctx.reply(
+      "Соберём её заново. Четыре вопроса, каждый можно пропустить — тогда она останется частично собой.\n\n" +
+        describeExisting(config) +
+        questionFor(quest.step) +
+        "\n\n/cancel — забить.",
+    );
+  });
+
+  bot.command("cancel", async (ctx) => {
+    if (!quest) {
+      await ctx.reply("Нечего отменять.");
+      return;
+    }
+    quest = null;
+    await ctx.reply("Ладно, забросили. Начать заново: /persona");
+  });
+
   // Photos: /setphoto saves reference, everything else is sent to the LLM
   bot.on("message:photo", async (ctx) => {
     const caption = ctx.message.caption?.trim();
@@ -642,6 +721,26 @@ export function registerHandlers(
       return;
     }
 
+    // A photo while the constructor is asking for something else is a wrong
+    // answer, not a new topic: say which question is open and keep the quest
+    // where it is, so it cannot be quietly thrown away by a misfire.
+    if (quest && questExpired(quest)) {
+      quest = null;
+      await ctx.reply("Забыла, что собиралась. Начать заново: /persona");
+      return;
+    }
+    if (quest) {
+      const saved = await savePhotoFromTelegram(ctx, bot.token);
+      if (!saved) {
+        await ctx.reply("Не получилось забрать фото — Telegram не отдал его. Попробуй ещё раз.");
+        return;
+      }
+      onSetReferencePhoto?.(saved);
+      const turn = answerQuestPhoto(quest);
+      await finishOrContinue(ctx, turn);
+      return;
+    }
+
     // Regular photo — send to LLM with caption as text
     await handleWithTyping(ctx, caption || "Что на этом фото?");
   });
@@ -649,6 +748,21 @@ export function registerHandlers(
   // Plain text messages (including unregistered /commands — let LLM handle them)
   bot.on("message:text", async (ctx) => {
     const userText = ctx.message.text;
+
+    // A live constructor owns the next message. This is the one place where a
+    // sentence can be eaten by the wrong listener, which is why an abandoned
+    // constructor expires instead of lingering: an hour-old quest that swallows
+    // "привет" is worse than a lost question.
+    if (quest) {
+      if (questExpired(quest)) {
+        quest = null;
+        await ctx.reply("Забыла, что собиралась. Начать заново: /persona");
+        return;
+      }
+      await finishOrContinue(ctx, answerQuestText(quest, userText));
+      return;
+    }
+
     await handleWithTyping(ctx, userText);
   });
 }
