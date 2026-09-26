@@ -51,6 +51,13 @@ const READ_ONLY_BINARIES = new Set([
   "whoami", "id", "date", "uname", "uptime", "hostname", "printenv",
   "which", "type", "pwd", "basename", "dirname", "realpath", "readlink",
   "getconf", "nproc", "seq", "sleep", "true", "false",
+  // shell builtins that only move the cursor or the stream. `cd` is here for a
+  // measured reason: on the live install it was the fourth most-used first word
+  // in a shell call, and `cd /tmp && ls` is the commonest way to write one. It
+  // was missing, so every command of that shape was parked for /yes over a
+  // builtin that writes nothing — the approval prompt teaching the owner to
+  // stop reading them.
+  "cd", "pushd", "popd",
   // output. These write to stdout and nowhere else; a `>` next to them is a
   // redirect, which is caught structurally before any of this is consulted.
   "echo", "printf", "yes",

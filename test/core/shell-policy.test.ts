@@ -93,6 +93,12 @@ describe("classify — the reads that must just work", () => {
     "uptime",
     "ping -c 1 api.telegram.org",
     "dig +short api.telegram.org",
+    // Taken from what the live install actually ran, not from what looks tidy:
+    // `cd /tmp && ...` was the commonest shape in its shell calls, and a
+    // builtin that writes nothing should not be the reason the owner learns to
+    // tap /yes without reading.
+    "cd /tmp && ls -la",
+    "cd /var/log && journalctl -n 20 --no-pager",
   ];
 
   for (const cmd of cases) {
