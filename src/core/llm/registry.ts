@@ -159,6 +159,9 @@ export class ProviderRegistry {
       model: ref.model,
       ...(spec.headers ? { headers: spec.headers } : {}),
       ...(spec.stream_usage === undefined ? {} : { streamUsage: spec.stream_usage }),
+      ...(echoesToolContent(spec.base_url)
+        ? { echoProviderToolContent: true }
+        : {}),
     });
 
     this.clientCache.set(key, client);
@@ -215,6 +218,25 @@ export class ProviderRegistry {
       fallbacks: this.fallbackList(),
     };
   }
+}
+
+/**
+ * Does this endpoint want the opaque blob it attached to its tool calls?
+ *
+ * Google Gemini 3 puts `thought_signature` on every function call and answers
+ * the follow-up with `400 Function call is missing a thought_signature in
+ * functionCall parts` — an error with no body, naming a docs page instead of
+ * the field that was dropped. Every other endpoint either sends nothing or
+ * rejects an unrecognised field, so the answer has to be per provider.
+ *
+ * Matched on the host rather than on a config flag because the signature travels
+ * in the conversation history, not in the config: a flag that said "echo this"
+ * without saying "for whom" would break the moment he switched a role to
+ * OpenRouter mid-chat and the old token went out to a provider that 400s on
+ * unknown fields. The history stays provider-agnostic and the client decides.
+ */
+export function echoesToolContent(baseUrl: string): boolean {
+  return /(^|\/\/|\.)generativelanguage\.googleapis\.com(\/|$|:)/i.test(baseUrl);
 }
 
 /**

@@ -3,6 +3,15 @@ export interface ToolUseRequest {
   id: string;
   name: string;
   arguments: Record<string, unknown>;
+  /**
+   * An opaque provider token that has to be handed back with this exact call.
+   *
+   * Gemini 3 attaches `thought_signature` to every function call and refuses the
+   * follow-up request without it — 400, no body, and the error names a docs page
+   * rather than the field we dropped. Nothing else uses it, so it is carried
+   * opaquely and only echoed to the provider that issued it.
+   */
+  providerEcho?: Record<string, unknown>;
 }
 
 /** A content part for multimodal messages. */
