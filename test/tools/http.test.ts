@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest"
-import { HttpTool } from "../../src/core/tools/http.js"
+import { HttpTool, describeEmptyPage } from "../../src/core/tools/http.js"
 import { TokenStore } from "../../src/services/tokens.js"
 import { getDB, closeDB } from "../../src/core/memory/db.js"
 import path from "node:path"
@@ -38,3 +38,33 @@ describe("HttpTool auth injection", () => {
     expect(header).toBeNull();
   });
 });
+
+describe("describeEmptyPage", () => {
+  // The failure this guards: `web` was refused by a bot check, so she fetched the
+  // search page by hand through `http`, got the bot check back as a 200 success,
+  // and answered with patch numbers that exist in no release notes. A 200 is not
+  // an answer, and neither is a page that answers nothing.
+  it("names a bot check instead of passing it off as content", () => {
+    const page = "<html><body><div>Unfortunately, bots use DuckDuckGo too</div></body></html>";
+    expect(describeEmptyPage(page)).toContain("бот-проверку");
+  });
+
+  it("names a browser challenge", () => {
+    expect(describeEmptyPage("<html><title>Just a moment...</title>")).toContain("Cloudflare");
+  })
+
+  it("names a page with nothing on it", () => {
+    expect(describeEmptyPage("<html></html>")).toContain("пустая");
+  })
+
+  it("leaves a real page alone", () => {
+    const page = "<html><body>" + "S.T.A.L.K.E.R. 2 patch 2.0.5 notes. ".repeat(20) + "</body></html>";
+    expect(describeEmptyPage(page)).toBeNull();
+  })
+
+  it("does not judge a huge page by its length", () => {
+    // 200k of script can be a real app, and calling that empty would be worse
+    // than useless.
+    expect(describeEmptyPage("x".repeat(200_001))).toBeNull();
+  })
+})

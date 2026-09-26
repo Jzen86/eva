@@ -7,6 +7,27 @@ function truncate(text: string, max: number): string {
   return text.slice(0, max) + `\n\n[truncated, showing first ${max} of ${text.length} chars]`
 }
 
+/**
+ * Name a page that answers nothing, so the model is not left to fill the gap.
+ *
+ * The tell-tales are the ones this install actually hit: a search engine's bot
+ * check served with a 200, a consent wall, a JavaScript shell. Each is a real
+ * response from a real server, which is why a status code cannot catch them.
+ */
+export function describeEmptyPage(text: string): string | null {
+  if (text.length > 200_000) return null; // Too big to be a shell; judge it on content.
+  if (/anomaly|unfortunately, bots|are you a robot|enable javascript and cookies/i.test(text)) {
+    return "Страница-заглушка: сайт отдал бот-проверку, а не содержимое. Данных здесь нет.";
+  }
+  if (/just a moment|checking your browser|ddos protection by/i.test(text)) {
+    return "Страница-заглушка: сайт проверяет браузер (Cloudflare). Содержимого нет.";
+  }
+  if (text.trim().length < 200) {
+    return `Страница почти пустая (${text.trim().length} символов) — ответа в ней нет.`;
+  }
+  return null;
+}
+
 export interface HttpToolConfig {
   encryptionKey?: string;
 }
@@ -74,6 +95,25 @@ export class HttpTool implements Tool {
 
       if (!response.ok) {
         return { success: false, output: truncate(text, HttpTool.MAX_OUTPUT_CHARS), error: `HTTP ${response.status} ${response.statusText}` }
+      }
+
+      // A page that exists and contains nothing is the most dangerous thing this
+      // tool can hand back. It arrives as 200, it reads as prose, and the model
+      // cannot tell it from an answer — so it fills the gap. That is exactly what
+      // happened: she was told to search the web, `web` was refused by a bot
+      // check, she fetched the search page by hand through `http`, got the bot
+      // check back as a success, and answered with patch numbers that appear in
+      // no release notes anywhere.
+      //
+      // So a refusal to serve is named as a refusal. Silently handing over an
+      // empty page is not a neutral act: it is an invitation to invent.
+      const guard = describeEmptyPage(text);
+      if (guard) {
+        return {
+          success: false,
+          output: truncate(text, HttpTool.MAX_OUTPUT_CHARS),
+          error: guard,
+        }
       }
 
       return { success: true, output: truncate(text, HttpTool.MAX_OUTPUT_CHARS) }
