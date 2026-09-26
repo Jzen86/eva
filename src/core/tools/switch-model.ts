@@ -8,8 +8,6 @@ const KNOWN_ROLES = ["fast", "strong", "study", "embed"] as const;
 export interface SwitchModelDeps {
   registry: ProviderRegistry;
   router: LLMRouter;
-  /** Roles Eva is allowed to move on her own. Others need the owner. */
-  selfSwitchable?: boolean;
 }
 
 /**
@@ -19,6 +17,22 @@ export interface SwitchModelDeps {
  * provider's list, or that fails a one-token smoke test, is rejected and the
  * old assignment stays in place. A wrong model in the config means Eva goes
  * silent on every future message, so a bad guess must not stick.
+ *
+ * On whose authority she switches: the owner's, by request, and nobody else's.
+ * That is the whole point of the tool existing — «работай на любом провайдере»
+ * is a promise about a conversation, not about a config file. So there is no
+ * /yes gate here, unlike the identity changes self_config parks: the owner
+ * asking for a different model is the consent, and a second tap for a second
+ * look at the same request is friction in the one place friction was not
+ * needed. The verification above is what makes that safe — she cannot park a
+ * model that does not answer.
+ *
+ * There used to be a `selfSwitchable` flag here, described as "roles Eva may
+ * move on her own; others need the owner" and passed `true` at the only call
+ * site. It gated nothing, and a flag that promises a rule it does not enforce
+ * is worse than no flag: the next person to read it believes a boundary exists
+ * that nothing checks. Removed rather than wired up, because the policy it was
+ * reaching for is the one written above.
  */
 export class SwitchModelTool implements Tool {
   name = "switch_model";
@@ -34,12 +48,10 @@ export class SwitchModelTool implements Tool {
   parameters: ToolParam[] = [];
   private readonly registry: ProviderRegistry;
   private readonly router: LLMRouter;
-  private readonly selfSwitchable: boolean;
 
   constructor(deps: SwitchModelDeps) {
     this.registry = deps.registry;
     this.router = deps.router;
-    this.selfSwitchable = deps.selfSwitchable ?? false;
   }
 
   async execute(params: Record<string, unknown>): Promise<ToolResult> {
@@ -123,21 +135,30 @@ export class SwitchModelTool implements Tool {
     }
 
     const ref: ModelRef = { provider, model };
-
-    // Keep the old assignment so a failed verification changes nothing.
     const previous = this.registry.role(role);
 
-    this.registry.setRole(role, ref);
-
+    // Verify BEFORE assigning, not after.
+    //
+    // setRole is what fires the write-through to config.yaml, so assigning
+    // first and rolling back on failure means the model that did not answer
+    // was on disk for a moment — and the rollback is a second write that can
+    // itself fail. A process killed between them, a full disk, a config file
+    // that became read-only in that exact second: the rejected model stays, and
+    // Eva goes silent on every message from then on. That is the exact outcome
+    // this check exists to prevent, and the ordering was the only thing letting
+    // it through.
+    //
+    // The check does not need the role assigned: verify() is handed the ref and
+    // builds a client for it directly, so nothing here depends on the old order.
     const check = await this.verify(ref);
     if (!check.ok) {
-      if (previous) this.registry.setRole(role, previous);
-      else this.registry.setRole(role, ref); // leave it; caller sees the failure
       throw new Error(
         `Модель ${provider}/${model} не подошла: ${check.reason}. ` +
-          (previous ? `Оставил ${this.registry.label(previous)}.` : ""),
+          (previous ? `Оставил ${this.registry.label(previous)}.` : "Ничего не меняла."),
       );
     }
+
+    this.registry.setRole(role, ref);
 
     const roles = this.registry.rolesList();
     const now = Object.entries(roles)

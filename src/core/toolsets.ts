@@ -140,7 +140,7 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
   // a bot with no LLM still needs a diagnosis — but this one has nothing to
   // work with, so it stays out rather than being offered and failing.
   if (registry && router) {
-    add(new SwitchModelTool({ registry, router, selfSwitchable: true }), "core");
+    add(new SwitchModelTool({ registry, router }), "core");
   } else {
     decisions.push({ name: "switch_model", tier: "core", registered: false, reason: "нет подключённой модели" });
   }
