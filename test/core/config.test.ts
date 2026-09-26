@@ -174,6 +174,46 @@ describe("saveConfig", () => {
     expect(strays).toEqual([]);
   });
 
+  // Windows has no permission bits, so these cannot mean anything there. The
+  // bug they cover was found on a Linux install, which is where it can happen.
+  describe.skipIf(process.platform === "win32")("file permissions", () => {
+    const mode = (p: string): string => (fs.statSync(p).mode & 0o777).toString(8);
+
+    it("writes the config 0600, not whatever the umask says", () => {
+      // The temp file used to be opened without a mode, so it landed at
+      // 0666 & ~umask and the rename put a world-readable file full of API keys
+      // where a 600 one used to be.
+      const p = target();
+      saveConfig(base(), p);
+      expect(mode(p)).toBe("600");
+    });
+
+    it("tightens a config that was already too open", () => {
+      // rename keeps the destination's own mode, so a file that was 644 stayed
+      // 644 through a fix that only set the mode on creation. Every write has to
+      // say what the mode should be, not rely on what it was.
+      const p = target();
+      fs.writeFileSync(p, "agent:\n  name: Eva\n", "utf-8");
+      fs.chmodSync(p, 0o644);
+      saveConfig(base(), p);
+      expect(mode(p)).toBe("600");
+    });
+
+    it("keeps the backups as private as the live file", () => {
+      // The backup is a copy of a secrets file, and it is the copy nobody
+      // remembers exists.
+      const p = target();
+      for (let i = 0; i < 3; i++) {
+        const cfg = base();
+        cfg.agent.name = `Eva${i}`;
+        saveConfig(cfg, p);
+      }
+      const backups = fs.readdirSync(DIR).filter((f) => f.includes(".bak."));
+      expect(backups.length).toBeGreaterThan(0);
+      for (const b of backups) expect(mode(path.join(DIR, b)), b).toBe("600");
+    });
+  });
+
   it("keeps a bounded, rotating set of backups instead of one file per save", () => {
     const p = target();
     for (let i = 0; i < 12; i++) {

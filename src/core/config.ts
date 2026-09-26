@@ -420,7 +420,16 @@ export function saveConfig(config: EvaConfig, customPath?: string): void {
 
   const tmp = path.join(dir, `.${path.basename(filePath)}.${process.pid}.tmp`);
   try {
-    const fd = fs.openSync(tmp, "w");
+    // 0600, explicitly, at creation.
+    //
+    // The temp file was opened without a mode, so it landed at 0666 & ~umask —
+    // 0644 on a default server umask — and the rename then put a
+    // world-readable file where a config full of API keys used to be. A human
+    // chmod'd it once, an hour later a self_config call from the chat undid
+    // that silently, and nothing in any log mentioned permissions. Found by
+    // looking at the mode of the live file on a real install, which had been
+    // 600 and was 644.
+    const fd = fs.openSync(tmp, "w", 0o600);
     try {
       fs.writeFileSync(fd, yaml, "utf-8");
       // Without the flush the rename can land before the bytes do.
@@ -429,6 +438,10 @@ export function saveConfig(config: EvaConfig, customPath?: string): void {
       fs.closeSync(fd);
     }
     fs.renameSync(tmp, filePath);
+    // A pre-existing file keeps its own mode across rename, so a config that
+    // was 600 stays 600 and a config that was 644 stays 644 — which is how the
+    // bug survived a first fix. Say what it should be, every time.
+    fs.chmodSync(filePath, 0o600);
   } catch (err) {
     try {
       fs.rmSync(tmp, { force: true });
@@ -450,6 +463,12 @@ function rotateConfigBackups(filePath: string): void {
       if (fs.existsSync(from)) fs.copyFileSync(from, `${filePath}.bak.${i + 1}`);
     }
     fs.copyFileSync(filePath, `${filePath}.bak.1`);
+    // The backup is a copy of a secrets file, and it is the copy nobody
+    // remembers exists. Same 0600, every time, without asking the umask.
+    for (let i = 1; i <= CONFIG_BACKUPS; i++) {
+      const p = `${filePath}.bak.${i}`;
+      if (fs.existsSync(p)) fs.chmodSync(p, 0o600);
+    }
   } catch (err) {
     // Backups are insurance, not the write itself. Losing them must not fail
     // a config save that already succeeded.
