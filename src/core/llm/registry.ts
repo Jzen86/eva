@@ -173,6 +173,20 @@ export class ProviderRegistry {
     return client;
   }
 
+  /**
+   * Drop cached clients for a provider whose address or key just changed.
+   *
+   * `client()` caches by provider+model forever, so without this a corrected
+   * base_url or a rotated key took effect only after a restart: the file on disk
+   * said one thing and the running process kept talking to the other.
+   */
+  private invalidateProvider(_id: string): void {
+    // Drop every cached client rather than matching a prefix. There are only a
+    // handful, a provider change is rare, and rebuilding one is cheap — the
+    // delimiter in the cache key is not worth a second source of truth here.
+    this.clientCache.clear();
+  }
+
   /** The fallback chain, skipping anything that is not configured. */
   usableFallbacks(): ModelRef[] {
     return this.fallbacks.filter((f) => this.isUsable(f.provider));
@@ -187,12 +201,16 @@ export class ProviderRegistry {
 
   addProvider(id: string, spec: ProviderSpec): void {
     const preset = PROVIDER_PRESETS[id];
+    const specHeaders = { ...preset?.headers, ...spec.headers };
     this.providers.set(id, {
       base_url: spec.base_url,
       api_key: spec.api_key,
-      headers: { ...preset?.headers, ...spec.headers },
+      headers: specHeaders,
       ...(spec.stream_usage === undefined ? {} : { stream_usage: spec.stream_usage }),
     });
+    // A changed address or key has to reach the next request, not the next
+    // restart: the client built from the old spec is now wrong.
+    this.invalidateProvider(id);
     this.persist?.();
   }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { listProviderModels } from "../../src/core/llm/registry.js";
+import { listProviderModels, ProviderRegistry } from "../../src/core/llm/registry.js";
 
 /**
  * This is the front door of «работай на любом провайдере»: the model reads the
@@ -96,5 +96,29 @@ describe("listProviderModels", () => {
     await expect(listProviderModels(SPEC)).rejects.toThrow(/HTTP 401/);
     await expect(listProviderModels(SPEC)).rejects.toThrow(/no models for you/);
     expect(asked[0]).toContain("/models");
+  });
+});
+
+describe("ProviderRegistry.client cache", () => {
+  const cfg = {
+    providers: { test: { base_url: "http://localhost:1/v1", api_key: "k" } },
+    models: { fast: { provider: "test", model: "m" } },
+    fallbacks: [],
+  };
+
+  it("reuses one client for the same provider+model", () => {
+    const reg = new ProviderRegistry(cfg);
+    const ref = { provider: "test", model: "m" };
+    expect(reg.client(ref)).toBe(reg.client(ref));
+  });
+
+  it("drops the cached client when the provider's address or key changes", () => {
+    // A corrected key used to take effect only after a restart: the file said
+    // one thing and the running process kept the old client.
+    const reg = new ProviderRegistry(cfg);
+    const ref = { provider: "test", model: "m" };
+    const before = reg.client(ref);
+    reg.addProvider("test", { base_url: "http://localhost:2/v1", api_key: "k2" });
+    expect(reg.client(ref)).not.toBe(before);
   });
 });
