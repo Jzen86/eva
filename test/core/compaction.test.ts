@@ -71,6 +71,31 @@ describe("Compaction", () => {
     expect(messages.length).toBe(12);
   });
 
+  it("keeps the messages it did not put in front of the model", async () => {
+    const big = "x".repeat(4_000);
+    // 20 messages of ~4k chars = ~80k, well past the 30k summarising window.
+    for (let i = 0; i < 10; i++) {
+      saveMessage("u1", "tg", "user", `Q${i} ${big}`);
+      saveMessage("u1", "tg", "assistant", `A${i} ${big}`);
+    }
+    const db = getDB();
+    const before = (db.prepare("SELECT COUNT(*) n FROM conversations WHERE user_id='u1'").get() as { n: number }).n;
+
+    const llm = mockLLM("Сжатое саммари.");
+    await compactHistory("u1", llm);
+
+    // The prompt saw only the newest ~30k chars, so the rows before that window
+    // must still exist: the old code deleted them without ever summarising them.
+    const after = (db.prepare("SELECT COUNT(*) n FROM conversations WHERE user_id='u1'").get() as { n: number }).n;
+    expect(after).toBeGreaterThan(0);
+    expect(after).toBeLessThan(before);
+
+    const oldest = db
+      .prepare("SELECT content FROM conversations WHERE user_id='u1' ORDER BY id ASC LIMIT 1")
+      .get() as { content: string };
+    expect(oldest.content).toContain("Q0");
+  });
+
   it("splits at turn boundary", async () => {
     saveMessage("u1", "tg", "user", "Q1");
     saveMessage("u1", "tg", "assistant", "", undefined, [{ id: "tc1", name: "test", arguments: {} }]);
