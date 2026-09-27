@@ -43,6 +43,16 @@ describe("shapeOf", () => {
     expect(shapeOf("sleep 100 &")?.unsafe).toContain("запуск в фоне");
   });
 
+  it("sees substitution inside double quotes, which the shell still expands", () => {
+    expect(shapeOf('echo "$(rm -rf /var/eva)"')?.unsafe).toContain("подстановка команды");
+    expect(shapeOf('echo "`id`"')?.unsafe).toContain("подстановка команды");
+  });
+
+  it("does not flag substitution inside single quotes, which are literal", () => {
+    expect(shapeOf("echo '$(rm -rf /)'")?.unsafe).toEqual([]);
+    expect(shapeOf("echo '`id`'")?.unsafe).toEqual([]);
+  });
+
   it("returns null on unbalanced quotes instead of guessing", () => {
     expect(shapeOf(`grep "oops /var/log`)).toBeNull();
   });
@@ -148,6 +158,8 @@ describe("classify — everything that must wait for the owner", () => {
     ["ls > /etc/passwd", /перенаправление/],
     ["ls `rm -rf /`", /подстановка/],
     ["ls $(id)", /подстановка/],
+    ['echo "$(rm -rf /var/eva)"', /подстановка/],
+    ['echo "`id`"', /подстановка/],
     ["sleep 100 &", /в фоне/],
     [`grep "oops`, /кавычки/],
     ["", /пустая/],

@@ -150,6 +150,16 @@ export function shapeOf(command: string): ShellShape | null {
         i += 1;
         continue;
       }
+      // Inside double quotes the shell still expands `…` and $(…); only single
+      // quotes are literal. Skipping this made `echo "$(rm -rf …)"` read as a
+      // plain echo and run unattended.
+      if (quote === '"') {
+        if (ch === "`") {
+          sawSubstitution = true;
+        } else if (ch === "$" && command[i + 1] === "(") {
+          sawSubstitution = true;
+        }
+      }
       if (ch === quote) quote = null;
       current += ch;
       continue;
