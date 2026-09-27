@@ -79,6 +79,20 @@ describe("answerText", () => {
     expect(turns[0]).toContain("пол");
   });
 
+  it("does not file a text answer at the photo step as a rule", () => {
+    const turn = answerText(start(NOW), "высокая, тёмные волосы, любит сарказм", NOW);
+    expect(turn.next?.step).toBe("photo");
+    expect(turn.answers.behavior).toBeUndefined();
+    expect(turn.answers.persona).toBeUndefined();
+    expect(turn.reply).toMatch(/фото/i);
+  });
+
+  it("lets the photo step be skipped with text", () => {
+    const turn = answerText(start(NOW), "пропустить", NOW);
+    expect(turn.next?.step).toBe("gender");
+    expect(turn.answers.photo).toBeFalsy();
+  });
+
   it("carries the answers on the final turn, where there is no next quest", () => {
     // The write happens from `turn.answers`; losing them on the last step
     // would lose the whole constructor, silently, after four questions.

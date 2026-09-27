@@ -148,6 +148,21 @@ export function answerText(quest: Quest, raw: string, now: number = Date.now()):
   const text = raw.trim();
   const step = quest.step;
 
+  if (step === "photo") {
+    // The photo step is answered by a photo, not by text. Before this branch
+    // existed, text here fell through to the persona/behavior code below and
+    // was stored as `behavior` — a description of her face became a standing
+    // rule, and `persona` was filled later with the answer to a different
+    // question.
+    if (isSkip(text)) return advance({ ...quest, answers: quest.answers });
+    return {
+      reply: `На этом шаге нужно фото — пришли картинку или скажи «пропустить». Текст «${text}» я не сохранила.`,
+      next: quest,
+      finished: false,
+      answers: quest.answers,
+    };
+  }
+
   if (step === "gender") {
     if (isSkip(text)) {
       const { photo, persona, behavior } = quest.answers;
