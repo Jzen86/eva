@@ -214,10 +214,13 @@ ${genderBlock}
 
 Если выполняешь многоходовую задачу, показывай прогресс каждого шага.`;
 
+  // Only when there is something to say. The else branch used to point the model
+  // at `connect_service` — a tool that exists nowhere in the code — so it
+  // reached for it every turn, got `unknown tool`, and read that as "broken"
+  // rather than "not available". Nothing that connects a service exists yet, so
+  // there is nothing to promise.
   if (connectedServices && connectedServices.length > 0) {
-    prompt += `\n\n## Подключённые сервисы\n\nУ пользователя подключены: ${connectedServices.join(", ")}. Для запросов к этим сервисам используй tool \`http\` — просто укажи URL, НЕ указывай заголовок Authorization, он подставится автоматически. Пример: http(url="https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=5", method="GET") — БЕЗ headers. Для подключения новых сервисов используй tool \`connect_service\`.`;
-  } else {
-    prompt += `\n\n## Подключённые сервисы\n\nУ пользователя нет подключённых сервисов. Для подключения используй tool \`connect_service\` с action=list.`;
+    prompt += `\n\n## Подключённые сервисы\n\nУ пользователя подключены: ${connectedServices.join(", ")}. Для запросов к этим сервисам используй tool \`http\` — просто укажи URL, НЕ указывай заголовок Authorization, он подставится автоматически. Пример: http(url="https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=5", method="GET") — БЕЗ headers.`;
   }
 
   // Current query

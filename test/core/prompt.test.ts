@@ -57,6 +57,24 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("Стиль ответов: concise");
   });
 
+  it("never names a tool that does not exist", () => {
+    // `connect_service` was promised in every prompt and registered nowhere, so
+    // the model reached for it, got `unknown tool`, and read that as "broken".
+    const withServices = buildSystemPrompt({ name: "Eva" }, "привет", "1", ["gmail"]);
+    const without = buildSystemPrompt({ name: "Eva" }, "привет");
+    expect(withServices).not.toContain("connect_service");
+    expect(without).not.toContain("connect_service");
+  });
+
+  it("describes connected services only when there are some", () => {
+    const withServices = buildSystemPrompt({ name: "Eva" }, "hi", "1", ["gmail", "github"]);
+    expect(withServices).toContain("gmail, github");
+    expect(withServices).toContain("Authorization");
+
+    const without = buildSystemPrompt({ name: "Eva" }, "hi");
+    expect(without).not.toContain("Подключённые сервисы");
+  });
+
   it("includes custom instructions", () => {
     const prompt = buildSystemPrompt({
       name: "Бетси",
