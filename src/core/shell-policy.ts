@@ -77,6 +77,12 @@ READ_ONLY_BINARIES.delete("ip");
 /** `sysctl` writes kernel parameters; only reads belong. */
 READ_ONLY_BINARIES.delete("sysctl");
 
+/** `ifconfig eth0 down` changes interface state; it is not a reader. */
+READ_ONLY_BINARIES.delete("ifconfig");
+
+/** `hostname <name>` renames the box; only the bare/short forms read. */
+READ_ONLY_BINARIES.delete("hostname");
+
 /** Verbs that turn a read-only binary into a writer when it takes one. */
 interface BinaryRule {
   /** The sub-verbs that are read-only. Empty means the whole binary is. */
@@ -94,9 +100,22 @@ const RULES: Record<string, BinaryRule> = {
     ],
   },
   journalctl: {
-    // Reading logs is the whole reason this binary is here. Trimming them is
-    // deletion wearing a log tool's clothes.
-    writeFlags: /(^|\s)--vacuum/,
+    // Reading logs is the whole reason this binary is here. Trimming, rotating
+    // and syncing them are writes wearing a log tool's clothes.
+    writeFlags: /(^|\s)(--vacuum\S*|--rotate|--sync|--flush|--relinquish-var|--smart-relinquish-var)(\s|$|=)/,
+  },
+  sort: {
+    // `sort -o FILE` writes the sorted output to FILE; without it, sort can only
+    // reach stdout, where the redirect check already looks.
+    writeFlags: /(^|\s)(-o|--output)(\s|$|=)/,
+  },
+  date: {
+    // `date -s` / `date --set` sets the system clock.
+    writeFlags: /(^|\s)(-s|--set)(\s|$|=)/,
+  },
+  dmesg: {
+    // `-c` clears the ring buffer; `-s`, `-n` and the console switches retune it.
+    writeFlags: /(^|\s)(-c|--clear|-s|--buffer-size|-n|--console-level|--console-off|--console-on)(\s|$|=)/,
   },
   find: {
     // `find` can delete, can execute anything, and can write its own output to
