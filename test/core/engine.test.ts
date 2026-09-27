@@ -54,6 +54,37 @@ describe("Engine", () => {
     expect(chat).toHaveBeenCalledTimes(2);
   });
 
+  it("moves to the strong role once tools are involved", async () => {
+    const tools = new ToolRegistry();
+    tools.register({
+      name: "t",
+      description: "t",
+      parameters: [],
+      async execute() { return { success: true, output: "ok" }; },
+    });
+    const fastChat = vi.fn().mockResolvedValueOnce({
+      text: "",
+      stopReason: "tool_use",
+      toolCalls: [{ id: "c1", name: "t", arguments: {} }],
+    });
+    const strongChat = vi.fn().mockResolvedValue({ text: "готово", stopReason: "end_turn" });
+    const llm = {
+      fast: () => ({ chat: fastChat }),
+      strong: () => ({ chat: strongChat }),
+      hasRole: (n: string) => n === "strong",
+    };
+    const engine = new Engine({ llm, config: testConfig, tools, contextBudget: 40000 });
+    const res = await engine.process({
+      channelName: "test",
+      userId: "strong-user",
+      text: "сделай",
+      timestamp: Date.now(),
+    });
+    expect(res.text).toBe("готово");
+    expect(fastChat).toHaveBeenCalledTimes(1);
+    expect(strongChat).toHaveBeenCalled();
+  });
+
   it("handles LLM errors gracefully", async () => {
     const llm = {
       fast: () => ({

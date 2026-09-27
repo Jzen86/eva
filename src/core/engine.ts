@@ -41,7 +41,7 @@ const PROCESS_TIMEOUT = 300_000; // 5 minutes — soft budget, triggers graceful
 const MAX_TOOL_OUTPUT_CHARS = 8_000; // Truncate tool outputs to prevent history bloat
 
 export interface EngineDeps {
-  llm: { fast(): LLMClient; strong(): LLMClient };
+  llm: { fast(): LLMClient; strong(): LLMClient; hasRole?(name: string): boolean };
   config: PromptConfig;
   tools: ToolRegistry;
   contextBudget: number;
@@ -172,7 +172,10 @@ export class Engine {
   }
 
   private async processLocked(msg: IncomingMessage, onProgress?: ProgressCallback): Promise<OutgoingMessage> {
-    const llm = this.deps.llm.fast();
+    let llm = this.deps.llm.fast();
+    // Only upgrade to the strong role when it is configured. A tool turn would
+    // otherwise ask a role that resolves to nothing and fail.
+    const strongAvailable = this.deps.llm.hasRole?.("strong") ?? false;
     const userId = msg.userId;
 
     // Wait for any in-flight compaction to finish before proceeding
@@ -305,6 +308,11 @@ export class Engine {
 
           return { text, mediaUrl: lastMediaUrl, mediaPath: lastMediaPath };
         }
+
+        // From here the turn is work: tools are involved, so the heavier model
+        // takes over for the rest of the task. A plain reply never reaches this
+        // line, so chat stays on the fast model.
+        if (strongAvailable) llm = this.deps.llm.strong();
 
         // Compaction check for tool-use turns — BEFORE saving assistant tool-call
         if (!compactionAttempted && response.usage && response.usage.promptTokens > this.deps.contextBudget) {
