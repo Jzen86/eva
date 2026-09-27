@@ -177,6 +177,30 @@ describe("SchedulerService", () => {
     expect(remaining[0].name).toBe("missed-recurring");
     expect(remaining[0].nextRunAt).toBeGreaterThan(now);
   });
+
+  it("skips a task with a corrupt schedule instead of stopping the loop", async () => {
+    const fired: string[] = [];
+    scheduler.onTaskFire((task) => { fired.push(task.name); });
+    const now = Date.now();
+    store.add({
+      id: "broken", name: "broken",
+      schedule: "{not json",
+      command: "x", context: "", channel: "telegram",
+      chatId: "1", nextRunAt: now - 1000, lastRunAt: null, createdAt: now,
+    });
+    store.add({
+      id: "good", name: "good",
+      schedule: JSON.stringify({ kind: "at", at: now - 1000 }),
+      command: "y", context: "", channel: "telegram",
+      chatId: "1", nextRunAt: now - 1000, lastRunAt: null, createdAt: now,
+    });
+
+    // tick() is called from setInterval with no catch: a throw here was an
+    // unhandled rejection, and it also skipped every task after the bad row.
+    await expect(scheduler.tick()).resolves.toBeUndefined();
+    expect(fired).toContain("good");
+    expect(fired).not.toContain("broken");
+  });
 });
 
 describe("nextCronRun", () => {

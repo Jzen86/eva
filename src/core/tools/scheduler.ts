@@ -167,13 +167,34 @@ export class SchedulerService {
     }
   }
 
+  /**
+   * Parse a stored schedule, tolerating a corrupt row.
+   *
+   * tick() runs from setInterval with no catch, so a `JSON.parse` throw was an
+   * unhandled rejection, and because it happened before the loop's own try the
+   * tasks after the bad row were skipped as well. One hand-edited row could stop
+   * the scheduler for everything else.
+   */
+  private parseSchedule(raw: string): Record<string, any> | null {
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? (parsed as Record<string, any>) : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** Check for due tasks and fire them. Public for testing. */
   async tick(): Promise<void> {
     const now = Date.now();
     const due = this.store.getDue(now);
 
     for (const task of due) {
-      const schedule = JSON.parse(task.schedule);
+      const schedule = this.parseSchedule(task.schedule);
+      if (!schedule) {
+        console.error(`Scheduler: задача "${task.name}" (id ${task.id}) с битым расписанием — пропускаю.`);
+        continue;
+      }
 
       // Update DB BEFORE async callback to prevent double-fire
       if (schedule.kind === "at") {
@@ -203,7 +224,11 @@ export class SchedulerService {
     const due = this.store.getDue(now);
 
     for (const task of due) {
-      const schedule = JSON.parse(task.schedule);
+      const schedule = this.parseSchedule(task.schedule);
+      if (!schedule) {
+        console.error(`Scheduler: задача "${task.name}" (id ${task.id}) с битым расписанием — пропускаю.`);
+        continue;
+      }
 
       if (schedule.kind === "at") {
         // Execute missed one-shot
@@ -364,7 +389,8 @@ export class SchedulerService {
     if (tasks.length === 0) return { success: true, output: "Нет запланированных задач." };
 
     const lines = tasks.map((t) => {
-      const sched = JSON.parse(t.schedule);
+      const sched = this.parseSchedule(t.schedule);
+      if (!sched) return `- ${t.name}: [битое расписание] → ${t.command}`;
       const type = sched.kind;
       const detail = type === "at" ? new Date(sched.at).toLocaleString()
         : type === "every" ? `every ${sched.everyMs / 60_000}m`
