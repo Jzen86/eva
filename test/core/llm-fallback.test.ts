@@ -346,8 +346,7 @@ describe("LLMRouter — cancels a request it stopped waiting on", () => {
     router.destroy();
   });
 
-  it("drops a late chunk from an abandoned stream", async () => {
-    const chunks: string[] = [];
+  it("drops a late chunk from an abandoned stream", async () => {    const chunks: string[] = [];
     let sawSignal: AbortSignal | undefined;
     const clients: Record<string, LLMClient> = {
       "fast-1": clientWith({
@@ -374,6 +373,26 @@ describe("LLMRouter — cancels a request it stopped waiting on", () => {
     await new Promise((r) => setTimeout(r, 200));
     expect(chunks).toEqual(["B"]);
     expect(sawSignal?.aborted).toBe(true);
+    router.destroy();
+  });
+
+  it("a deliberate model switch clears a stale degradation", async () => {
+    const { router, calls } = makeRouter(async (ref) => {
+      if (ref.model === "fast-1") throw apiError(402, "Payment required");
+      return mockResponse("ok");
+    });
+    await router.fast().chat([{ role: "user", content: "a" }]);
+    expect(router.mode).toBe("degraded");
+
+    // The owner picks a working model; without resetDegraded the router kept
+    // answering from the old fallback until the 5-minute restore probe.
+    router.registryRef.setRole("fast", { provider: "test", model: "fast-2" });
+    router.resetDegraded();
+    expect(router.mode).toBe("normal");
+
+    const res = await router.fast().chat([{ role: "user", content: "b" }]);
+    expect(calls).toContain("fast-2");
+    expect(res.text).not.toContain("недоступна");
     router.destroy();
   });
 });

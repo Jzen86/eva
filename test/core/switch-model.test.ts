@@ -43,8 +43,8 @@ function makeRegistry(cfg: RegistryConfig = BASE) {
   return { registry, calls, breakModel: (m: string) => broken.add(m) };
 }
 
-/** The router is only read for its mode; nothing here switches on it. */
-const router = { mode: "normal" } as unknown as LLMRouter;
+/** The router is only read for its mode and reset on switch; nothing else. */
+const router = { mode: "normal", resetDegraded: () => {} } as unknown as LLMRouter;
 
 describe("switch_model — what is in use", () => {
   it("names every role, and says whether a fallback chain exists", async () => {

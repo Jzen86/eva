@@ -159,6 +159,9 @@ export class SwitchModelTool implements Tool {
     }
 
     this.registry.setRole(role, ref);
+    // A deliberate switch makes the previous degradation verdict stale: without
+    // this, `targetFor` kept returning the old fallback until the restore probe.
+    this.router.resetDegraded();
 
     const roles = this.registry.rolesList();
     const now = Object.entries(roles)

@@ -135,6 +135,22 @@ export class LLMRouter {
     return Boolean(this.registry.role(name));
   }
 
+  /**
+   * Forget a degradation because the primary was replaced on purpose.
+   *
+   * `targetFor` returns the degraded ref before the configured one, so a model
+   * the owner just switched to was ignored until the 5-minute restore probe:
+   * `switch_model` reported success while the router kept answering from the old
+   * fallback. A deliberate change makes the old failure verdict stale.
+   */
+  resetDegraded(): void {
+    if (!this.degradedRef) return;
+    this.degradedRef = null;
+    this.degradedIndex = 0;
+    this.pendingNotification = null;
+    this.stopRestoreProbe();
+  }
+
   destroy(): void {
     this.stopRestoreProbe();
   }
