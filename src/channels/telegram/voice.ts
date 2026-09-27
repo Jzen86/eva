@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 
 const GEMINI_DEFAULT_MODEL = "gemini-3.8-flash-lite-tts";
 const GEMINI_DEFAULT_VOICE = "Aoede";
+const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
 /** Convert arbitrary audio bytes to OGG/Opus (Telegram voice note format) via ffmpeg. */
 function toOggOpus(buffer: Buffer, mimeType: string): Promise<Buffer | null> {
@@ -41,10 +42,11 @@ export async function synthesizeSpeech(
   text: string,
   voiceConfig: Record<string, unknown>,
   falApiKey?: string,
+  style?: string,
 ): Promise<Buffer | null> {
   const provider = (voiceConfig.tts_provider as string) ?? "openai";
   if (provider === "gemini") {
-    const raw = await synthesizeGemini(text, voiceConfig);
+    const raw = await synthesizeGemini(text, voiceConfig, style);
     return raw ? raw.buffer : null;
   }
   if (provider === "minimax") {
@@ -82,31 +84,76 @@ function geminiKeys(voiceConfig: Record<string, unknown>): string[] {
   return typeof one === "string" && one ? [one] : [];
 }
 
-/** One generateContent call. Returns null, and says why, on any failure. */
-async function geminiGenerate(
+/**
+ * The newer `/interactions` endpoint. It is the only one that accepts a
+ * per-turn `style`, which is what makes her delivery follow the meaning of the
+ * sentence rather than a single voice setting applied to everything.
+ */
+async function geminiInteractions(
+  model: string,
+  apiKey: string,
+  text: string,
+  voiceName: string,
+  style?: string,
+): Promise<{ buffer: Buffer; mimeType: string } | null> {
+  try {
+    const content: Record<string, unknown> = { type: "text", text };
+    if (style) content.annotations = [{ type: "speech_metadata", style }];
+    const res = await fetch(`${GEMINI_BASE}/interactions`, {
+      method: "POST",
+      headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        input: [{ type: "user_input", content: [content] }],
+        response_format: { type: "audio" },
+        generation_config: { speech_config: [{ voice: voiceName }] },
+      }),
+    });
+    if (!res.ok) {
+      const quota = res.status === 429 ? " (лимит на сегодня)" : "";
+      console.warn(`🔇 TTS ${model}: HTTP ${res.status}${quota}`);
+      return null;
+    }
+
+    const data = (await res.json()) as {
+      steps?: Array<{ content?: Array<{ type?: string; data?: string; mime_type?: string }> }>;
+    };
+    for (const s of data.steps ?? []) {
+      for (const c of s.content ?? []) {
+        if (c.data && (c.type === "audio" || c.mime_type)) {
+          return { buffer: Buffer.from(c.data, "base64"), mimeType: c.mime_type ?? "audio/wav" };
+        }
+      }
+    }
+    return null;
+  } catch (err) {
+    console.warn(`🔇 TTS ${model}: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
+/** The older generateContent path. No style, but some models still only answer here. */
+async function geminiGenerateContent(
   model: string,
   apiKey: string,
   text: string,
   voiceName: string,
 ): Promise<{ buffer: Buffer; mimeType: string } | null> {
   try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-      {
-        method: "POST",
-        headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text }] }],
-          generationConfig: {
-            responseModalities: ["AUDIO"],
-            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
-          },
-        }),
-      },
-    );
+    const res = await fetch(`${GEMINI_BASE}/models/${model}:generateContent`, {
+      method: "POST",
+      headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text }] }],
+        generationConfig: {
+          responseModalities: ["AUDIO"],
+          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
+        },
+      }),
+    });
     if (!res.ok) {
       const quota = res.status === 429 ? " (лимит на сегодня)" : "";
-      console.warn(`🔇 TTS ${model}: HTTP ${res.status}${quota} — пробую следующий`);
+      console.warn(`🔇 TTS ${model} (generateContent): HTTP ${res.status}${quota}`);
       return null;
     }
 
@@ -125,15 +172,29 @@ async function geminiGenerate(
     }
     return null;
   } catch (err) {
-    console.warn(`🔇 TTS ${model}: ${err instanceof Error ? err.message : String(err)} — пробую следующий`);
+    console.warn(`🔇 TTS ${model} (generateContent): ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
 }
 
-/** Gemini TTS via Google AI Studio (generateContent + AUDIO modality), with model fallback. */
+/** One call: styled if possible, plain if the model only answers the old way. */
+async function geminiGenerate(
+  model: string,
+  apiKey: string,
+  text: string,
+  voiceName: string,
+  style?: string,
+): Promise<{ buffer: Buffer; mimeType: string } | null> {
+  const viaInteractions = await geminiInteractions(model, apiKey, text, voiceName, style);
+  if (viaInteractions) return viaInteractions;
+  return geminiGenerateContent(model, apiKey, text, voiceName);
+}
+
+/** Gemini TTS via Google AI Studio, with model fallback and an optional per-turn style. */
 async function synthesizeGemini(
   text: string,
   voiceConfig: Record<string, unknown>,
+  style?: string,
 ): Promise<{ buffer: Buffer; mimeType: string } | null> {
   const keys = geminiKeys(voiceConfig);
   if (!keys.length) return null;
@@ -141,7 +202,7 @@ async function synthesizeGemini(
 
   for (const model of geminiModels(voiceConfig)) {
     for (const apiKey of keys) {
-      const raw = await geminiGenerate(model, apiKey, text, voiceName);
+      const raw = await geminiGenerate(model, apiKey, text, voiceName, style);
       if (raw) return raw;
     }
   }
@@ -238,10 +299,11 @@ export async function synthesizeVoiceOgg(
   text: string,
   voiceConfig: Record<string, unknown>,
   falApiKey?: string,
+  style?: string,
 ): Promise<Buffer | null> {
   const provider = (voiceConfig.tts_provider as string) ?? "openai";
   if (provider === "gemini") {
-    const raw = await synthesizeGemini(text, voiceConfig);
+    const raw = await synthesizeGemini(text, voiceConfig, style);
     if (!raw) return null;
     return toOggOpus(raw.buffer, raw.mimeType);
   }
@@ -260,8 +322,9 @@ export async function sendVoiceResponse(
   text: string,
   voiceConfig: Record<string, unknown>,
   falApiKey?: string,
+  style?: string,
 ): Promise<boolean> {
-  const ogg = await synthesizeVoiceOgg(text, voiceConfig, falApiKey);
+  const ogg = await synthesizeVoiceOgg(text, voiceConfig, falApiKey, style);
   if (!ogg) return false;
 
   const tmpFile = path.join(os.tmpdir(), `eva-tts-${Date.now()}.ogg`);

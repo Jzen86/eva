@@ -55,9 +55,17 @@ export function voiceBackendAvailable(
 export class VoiceTool implements Tool {
   name = "voice";
   description =
-    "Отправить голосовое сообщение: озвучить текст своим голосом. Используй, когда просят сказать/наговорить голосом, отправить голосовое или озвучку.";
+    "Отправить голосовое сообщение: озвучить текст своим голосом. Используй, когда просят сказать/наговорить голосом, отправить голосовое или озвучку. " +
+    "Задавай `tone` под смысл реплики (например «тепло и нежно, тихо» для признания, «дерзко, с усмешкой» для подколки) — не один тон на всё.";
   parameters = [
     { name: "text", type: "string", description: "Текст, который нужно озвучить (на русском)", required: true },
+    {
+      name: "tone",
+      type: "string",
+      description:
+        "Как произнести: интонация и эмоция под смысл реплики (например «тепло и нежно, тихо», «дерзко, с усмешкой», «устало и тихо»). Кратко, по-русски.",
+      required: true,
+    },
   ];
 
   private config: VoiceToolConfig;
@@ -71,8 +79,9 @@ export class VoiceTool implements Tool {
     if (!text) {
       return { success: false, output: "Missing required parameter: text" };
     }
+    const tone = String(params.tone ?? "").trim();
 
-    const ogg = await synthesizeVoiceOgg(text, this.config.voiceConfig, this.config.falApiKey);
+    const ogg = await synthesizeVoiceOgg(text, this.config.voiceConfig, this.config.falApiKey, tone || undefined);
     if (!ogg) {
       return { success: false, output: "Не удалось синтезировать голос (проверь ключ/модель TTS)." };
     }
