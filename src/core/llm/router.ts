@@ -30,9 +30,14 @@ export interface RouterOptions {
 }
 
 const DEFAULTS = {
-  perModelTimeoutMs: 45_000,
+  // First token has to arrive within this. A healthy flash model answers in
+  // about a second, so a longer wait only means the request has stalled and the
+  // user is sitting in silence while a fallback could already be answering.
+  perModelTimeoutMs: 20_000,
   chainBudgetMs: 150_000,
-  restoreProbeMs: 5 * 60_000,
+  // How often to re-test the primary while degraded. Short, so a transient
+  // stall costs a minute on the fallback rather than five.
+  restoreProbeMs: 60_000,
 };
 
 /** Wraps a promise in a timeout that also respects a shared deadline. */
@@ -88,6 +93,7 @@ export class LLMRouter {
   private pendingNotification: string | null = null;
 
   private restoreTimer: ReturnType<typeof setInterval> | null = null;
+  private restoreProbing = false;
 
   private readonly proxies = new Map<string, LLMClient>();
 
@@ -358,15 +364,22 @@ export class LLMRouter {
     this.restoreTimer = setInterval(() => {
       const primary = this.registry.role(role);
       if (!primary || !this.registry.isUsable(primary.provider)) return;
+      // One probe at a time: a primary that hangs at the TCP level would
+      // otherwise stack a new unanswered request every tick.
+      if (this.restoreProbing) return;
+      this.restoreProbing = true;
       void this.registry
         .client(primary)
-        .chat([{ role: "user", content: "ping" }])
+        .chat([{ role: "user", content: "ping" }], undefined, { signal: AbortSignal.timeout(15_000) })
         .then(() => {
           console.log(`✅ LLM [${role}]: ${this.registry.label(primary)} снова работает`);
           this.recovered(role, primary);
         })
         .catch(() => {
           /* still down — try again next tick */
+        })
+        .finally(() => {
+          this.restoreProbing = false;
         });
     }, this.opts.restoreProbeMs);
     this.restoreTimer.unref?.();
