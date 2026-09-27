@@ -201,9 +201,14 @@ async function synthesizeGemini(
   const voiceName = (voiceConfig.voice_id as string) ?? GEMINI_DEFAULT_VOICE;
 
   for (const model of geminiModels(voiceConfig)) {
-    for (const apiKey of keys) {
-      const raw = await geminiGenerate(model, apiKey, text, voiceName, style);
-      if (raw) return raw;
+    for (let ki = 0; ki < keys.length; ki++) {
+      const raw = await geminiGenerate(model, keys[ki], text, voiceName, style);
+      if (raw) {
+        console.log(
+          `🔊 TTS ${model}: ok | тон: ${style ?? "без стиля"} | ключ ${ki + 1}/${keys.length}`,
+        );
+        return raw;
+      }
     }
   }
   return null;
@@ -310,10 +315,13 @@ export async function synthesizeVoiceOgg(
   if (provider === "minimax") {
     const mp3 = await synthesizeMiniMax(text, voiceConfig, falApiKey);
     if (!mp3) return null;
+    console.log("🔊 TTS minimax: ok");
     return toOggOpus(mp3, "audio/mpeg");
   }
   // OpenAI TTS with response_format=opus already yields OGG/Opus
-  return synthesizeOpenAI(text, voiceConfig);
+  const ogg = await synthesizeOpenAI(text, voiceConfig);
+  if (ogg) console.log("🔊 TTS openai: ok");
+  return ogg;
 }
 
 /** Send a voice response through a grammY context. Always delivers real OGG/Opus. */
