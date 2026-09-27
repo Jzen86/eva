@@ -225,7 +225,7 @@ describe("trimKnowledge", () => {
     expect(live[0].id).toBe(old);
   });
 
-  it("gives study rows first claim on the budget", () => {
+  it("gives study rows first claim on the budget without starving chat memory", () => {
     for (let i = 0; i < 4; i++) {
       addKnowledge({ topic: `c${i}`, insight: `из чата запись ${i} про кота`, source: "memory_tool" });
     }
@@ -236,7 +236,10 @@ describe("trimKnowledge", () => {
     trimKnowledge(4, study);
     const live = getAllKnowledge();
     expect(live).toHaveLength(4);
-    expect(live.every((r) => r.source === study)).toBe(true);
+    // Study keeps the majority, but the chat side gets its reserved quarter —
+    // otherwise a fact the owner stated by hand is retired within the hour.
+    expect(live.filter((r) => r.source === study)).toHaveLength(3);
+    expect(live.filter((r) => r.source === "memory_tool")).toHaveLength(1);
   });
 
   it("does not count retired rows against the budget", () => {

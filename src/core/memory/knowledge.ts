@@ -221,7 +221,16 @@ export function trimKnowledge(max: number, studySource: string): { retired: numb
     const studyRow = db
       .prepare("SELECT COUNT(*) AS count FROM knowledge WHERE source IS ? AND superseded_at IS NULL")
       .get(studySource) as { count: number };
-    const studyKeep = Math.min(studyRow.count ?? 0, max);
+    const studyCount = studyRow.count ?? 0;
+    const otherCount = Math.max(0, total - studyCount);
+
+    // Study rows get first claim on the budget, but never the whole budget while
+    // chat rows exist. "First claim" used to become "only claim" the moment
+    // study filled the budget: with studyKeep = max, otherKeep = 0, every fact
+    // the owner stated by hand was retired on the next session. Reserve a
+    // quarter of the budget for the chat side so neither source can starve.
+    const reserved = Math.min(otherCount, Math.max(1, Math.ceil(max / 4)));
+    const studyKeep = Math.min(studyCount, Math.max(0, max - reserved));
     const otherKeep = Math.max(0, max - studyKeep);
 
     // Oldest and least used first, so a memory that helped is never the victim
