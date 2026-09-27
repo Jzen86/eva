@@ -316,6 +316,68 @@ describe("LLMRouter", () => {
   });
 });
 
+// --- cancellation ------------------------------------------------------------
+
+describe("LLMRouter — cancels a request it stopped waiting on", () => {
+  function clientWith(fns: Partial<LLMClient>): LLMClient {
+    return {
+      chat: fns.chat ?? (async () => mockResponse("unused")),
+      chatStream: fns.chatStream ?? (async () => mockResponse("unused")),
+    };
+  }
+
+  it("aborts the timed-out request instead of leaving it running", async () => {
+    let sawSignal: AbortSignal | undefined;
+    const clients: Record<string, LLMClient> = {
+      "fast-1": clientWith({
+        chat: (_m, _t, o) => {
+          sawSignal = o?.signal;
+          return new Promise<LLMResponse>(() => {}); // never answers
+        },
+      }),
+      "free-1": clientWith({ chat: async () => mockResponse("fallback works") }),
+    };
+    const reg = new MockRegistry(BASE_CFG, (ref) => clients[ref.model]);
+    const router = new LLMRouter(reg, { perModelTimeoutMs: 40, chainBudgetMs: 3_000 });
+
+    const res = await router.fast().chat([{ role: "user", content: "x" }]);
+    expect(res.text).toContain("fallback works");
+    expect(sawSignal?.aborted).toBe(true);
+    router.destroy();
+  });
+
+  it("drops a late chunk from an abandoned stream", async () => {
+    const chunks: string[] = [];
+    let sawSignal: AbortSignal | undefined;
+    const clients: Record<string, LLMClient> = {
+      "fast-1": clientWith({
+        chatStream: async (_m, onChunk, _t, o) => {
+          sawSignal = o?.signal;
+          // A chunk that arrives after the router has already fallen back must
+          // not reach the user: that is two models' answers in one message.
+          setTimeout(() => onChunk("LATE"), 120);
+          return new Promise<LLMResponse>(() => {});
+        },
+      }),
+      "free-1": clientWith({
+        chatStream: async (_m, onChunk) => {
+          onChunk("B");
+          return mockResponse("B");
+        },
+      }),
+    };
+    const reg = new MockRegistry(BASE_CFG, (ref) => clients[ref.model]);
+    const router = new LLMRouter(reg, { perModelTimeoutMs: 40, chainBudgetMs: 3_000 });
+
+    const res = await router.fast().chatStream([{ role: "user", content: "x" }], (c) => chunks.push(c));
+    expect(res.text).toContain("B");
+    await new Promise((r) => setTimeout(r, 200));
+    expect(chunks).toEqual(["B"]);
+    expect(sawSignal?.aborted).toBe(true);
+    router.destroy();
+  });
+});
+
 // --- streamed tool calls -----------------------------------------------------
 
 describe("ToolCallAccumulator", () => {

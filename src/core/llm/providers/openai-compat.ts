@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { LLMClient, LLMMessage, LLMResponse, ToolDefinition, ToolUseRequest, StreamCallback } from "../types.js";
+import type { LLMClient, LLMMessage, LLMResponse, ToolDefinition, ToolUseRequest, StreamCallback, LLMCallOptions } from "../types.js";
 
 /**
  * A client for any endpoint that speaks the OpenAI chat-completions API.
@@ -318,14 +318,16 @@ export function createOpenAICompatClient(opts: OpenAICompatOptions): LLMClient {
   const openStream = async (
     messages: LLMMessage[],
     tools?: ToolDefinition[],
+    signal?: AbortSignal,
   ): Promise<Response> => {
-    const response = await client.chat.completions.create(streamBody(messages, tools)).asResponse();
+    const req = signal ? { signal } : undefined;
+    const response = await client.chat.completions.create(streamBody(messages, tools), req).asResponse();
     if (response.ok) return response;
 
     const text = await response.text().catch(() => "");
     if (rejectsStreamUsage(response.status, text)) {
       streamUsage = false;
-      const retry = await client.chat.completions.create(streamBody(messages, tools)).asResponse();
+      const retry = await client.chat.completions.create(streamBody(messages, tools), req).asResponse();
       if (retry.ok) return retry;
       throw await apiErrorFrom(retry);
     }
@@ -333,13 +335,16 @@ export function createOpenAICompatClient(opts: OpenAICompatOptions): LLMClient {
   };
 
   return {
-    async chat(messages: LLMMessage[], tools?: ToolDefinition[]): Promise<LLMResponse> {
+    async chat(messages: LLMMessage[], tools?: ToolDefinition[], callOpts?: LLMCallOptions): Promise<LLMResponse> {
       const response = await client.chat.completions
-        .create({
-          model: opts.model,
-          messages: toOpenAIMessages(messages, opts),
-          ...(tools?.length ? { tools } : {}),
-        } as OpenAI.ChatCompletionCreateParamsNonStreaming)
+        .create(
+          {
+            model: opts.model,
+            messages: toOpenAIMessages(messages, opts),
+            ...(tools?.length ? { tools } : {}),
+          } as OpenAI.ChatCompletionCreateParamsNonStreaming,
+          callOpts?.signal ? { signal: callOpts.signal } : undefined,
+        )
         .asResponse();
 
       const json = (await readJsonOrThrow(response)) as {
@@ -381,8 +386,9 @@ export function createOpenAICompatClient(opts: OpenAICompatOptions): LLMClient {
       messages: LLMMessage[],
       onChunk: StreamCallback,
       tools?: ToolDefinition[],
+      callOpts?: LLMCallOptions,
     ): Promise<LLMResponse> {
-      const response = await openStream(messages, tools);
+      const response = await openStream(messages, tools, callOpts?.signal);
 
       let text = "";
       let finishReason: string | null = null;

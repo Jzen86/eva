@@ -36,28 +36,44 @@ const DEFAULTS = {
 };
 
 /** Wraps a promise in a timeout that also respects a shared deadline. */
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout?: () => void): Promise<T> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new ModelTimeoutError()), Math.max(1, ms));
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      // Cut the request we stopped waiting on; otherwise it keeps running (and
+      // billing) behind a fallback that already answered.
+      onTimeout?.();
+      reject(new ModelTimeoutError());
+    }, Math.max(1, ms));
     promise.then(
-      (v) => { clearTimeout(timer); resolve(v); },
-      (e) => { clearTimeout(timer); reject(e); },
+      (v) => { if (settled) return; settled = true; clearTimeout(timer); resolve(v); },
+      (e) => { if (settled) return; settled = true; clearTimeout(timer); reject(e); },
     );
   });
 }
 
 /** Like withTimeout, but the timer resets on every chunk so a slow-but-alive
  *  stream is never cut off. */
-function withStreamingTimeout<T>(run: (reset: () => void) => Promise<T>, ms: number): Promise<T> {
+function withStreamingTimeout<T>(run: (reset: () => void) => Promise<T>, ms: number, onTimeout?: () => void): Promise<T> {
   return new Promise((resolve, reject) => {
-    let timer = setTimeout(() => reject(new ModelTimeoutError()), Math.max(1, ms));
+    let settled = false;
+    const fire = () => {
+      if (settled) return;
+      settled = true;
+      onTimeout?.();
+      reject(new ModelTimeoutError());
+    };
+    let timer = setTimeout(fire, Math.max(1, ms));
     const reset = () => {
+      if (settled) return;
       clearTimeout(timer);
-      timer = setTimeout(() => reject(new ModelTimeoutError()), Math.max(1, ms));
+      timer = setTimeout(fire, Math.max(1, ms));
     };
     run(reset).then(
-      (v) => { clearTimeout(timer); resolve(v); },
-      (e) => { clearTimeout(timer); reject(e); },
+      (v) => { if (settled) return; settled = true; clearTimeout(timer); resolve(v); },
+      (e) => { if (settled) return; settled = true; clearTimeout(timer); reject(e); },
     );
   });
 }
@@ -175,9 +191,11 @@ export class LLMRouter {
             throw self.failMessage(role, chain, lastErr, "время вышло");
           }
           try {
+            const ac = new AbortController();
             const response = await withTimeout(
-              self.registry.client(ref).chat(messages, tools),
+              self.registry.client(ref).chat(messages, tools, { signal: ac.signal }),
               Math.min(self.opts.perModelTimeoutMs, remaining),
+              () => ac.abort(),
             );
             // Only the primary model counts as a recovery. Succeeding on a
             // fallback is the expected outcome of degrading, not a return.
@@ -215,20 +233,37 @@ export class LLMRouter {
             throw self.failMessage(role, chain, lastErr, "время вышло");
           }
           let delivered = false;
+          const ac = new AbortController();
+          // Once this attempt is abandoned, a chunk from it must not reach the
+          // user: the fallback is already streaming into the same callback, and
+          // two models' text in one message is worse than a late answer.
+          let live = true;
           try {
             const response = await withStreamingTimeout(
               (reset) =>
                 self.registry.client(ref).chatStream(
                   messages,
-                  (chunk) => { delivered = true; reset(); onChunk(chunk); },
+                  (chunk) => {
+                    if (!live) return;
+                    delivered = true;
+                    reset();
+                    onChunk(chunk);
+                  },
                   tools,
+                  { signal: ac.signal },
                 ),
               Math.min(self.opts.perModelTimeoutMs, remaining),
+              () => {
+                live = false;
+                ac.abort();
+              },
             );
+            live = false;
             const primary = self.registry.role(role);
             if (primary && sameRef(ref, primary)) self.recovered(role, ref);
             return self.attachNotification(response);
           } catch (err) {
+            live = false;
             lastErr = err;
             if (!isRetryableError(err) || delivered) throw err;
             console.warn(

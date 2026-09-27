@@ -60,9 +60,26 @@ export interface ToolDefinition {
 /** Callback receiving text chunks during streaming. */
 export type StreamCallback = (chunk: string) => void;
 
+/** Per-call options, used to cut a request the router has stopped waiting on. */
+export interface LLMCallOptions {
+  /**
+   * Abort the underlying HTTP request.
+   *
+   * The router times a model out and moves to the fallback. Without this the
+   * abandoned request kept streaming into the same callback — two models'
+   * answers concatenated into one message — and kept being billed.
+   */
+  signal?: AbortSignal;
+}
+
 /** Minimal client interface used by the router. */
 export interface LLMClient {
-  chat(messages: LLMMessage[], tools?: ToolDefinition[]): Promise<LLMResponse>;
+  chat(messages: LLMMessage[], tools?: ToolDefinition[], opts?: LLMCallOptions): Promise<LLMResponse>;
   /** Streaming chat — calls onChunk with each text delta, returns final response. */
-  chatStream(messages: LLMMessage[], onChunk: StreamCallback, tools?: ToolDefinition[]): Promise<LLMResponse>;
+  chatStream(
+    messages: LLMMessage[],
+    onChunk: StreamCallback,
+    tools?: ToolDefinition[],
+    opts?: LLMCallOptions,
+  ): Promise<LLMResponse>;
 }
