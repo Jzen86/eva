@@ -20,3 +20,6 @@ data/
 .vscode/
 .idea/
 *.swp
+
+# Local operator docs - machine-specific, never commit
+BOT.md
