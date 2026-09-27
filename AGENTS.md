@@ -55,6 +55,7 @@ npm test            # 33 файла, зелёные
 | **Конструктор личности** | `src/core/persona-quest.ts` — четыре вопроса, чистая машина состояний. Проводка в `src/channels/telegram/handlers.ts` (`/persona`, `/cancel`) |
 | **Состав тулз** | `src/core/toolsets.ts` — **чистая функция конфига**, не `tools.register(...)` в `main()` |
 | **Что можно выполнить** | `src/core/shell-policy.ts` — разбор командной строки и вердикт «пустить / спросить» |
+| **Куда можно писать и слать файлы** | `src/core/path-policy.ts` — корни для `files`/`send_file` (`tools.files_roots`); секреты, БД и системные пути закрыты всегда |
 | Тулзы агенту | `src/core/tools/` |
 | Telegram | `src/channels/telegram/` |
 | Точка входа и CLI | `src/index.ts` |

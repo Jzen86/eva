@@ -578,7 +578,7 @@ async function memorySection(dbPath: string | undefined): Promise<DoctorSection>
 // Runtime
 // ---------------------------------------------------------------------------
 
-function runtimeSection(): DoctorSection {
+function runtimeSection(configPath?: string): DoctorSection {
   const checks: Check[] = [];
 
   const major = Number(process.versions.node.split(".")[0]);
@@ -600,8 +600,10 @@ function runtimeSection(): DoctorSection {
   );
 
   // The config dir has to be writable or every setting change fails at the
-  // worst possible moment, with an error only the owner will ever see.
-  const dir = getConfigDir();
+  // worst possible moment, with an error only the owner will ever see. Judged
+  // on the config being diagnosed, not the default home — an install that moved
+  // its config with EVA_CONFIG_PATH was checking a directory it never writes.
+  const dir = path.dirname(configPath ?? getConfigPath());
   try {
     fs.accessSync(dir, fs.constants.W_OK);
     checks.push(ok("runtime.config_writable", `${dir} доступен для записи`));
@@ -730,7 +732,7 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<DoctorReport>
     ),
   );
   sections.push(await section("Память", "section.memory", () => memorySection(opts.dbPath)));
-  sections.push(await section("Окружение", "section.runtime", () => runtimeSection()));
+  sections.push(await section("Окружение", "section.runtime", () => runtimeSection(configPath)));
 
   const all = sections.flatMap((s) => s.checks);
   const bad_ = all.filter((c) => c.severity === "bad").length;

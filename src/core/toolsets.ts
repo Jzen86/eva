@@ -49,7 +49,8 @@ import { createMemoryTool } from "./tools/memory.js";
 import type { EmbeddingEndpoint } from "./memory/dedup.js";
 import type { ProviderRegistry } from "./llm/registry.js";
 import type { LLMRouter } from "./llm/router.js";
-import { getLLMApiKey, type EvaConfig } from "./config.js";
+import { getLLMApiKey, getConfigPath, type EvaConfig } from "./config.js";
+import { defaultPathPolicy } from "./path-policy.js";
 import { SchedulerService } from "./tools/scheduler.js";
 
 export type ToolTier = "core" | "keyed" | "opt-in";
@@ -117,6 +118,18 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
     ? (config.tools?.shell_trust as string[]).filter((b): b is string => typeof b === "string")
     : [];
 
+  /**
+   * Where `files` may write and `send_file` may send from.
+   *
+   * Defaults to the config directory and temp. An install that wants the bot to
+   * work in another tree names it in `tools.files_roots`; secrets, system
+   * directories and the memory database stay denied regardless.
+   */
+  const filesRoots = Array.isArray(config.tools?.files_roots)
+    ? (config.tools?.files_roots as unknown[]).filter((r): r is string => typeof r === "string")
+    : [];
+  const pathPolicy = defaultPathPolicy(getConfigPath(), filesRoots);
+
   const add = (tool: Tool, tier: ToolTier, reason?: string): void => {
     if (reason) {
       decisions.push({ name: tool.name, tier, registered: false, reason });
@@ -129,8 +142,8 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
   // --- core: nothing but an LLM config ------------------------------------
 
   add(new ShellTool({ shellTrust }), "core");
-  add(new SendFileTool(), "core");
-  add(new FilesTool(), "core");
+  add(new SendFileTool({ policy: pathPolicy }), "core");
+  add(new FilesTool({ policy: pathPolicy }), "core");
   add(selfConfigTool, "core");
   add(ctx.scheduler.tool, "core");
   add(new HttpTool({ encryptionKey: ctx.passwordHash }), "core");

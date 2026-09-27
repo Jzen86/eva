@@ -190,6 +190,14 @@ const configSchema = z.object({
       ssh: z.boolean().optional(),
       npm_install: z.boolean().optional(),
       /**
+       * Where `files` may write and `send_file` may send from.
+       *
+       * Defaults to the config directory and temp. Listed here because a bot
+       * that can write anywhere on the box is a different thing from one that
+       * cannot, and the write is what actually needs to be bounded.
+       */
+      files_roots: z.array(z.string()).optional(),
+      /**
        * Extra binaries `shell` may run unattended.
        *
        * The default list is diagnostics only — the binaries that cannot write
