@@ -53,6 +53,18 @@ export class Engine {
   private histories: Map<string, LLMMessage[]> = new Map();
   private summaries: Map<string, string> = new Map();
   private compactionInFlight: Map<string, Promise<void>> = new Map();
+  /**
+   * One turn at a time per user.
+   *
+   * `process()` mutates the shared history array across awaits: it pushes an
+   * assistant message carrying tool_calls and, several calls later, the
+   * matching tool results. A scheduler tick — or a reminder recovered at
+   * startup — that runs inside that window builds a request from the same array
+   * and sends it, so the model sees an unanswered tool_call and every provider
+   * answers 400. study-runner already guards against exactly this with an
+   * inFlight flag; the path that produces a user-visible answer did not.
+   */
+  private turnLocks: Map<string, Promise<void>> = new Map();
 
   constructor(deps: EngineDeps) {
     this.deps = deps;
@@ -141,6 +153,25 @@ export class Engine {
   }
 
   async process(msg: IncomingMessage, onProgress?: ProgressCallback): Promise<OutgoingMessage> {
+    return this.runExclusive(msg.userId, () => this.processLocked(msg, onProgress));
+  }
+
+  /** Serialise turns per user; see `turnLocks`. */
+  private async runExclusive<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.turnLocks.get(userId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    this.turnLocks.set(userId, current);
+    await previous.catch(() => {});
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.turnLocks.get(userId) === current) this.turnLocks.delete(userId);
+    }
+  }
+
+  private async processLocked(msg: IncomingMessage, onProgress?: ProgressCallback): Promise<OutgoingMessage> {
     const llm = this.deps.llm.fast();
     const userId = msg.userId;
 

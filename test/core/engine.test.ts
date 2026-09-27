@@ -30,6 +30,30 @@ describe("Engine", () => {
     expect(res.text).toBe("Привет!");
   });
 
+  it("serialises turns for one user so two flows cannot interleave", async () => {
+    // The scheduler and the chat path both call process() for the same user.
+    // Without a per-user lock the second builds a request from the first's
+    // half-updated history — an assistant tool_call with no tool result — and
+    // every provider answers 400.
+    let active = 0;
+    let maxActive = 0;
+    const chat = vi.fn().mockImplementation(async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((r) => setTimeout(r, 25));
+      active -= 1;
+      return { text: "ok", stopReason: "end_turn" };
+    });
+    const llm = { fast: () => ({ chat }), strong: () => ({ chat }) };
+    const engine = new Engine({ llm, config: testConfig, tools: new ToolRegistry(), contextBudget: 40000 });
+    const msg = { channelName: "test", userId: "lock-user", text: "hi", timestamp: Date.now() };
+
+    await Promise.all([engine.process(msg), engine.process(msg)]);
+
+    expect(maxActive).toBe(1);
+    expect(chat).toHaveBeenCalledTimes(2);
+  });
+
   it("handles LLM errors gracefully", async () => {
     const llm = {
       fast: () => ({
