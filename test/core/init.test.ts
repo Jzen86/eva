@@ -63,7 +63,9 @@ describe("minimalConfig", () => {
   });
 
   it("leaves the owner id for the bot to learn on first message", () => {
-    expect(minimalConfig(answers()).telegram?.owner_id).toBe(0);
+    // `0` was written here, and it is not empty: it blocked the first-message
+    // claim and the doctor still called the owner bound.
+    expect(minimalConfig(answers()).telegram?.owner_id).toBeUndefined();
   });
 
   it("encrypts with a key of its own, not one derived from the token", () => {

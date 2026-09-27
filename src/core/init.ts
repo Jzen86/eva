@@ -171,7 +171,11 @@ export function minimalConfig(a: InitAnswers): EvaConfig {
     },
     telegram: {
       token: a.telegramToken,
-      owner_id: 0,
+      // No owner_id. `0` used to be written here, and it is not an empty slot:
+      // it is a concrete non-null id, so the first-message claim never fired
+      // (`chatId !== 0`), study was skipped because 0 is falsy, and doctor
+      // reported the owner as bound. Absent is what "learn it on first message"
+      // means.
     },
     providers: {
       [a.providerId]: { base_url: baseUrl, api_key: a.providerKey },
