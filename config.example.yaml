@@ -129,7 +129,19 @@ memory:
   context_budget: 40000
 
 # Секции ниже опциональны, включать только если нужно.
-# voice:      { stt_api_key: "...", tts_api_key: "..." }
+# Голос (Gemini TTS). Лимит — на модель в сутки (у flash-lite tts обычно 10),
+# поэтому перечисляем несколько моделей и/или ключей: когда у одной кончился
+# лимит, голос берёт следующую, а не выключается до завтра.
+# voice:
+#   tts_provider: gemini
+#   voice_id: Aoede
+#   gemini_model: gemini-3.8-flash-lite-tts      # основная (одна, как раньше)
+#   gemini_models:                               # необязательно: цепочка моделей
+#     - gemini-3.8-flash-lite-tts
+#     - gemini-2.5-flash-preview-tts
+#   gemini_api_key: YOUR_GEMINI_KEY
+#   gemini_api_keys:                             # необязательно: второй ключ = ещё лимит
+#     - YOUR_GEMINI_KEY
 # selfies:    { fal_api_key: "...", reference_photo_url: "https://..." }
 # google:     { api_key: "...", cx: "..." }
 # plugins:    ["voice", "selfies"]

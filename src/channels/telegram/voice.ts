@@ -53,17 +53,42 @@ export async function synthesizeSpeech(
   return synthesizeOpenAI(text, voiceConfig);
 }
 
-/** Gemini TTS via Google AI Studio (generateContent + AUDIO modality). */
-async function synthesizeGemini(
+/**
+ * The TTS models to try, in order.
+ *
+ * A Gemini TTS model is limited per day (10 requests on the flash-lite tier),
+ * and a spent model does not come back until tomorrow. One model therefore means
+ * voice dies for the rest of the day; a list lets a second model — with its own
+ * daily allowance — take over.
+ */
+function geminiModels(voiceConfig: Record<string, unknown>): string[] {
+  const many = voiceConfig.gemini_models;
+  if (Array.isArray(many)) {
+    const list = many.filter((m): m is string => typeof m === "string" && m.trim() !== "");
+    if (list.length) return list;
+  }
+  const one = voiceConfig.gemini_model;
+  return typeof one === "string" && one.trim() ? [one] : [GEMINI_DEFAULT_MODEL];
+}
+
+/** The Gemini keys to try. A key carries its own allowance, so a second key is a second bucket. */
+function geminiKeys(voiceConfig: Record<string, unknown>): string[] {
+  const many = voiceConfig.gemini_api_keys;
+  if (Array.isArray(many)) {
+    const list = many.filter((k): k is string => typeof k === "string" && k.trim() !== "");
+    if (list.length) return list;
+  }
+  const one = (voiceConfig.gemini_api_key ?? voiceConfig.google_api_key) as string | undefined;
+  return typeof one === "string" && one ? [one] : [];
+}
+
+/** One generateContent call. Returns null, and says why, on any failure. */
+async function geminiGenerate(
+  model: string,
+  apiKey: string,
   text: string,
-  voiceConfig: Record<string, unknown>,
+  voiceName: string,
 ): Promise<{ buffer: Buffer; mimeType: string } | null> {
-  const apiKey = (voiceConfig.gemini_api_key ?? voiceConfig.google_api_key) as string | undefined;
-  if (!apiKey) return null;
-
-  const model = (voiceConfig.gemini_model as string) ?? GEMINI_DEFAULT_MODEL;
-  const voiceName = (voiceConfig.voice_id as string) ?? GEMINI_DEFAULT_VOICE;
-
   try {
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
@@ -79,7 +104,11 @@ async function synthesizeGemini(
         }),
       },
     );
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const quota = res.status === 429 ? " (лимит на сегодня)" : "";
+      console.warn(`🔇 TTS ${model}: HTTP ${res.status}${quota} — пробую следующий`);
+      return null;
+    }
 
     const data = (await res.json()) as {
       candidates?: Array<{ content?: { parts?: Array<{ inlineData?: { data?: string; mimeType?: string } }> } }>;
@@ -95,9 +124,28 @@ async function synthesizeGemini(
       }
     }
     return null;
-  } catch {
+  } catch (err) {
+    console.warn(`🔇 TTS ${model}: ${err instanceof Error ? err.message : String(err)} — пробую следующий`);
     return null;
   }
+}
+
+/** Gemini TTS via Google AI Studio (generateContent + AUDIO modality), with model fallback. */
+async function synthesizeGemini(
+  text: string,
+  voiceConfig: Record<string, unknown>,
+): Promise<{ buffer: Buffer; mimeType: string } | null> {
+  const keys = geminiKeys(voiceConfig);
+  if (!keys.length) return null;
+  const voiceName = (voiceConfig.voice_id as string) ?? GEMINI_DEFAULT_VOICE;
+
+  for (const model of geminiModels(voiceConfig)) {
+    for (const apiKey of keys) {
+      const raw = await geminiGenerate(model, apiKey, text, voiceName);
+      if (raw) return raw;
+    }
+  }
+  return null;
 }
 
 async function synthesizeMiniMax(
