@@ -529,16 +529,24 @@ async function memorySection(dbPath: string | undefined): Promise<DoctorSection>
     );
   }
 
-  // getZoneCoverage returns counts per zone, not percentages. Sorting by size
-  // puts the themes she actually knows about first, which is the useful
-  // reading of "is my memory working".
-  const coverage = knowledge.getZoneCoverage();
-  if (coverage.size > 0) {
-    const lines = [...coverage.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([zone, count]) => `${zone}: ${count}`)
-      .join(", ");
-    checks.push(ok("memory.zones", `темы: ${lines}`));
+  // What the base actually holds, newest first. This replaces a per-zone count:
+  // the question behind "is my memory working" is what she knows about, and the
+  // honest answer is the subjects of the most recent rows.
+  try {
+    const recent = conn
+      .prepare(
+        `SELECT topic, timestamp FROM knowledge
+         WHERE superseded_at IS NULL ORDER BY timestamp DESC LIMIT 8`,
+      )
+      .all() as Array<{ topic: string; timestamp: number }>;
+    if (recent.length > 0) {
+      const lines = recent
+        .map((r) => `${knowledge.relativeAge(r.timestamp)}: ${r.topic}`)
+        .join(", ");
+      checks.push(ok("memory.recent", `последнее: ${lines}`));
+    }
+  } catch {
+    // A table older than this query; the other memory checks still stand.
   }
 
   try {

@@ -63,9 +63,6 @@ export function getDB(dbPath?: string): Database.Database {
       -- forever on installs with no embedding endpoint — dedup degrades to
       -- lexical only, which is the pre-existing behaviour.
       embedding BLOB,
-      -- Which subject area the entry belongs to, so study can rotate over the
-      -- weak spots instead of the whole base every time.
-      zone TEXT NOT NULL DEFAULT '',
       -- Retrieval bookkeeping: how often a memory actually helped, and when it
       -- was last pulled. Trim used to go purely by recency, which threw away
       -- facts that were being used and kept ones nothing referenced.
@@ -308,13 +305,20 @@ function migrateSummaryChunks(): void {
 }
 
 /**
- * Add the knowledge columns the semantic dedup and zone rotation rely on.
+ * Bring the knowledge columns up to date.
  *
  * CREATE TABLE IF NOT EXISTS does nothing at all to a table that already
  * exists, so an install that upgrades would get none of them without this.
  * Every column defaults to something harmless, which means a database that was
  * only half migrated still opens and still works — just without the new
  * features until the next run finishes the job.
+ *
+ * `zone` is dropped rather than left behind. It held the subject area a session
+ * was assigned, and the assignment is gone: a session that was told to look only
+ * at its own zone read a real conversation, found nothing on the subject and
+ * returned an empty answer — after the cursor had already moved past it. A
+ * column nothing writes and nothing reads is a column the next person has to
+ * work out the purpose of, and there is no longer a purpose.
  */
 function migrateKnowledgeSchema(): void {
   const conn = db;
@@ -327,7 +331,6 @@ function migrateKnowledgeSchema(): void {
 
   add("stems", "TEXT NOT NULL DEFAULT ''");
   add("embedding", "BLOB");
-  add("zone", "TEXT NOT NULL DEFAULT ''");
   add("access_count", "INTEGER NOT NULL DEFAULT 0");
   add("last_used", "INTEGER");
   add("superseded_at", "INTEGER");
@@ -339,6 +342,19 @@ function migrateKnowledgeSchema(): void {
 
   if (added.length > 0) {
     console.log(`🗄 Схема памяти: добавлены колонки ${added.join(", ")}`);
+  }
+
+  if (columnsOf(conn, "knowledge").includes("zone")) {
+    try {
+      conn.exec("ALTER TABLE knowledge DROP COLUMN zone");
+      console.log("🗄 Схема памяти: колонка zone убрана");
+    } catch (err) {
+      // An older SQLite without DROP COLUMN, or a schema where it is indexed. A
+      // leftover column costs nothing; failing to open costs everything.
+      console.warn(
+        `⚠️ не удалось убрать колонку zone (${err instanceof Error ? err.message : err})`,
+      );
+    }
   }
 }
 

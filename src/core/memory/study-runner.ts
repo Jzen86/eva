@@ -31,10 +31,7 @@ import {
 import {
   getAllKnowledge,
   getKnowledgeCount,
-  getZoneCoverage,
-  getZoneLastStudied,
   isCase,
-  markZoneStudied,
   relativeAge,
   trimKnowledge,
   type KnowledgeRow,
@@ -80,100 +77,6 @@ const MAX_SUMMARY_CHARS = 4000;
 /** Source tag written by the study loop itself. */
 const STUDY_SOURCE = "study_session";
 
-/**
- * Coverage zones, cycled one per session. Round-robin is deterministic on
- * purpose: asking the model to "vary topics" reliably produces the same topic
- * forever, so the rotation is decided here instead.
- *
- * Two hints used to ask for conclusions outright — "какие у неё сильные и слабые
- * стороны, её манера, характер" and "какие выводы и правила из этого следуют" —
- * and the base filled up accordingly: "Отказ от симметричной валидации",
- * "виртуальная пластичность", "итеративное самоопределение". Those are
- * self-descriptions, not things she can act on, and a model handed one of them
- * obeys it instead of weighing the moment. The hints now ask what happened.
- */
-const ZONES = [
-  {
-    name: "владелец",
-    hint: "его биография, привычки, что он любит и что его бесит, как он общается",
-  },
-  {
-    name: "она сама",
-    hint: "что она делает и говорит в разговоре: тон, шутки, границы, как реагирует на его настроение",
-  },
-  {
-    name: "сервер и задрот",
-    hint: "сервер, бот-задрот, сервисы, логи, конфиги, обслуживание, симптомы поломок и найденные причины",
-  },
-  {
-    name: "её промахи",
-    hint: "моменты, где она ответила неудачно, и как он это отметил. Уроков и правил не пиши — нужен сам момент и его реакция",
-  },
-] as const;
-
-/**
- * Sessions since boot that produced no write.
- *
- * Kept in the database alongside the zone cursor, not in a module variable: a
- * module-level counter resets on every restart, which is what once sent two
- * consecutive sessions back to the same empty zone.
- */
-let noWriteSessions = 0;
-
-/**
- * Which zone to study next.
- *
- * The emptiest one wins, and the tie goes to whatever was studied longest ago.
- * Round-robin was simpler and wrong: it kept handing out the same zone once the
- * counts drifted, and it had no idea that "сервер и задрот" had nothing in it
- * at all. Sorting by coverage is what makes the rotation aim somewhere.
- */
-function pickZone(known: KnowledgeRow[]): (typeof ZONES)[number] {
-  const coverage = getZoneCoverage();
-  const lastStudied = getZoneLastStudied();
-  const never = 0;
-
-  let best: (typeof ZONES)[number] = ZONES[0];
-  let bestCount = Number.MAX_SAFE_INTEGER;
-  let bestSeen = Number.MAX_SAFE_INTEGER;
-
-  for (const zone of ZONES) {
-    // Entries that predate the zone column carry no zone at all, so they are
-    // spread across the zones rather than left out of the count entirely.
-    const count = coverage.get(zone.name) ?? 0;
-    const unzoned = known.filter(
-      (k) => k.source === STUDY_SOURCE && !k.zone,
-    ).length;
-    const score = count + unzoned / ZONES.length;
-    const seen = lastStudied[zone.name] ?? never;
-
-    if (score < bestCount || (score === bestCount && seen < bestSeen)) {
-      best = zone;
-      bestCount = score;
-      bestSeen = seen;
-    }
-  }
-  return best;
-}
-
-/**
- * Next zone, with the skipped sessions folded in.
- *
- * `noWriteSessions` matters because a zone that produced nothing twice running
- * is being refused by the model, not merely empty — advancing past it is what
- * keeps one dead prompt from blocking the whole rotation.
- */
-function nextZone(known: KnowledgeRow[]): (typeof ZONES)[number] {
-  const zone = pickZone(known);
-  if (noWriteSessions >= 2) {
-    // Refused repeatedly: take the next emptiest rather than retrying the same.
-    const seen = getZoneLastStudied();
-    const others = ZONES.filter((z) => z.name !== zone.name);
-    return others.sort((a, b) => (seen[a.name] ?? 0) - (seen[b.name] ?? 0))[0] ?? zone;
-  }
-  return zone;
-}
-
 export interface StudyRunOptions {
   /** Clients tried in order: dedicated study model first, then the fast model. */
   clients: LLMClient[];
@@ -197,8 +100,6 @@ export interface StudyRunResult {
   ran: boolean;
   wrote: boolean;
   reason?: string;
-  /** Coverage zone this session was assigned. */
-  zone?: string;
   /** Human-readable summary for the chat / log. */
   report: string;
   error?: string;
@@ -235,13 +136,11 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
   inFlight = true;
   try {
     const generated = await generateInsight(opts);
-    const zone = generated.zone;
 
     if (generated.error) {
       markStudyComplete();
-      noWriteSessions++;
       trimKnowledge(opts.maxKnowledge, STUDY_SOURCE);
-      return { ran: true, wrote: false, zone, error: generated.error, report: "" };
+      return { ran: true, wrote: false, error: generated.error, report: "" };
     }
 
     /**
@@ -273,14 +172,12 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
 
     if (facts.length === 0) {
       sessionCount++;
-      noWriteSessions++;
       trimKnowledge(opts.maxKnowledge, STUDY_SOURCE);
       return finish({
         ran: true,
         wrote: false,
-        zone,
         reason,
-        report: `📚 Сессия #${sessionCount} [${zone}]${window}: записей нет${reason ? ` — ${reason}` : ""}`,
+        report: `📚 Сессия #${sessionCount}${window}: записей нет${reason ? ` — ${reason}` : ""}`,
       });
     }
 
@@ -306,15 +203,13 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
 
     if (accepted.length === 0) {
       sessionCount++;
-      noWriteSessions++;
       trimKnowledge(opts.maxKnowledge, STUDY_SOURCE);
       return finish({
         ran: true,
         wrote: false,
-        zone,
         reason: "всё, что вернула модель, отброшено фильтром",
         report:
-          `📚 Сессия #${sessionCount} [${zone}]${window}: отброшено ${dropped.length}\n` +
+          `📚 Сессия #${sessionCount}${window}: отброшено ${dropped.length}\n` +
           dropped.map((d) => `  · ${d}`).join("\n"),
       });
     }
@@ -357,7 +252,6 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
           topic: f.topic,
           insight: f.fact,
           source: STUDY_SOURCE,
-          zone,
           // Dated by the conversation, not by the run. A session reading a
           // backfill is reconstructing days-old talk, and stamping it today
           // would make "мы говорили об этом вчера" a falsehood the base tells
@@ -382,27 +276,23 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
 
     if (written.length === 0) {
       sessionCount++;
-      noWriteSessions++;
       return finish({
         ran: true,
         wrote: false,
-        zone,
         reason: "ничего нового",
         report:
-          `📚 Сессия #${sessionCount} [${zone}]${window}: нового нет\n` +
+          `📚 Сессия #${sessionCount}${window}: нового нет\n` +
           refused.map((r) => `  · ${r}`).join("\n"),
       });
     }
 
-    noWriteSessions = 0;
     sessionCount++;
     const total = getKnowledgeCount();
     return finish({
       ran: true,
       wrote: true,
-      zone,
       report: [
-        `📚 Сессия #${sessionCount} · зона: ${zone}${window} · записано ${written.length} из ${facts.length}`,
+        `📚 Сессия #${sessionCount}${window} · записано ${written.length} из ${facts.length}`,
         ...written.map((w) => {
           const head = `· ${w.topic}: ${w.fact}`;
           if (!w.c.her_move) return head;
@@ -427,8 +317,6 @@ interface Generated {
   facts: StudyFact[];
   reason?: string;
   error?: string;
-  /** Zone this session was assigned. */
-  zone: string;
   /** Knowledge snapshot the prompt was built from — the dedupe baseline. */
   known: KnowledgeRow[];
   /** How far the cursor may move once this session is over. See loadChatSince. */
@@ -444,12 +332,7 @@ interface Generated {
 /** Ask the LLM what happened. Tries each client in order. */
 async function generateInsight(opts: StudyRunOptions): Promise<Generated> {
   const known = getAllKnowledge();
-  const zone = nextZone(known);
-  // Recorded before the call, not after: a session that produced nothing still
-  // counts as having looked at this zone, otherwise the tie-break would send
-  // the next session straight back to a zone that clearly refuses to produce.
-  markZoneStudied(zone.name);
-  const built = buildStudyMessages(opts, zone, known);
+  const built = buildStudyMessages(opts, known);
   let lastError = "";
 
   for (const client of opts.clients) {
@@ -459,7 +342,6 @@ async function generateInsight(opts: StudyRunOptions): Promise<Generated> {
       if (parsed) {
         return {
           ...parsed,
-          zone: zone.name,
           known,
           coveredTo: built.coveredTo,
           coveredAt: built.coveredAt,
@@ -476,7 +358,6 @@ async function generateInsight(opts: StudyRunOptions): Promise<Generated> {
   return {
     facts: [],
     error: lastError || "нет доступных клиентов",
-    zone: zone.name,
     known,
     coveredTo: built.coveredTo,
     coveredAt: built.coveredAt,
@@ -487,7 +368,6 @@ async function generateInsight(opts: StudyRunOptions): Promise<Generated> {
 
 function buildStudyMessages(
   opts: StudyRunOptions,
-  zone: (typeof ZONES)[number],
   known: KnowledgeRow[],
 ): {
   messages: LLMMessage[];
@@ -525,13 +405,10 @@ function buildStudyMessages(
     "моменты, пиши новое, старое не трогай и не переписывай. Где было хорошо — тоже",
     "пиши, не только промахи. Ничего не выдумывай. По-русски, как заметку для себя.",
     "",
-    `Первым делом смотри на «${zone.name}» — ${zone.hint}. Но это не запрет`,
-    "на остальное: было стоящее по другому — тоже пиши, сессия читает разговор один раз.",
+    "Свежая_переписка — всё, что сказано с прошлого раза. Сводка — то, что было раньше.",
   ].join("\n");
 
   const payload = {
-    зона_этой_сессии: zone.name,
-    что_это_значит: zone.hint,
     не_дублировать_эти_темы: knowledge.map((k: KnowledgeRow) => k.topic),
     // Shaped the way the answer prompt sees it, case fields included, so a study
     // run recognises an existing case the same way a conversation would.

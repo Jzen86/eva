@@ -271,21 +271,22 @@ describe("study: the prompt it is asked with", () => {
     expect(text).toContain("Где было хорошо — тоже");
   });
 
-  it("treats the zone as where to look first, not as a prohibition", async () => {
-    // It was a prohibition, and it cost a real conversation on a live run: the
-    // session read two messages and returned "нет конкретных фактов или событий
-    // из зоны «сервер и задрот»" — there was material, it was the wrong subject,
-    // so it was thrown away, and the cursor had already moved past it.
+  it("treats the zone as where to look first, not as a prohibition — and there is no zone any more", async () => {
+    // The rotation is gone. It read as harmless bookkeeping and it was not: the
+    // session at 04:31 read two messages, found nothing on its assigned subject,
+    // and returned an empty answer — with the cursor already past them. The owner
+    // asked for it to go, and what is left is a list of what she knows.
     const text = await prompt();
-    expect(text).toContain("это не запрет");
-    expect(text).not.toContain("не пиши вообще");
+    expect(text).toContain("Свежая_переписка — всё, что сказано с прошлого раза");
+    expect(text).not.toContain("Первым делом смотри на");
   });
 
-  it("no zone asks it for lessons any more", async () => {
+  it("does not ask it to study one subject per session", async () => {
     // "какие выводы и правила из этого следуют" is the sentence that produced
     // «Отказ от симметричной валидации» and «виртуальная пластичность».
     const text = await prompt();
     expect(text).not.toContain("какие выводы и правила");
     expect(text).not.toContain("сильные и слабые стороны");
+    expect(text).not.toContain("зона");
   });
 });

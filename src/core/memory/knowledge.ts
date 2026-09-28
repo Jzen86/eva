@@ -9,8 +9,6 @@ export interface KnowledgeRow {
   source: string;
   confidence: number;
   timestamp: number;
-  /** Subject area, used by study to rotate over what it is weakest in. */
-  zone: string;
   /** How often this memory has actually been pulled into a conversation. */
   access_count: number;
   last_used: number | null;
@@ -77,7 +75,7 @@ const QUERY_STOPWORDS = new Set([
 ]);
 
 const SELECT_COLUMNS =
-  "id, topic, insight, source, confidence, timestamp, zone, access_count, last_used, superseded_at, superseded_by, her_move, context, his_reaction, conclusion";
+  "id, topic, insight, source, confidence, timestamp, access_count, last_used, superseded_at, superseded_by, her_move, context, his_reaction, conclusion";
 
 /**
  * Build a safe FTS5 MATCH expression from free text.
@@ -114,7 +112,6 @@ export interface AddKnowledgeInput {
   topic: string;
   insight: string;
   source: string;
-  zone?: string;
   /** What she did, when this row is a case rather than a statement. */
   her_move?: string | null;
   /** The state he was in. See KnowledgeRow.context — a case reads as a rule without it. */
@@ -157,9 +154,9 @@ export function addKnowledge(entry: AddKnowledgeInput, confidence = entry.confid
   const db = getDB();
   const result = db
     .prepare(
-      `INSERT INTO knowledge (topic, insight, source, confidence, timestamp, stems, zone, embedding,
+      `INSERT INTO knowledge (topic, insight, source, confidence, timestamp, stems, embedding,
                               her_move, context, his_reaction, conclusion)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       entry.topic,
@@ -168,7 +165,6 @@ export function addKnowledge(entry: AddKnowledgeInput, confidence = entry.confid
       confidence,
       entry.timestamp ?? Math.floor(Date.now() / 1000),
       searchableText(entry),
-      entry.zone ?? "",
       entry.embedding ?? null,
       entry.her_move ?? "",
       entry.context ?? "",
@@ -200,7 +196,7 @@ export function searchKnowledge(query: string, limit = 5): KnowledgeRow[] {
     const rows = db
       .prepare(
         `SELECT k.id, k.topic, k.insight, k.source, k.confidence, k.timestamp,
-                k.zone, k.access_count, k.last_used, k.superseded_at, k.superseded_by,
+                k.access_count, k.last_used, k.superseded_at, k.superseded_by,
                 k.her_move, k.context, k.his_reaction, k.conclusion
          FROM knowledge_fts fts
          JOIN knowledge k ON k.id = fts.rowid
@@ -458,51 +454,6 @@ function purgeRetired(): void {
   } catch (err) {
     console.warn(
       `⚠️ не удалось вычистить старые записи (${err instanceof Error ? err.message : err})`,
-    );
-  }
-}
-
-const ZONE_STUDY_META = "study_zone_seen";
-
-/** Live entries per zone. Retired rows do not count — they are not what Eva knows. */
-export function getZoneCoverage(): Map<string, number> {
-  const rows = getDB()
-    .prepare(
-      `SELECT zone, COUNT(*) AS count FROM knowledge
-       WHERE superseded_at IS NULL AND zone != ''
-       GROUP BY zone`,
-    )
-    .all() as Array<{ zone: string; count: number }>;
-  return new Map(rows.map((r) => [r.zone, r.count]));
-}
-
-/**
- * When each zone was last handed to a study session, as unix seconds.
- *
- * Kept in the database rather than in a module variable: a module-level cursor
- * resets on every restart, which is what once sent two consecutive sessions
- * back to the same empty zone.
- */
-export function getZoneLastStudied(): Record<string, number> {
-  try {
-    const raw = readMeta(ZONE_STUDY_META);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as unknown;
-    if (typeof parsed !== "object" || parsed === null) return {};
-    return parsed as Record<string, number>;
-  } catch {
-    return {};
-  }
-}
-
-export function markZoneStudied(zone: string): void {
-  const seen = getZoneLastStudied();
-  seen[zone] = Math.floor(Date.now() / 1000);
-  try {
-    writeMeta(ZONE_STUDY_META, JSON.stringify(seen));
-  } catch (err) {
-    console.warn(
-      `⚠️ не удалось запомнить зону ${zone} (${err instanceof Error ? err.message : err})`,
     );
   }
 }

@@ -11,9 +11,6 @@ import {
   searchKnowledge,
   trimKnowledge,
   touchKnowledge,
-  getZoneCoverage,
-  getZoneLastStudied,
-  markZoneStudied,
 } from "../../src/core/memory/knowledge";
 import {
   contentStems,
@@ -290,60 +287,12 @@ describe("threshold sanity", () => {
   });
 });
 
-describe("zone coverage", () => {
-  it("counts live entries per zone", async () => {
-    await learnInsight(
-      { topic: "t", insight: "про сервер", source: "study_session", zone: "сервер" },
-      { known: [] },
-    );
-    await learnInsight(
-      { topic: "t", insight: "про работу", source: "study_session", zone: "работа" },
-      { known: [] },
-    );
-    const coverage = getZoneCoverage();
-    expect(coverage.get("сервер")).toBe(1);
-    expect(coverage.get("работа")).toBe(1);
-  });
-
-  it("does not count retired entries", () => {
-    const id = addKnowledge({
-      topic: "t",
-      insight: "про сервер был",
-      source: "study_session",
-      zone: "сервер",
-    });
-    expect(getZoneCoverage().get("сервер")).toBe(1);
-    retireKnowledge(id);
-    expect(getZoneCoverage().get("сервер")).toBeUndefined();
-  });
-
-  it("ignores entries with no zone", () => {
-    addKnowledge({ topic: "t", insight: "без зоны вовсе", source: "study_session" });
-    expect(getZoneCoverage().size).toBe(0);
-  });
-});
-
-describe("zone rotation cursor", () => {
-  it("survives a reopen, which a module variable would not", () => {
-    markZoneStudied("владелец");
-    expect(getZoneLastStudied()["владелец"]).toBeGreaterThan(0);
-
-    // Reopening is what a restart does; the cursor has to still be there.
-    closeDB();
-    getDB(path.join(dir, "eva.db"));
-    expect(getZoneLastStudied()["владелец"]).toBeGreaterThan(0);
-  });
-
-  it("keeps several zones at once", () => {
-    markZoneStudied("владелец");
-    markZoneStudied("она сама");
-    const seen = getZoneLastStudied();
-    expect(seen["владелец"]).toBeGreaterThan(0);
-    expect(seen["она сама"]).toBeGreaterThan(0);
-  });
-
-  it("returns nothing instead of throwing on a corrupt cursor", () => {
-    getDB().prepare("UPDATE eva_meta SET value = ? WHERE key = ?").run("не json", "study_zone_seen");
-    expect(getZoneLastStudied()).toEqual({});
-  });
-});
+/**
+ * The zone rotation is gone, and these are the tests that went with it: coverage
+ * counted per subject, and a cursor recording when each was last studied. It read
+ * as harmless bookkeeping and it was not — a session told to look only at its own
+ * zone read a real conversation, found nothing on the subject, and returned an
+ * empty answer, with the cursor already past it. The owner's reading was the
+ * right one: what is left is a list of what she knows, and nothing decides in
+ * advance which part of a conversation counts.
+ */

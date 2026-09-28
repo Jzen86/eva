@@ -359,6 +359,9 @@ describe("migration", () => {
     expect(cols).toContain("context");
     expect(cols).toContain("his_reaction");
     expect(cols).toContain("conclusion");
+    // And the zone column is gone, not left behind for the next reader to wonder
+    // about. This schema is the one the live install actually had.
+    expect(cols).not.toContain("zone");
 
     // The old rows are statements, not broken cases, and the index still finds
     // them by the words they always answered to.
@@ -373,7 +376,7 @@ describe("migration", () => {
 function getAll() {
   return getDB()
     .prepare(
-      "SELECT id, topic, insight, source, confidence, timestamp, zone, access_count, " +
+      "SELECT id, topic, insight, source, confidence, timestamp, access_count, " +
         "last_used, superseded_at, superseded_by, her_move, context, his_reaction, conclusion " +
         "FROM knowledge WHERE superseded_at IS NULL ORDER BY id ASC",
     )

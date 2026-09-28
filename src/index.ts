@@ -319,7 +319,7 @@ async function main() {
         }
         if (!result.ran || !result.report) return;
         if (result.wrote) {
-          console.log("🧠 study:", result.zone);
+          console.log("🧠 study: есть записи");
           await channels.get("telegram")?.send(ownerId, { text: result.report });
         } else {
           console.log("🧠 study: записей нет —", result.reason ?? "без причины");

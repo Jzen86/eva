@@ -398,14 +398,22 @@ llm:
     expect(check?.detail).toContain("пустой индексный текст");
   });
 
-  it("reports zone coverage as counts, not percentages", async () => {
+  it("says what the base actually holds, newest first", async () => {
+    // This replaced a per-zone count. The question behind "is my memory working"
+    // is what she knows about, and a subject list is the honest answer.
     writeConfig(GOOD_CONFIG);
-    addKnowledge({ topic: "cats", insight: "a", source: "test", zone: "животные" });
-    addKnowledge({ topic: "dogs", insight: "b", source: "test", zone: "животные" });
-    addKnowledge({ topic: "code", insight: "c", source: "test", zone: "код" });
+    addKnowledge({
+      topic: "кошки",
+      insight: "кошку зовут Муська",
+      source: "test",
+      timestamp: Math.floor(Date.now() / 1000) - 3 * 86_400,
+    });
+    addKnowledge({ topic: "самолёты", insight: "летал в Саратов", source: "test" });
     const report = await runDoctor({ configPath, registry: goodRegistry(), dbPath });
-    const check = find(report, "memory.zones");
-    expect(check?.detail).toContain("животные: 2");
+    const check = find(report, "memory.recent");
+    expect(check?.detail).toContain("самолёты");
+    expect(check?.detail).toContain("кошки");
+    expect(check?.detail).toContain("3 дня назад");
     expect(check?.detail).not.toContain("%");
   });
 

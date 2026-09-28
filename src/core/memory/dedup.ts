@@ -263,7 +263,6 @@ export async function findDuplicate(
 export interface LearnInput extends DedupSubject {
   topic: string;
   source: string;
-  zone?: string;
   /** When it happened, when the caller knows better than "now". See AddKnowledgeInput. */
   timestamp?: number;
 }
