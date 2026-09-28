@@ -1,5 +1,6 @@
 import { getDB, readMeta, writeMeta } from "./db.js";
-import { indexText, stemsOfFiltered } from "./stem-ru.js";
+import { stemsOfFiltered } from "./stem-ru.js";
+import { searchableText } from "./knowledge-text.js";
 
 export interface KnowledgeRow {
   id: number;
@@ -16,6 +17,32 @@ export interface KnowledgeRow {
   /** Set when a newer entry replaced this one. Retired rows stay in the table. */
   superseded_at: number | null;
   superseded_by: number | null;
+  /**
+   * What she was in the middle of, for a row that records a case. Empty on a
+   * statement about a person, which is not a case and needs no context.
+   */
+  her_move: string;
+  /**
+   * The state he was in when it happened: busy, cheerful, in an argument.
+   *
+   * A case without this is a superstition waiting to happen. "Answered coldly"
+   * alone reads as a rule; "he was busy, answered coldly" reads as one Tuesday.
+   * The prompt builder refuses to render a case that lacks it — see
+   * renderKnowledge.
+   */
+  context: string;
+  /** What he did about it: warmed up, went cold, laughed it off, let it go. */
+  his_reaction: string;
+}
+
+/**
+ * A row is a case when it records something she did, not a statement about
+ * someone. The three case fields ride on the same table as plain facts on
+ * purpose: one place to look, one index, one prompt section, and a fact stated
+ * once in a chat keeps working without being migrated anywhere.
+ */
+export function isCase(row: KnowledgeRow): boolean {
+  return row.her_move.trim() !== "";
 }
 
 /** Words that carry no retrieval signal and would only widen the query. */
@@ -30,7 +57,7 @@ const QUERY_STOPWORDS = new Set([
 ]);
 
 const SELECT_COLUMNS =
-  "id, topic, insight, source, confidence, timestamp, zone, access_count, last_used, superseded_at, superseded_by";
+  "id, topic, insight, source, confidence, timestamp, zone, access_count, last_used, superseded_at, superseded_by, her_move, context, his_reaction";
 
 /**
  * Build a safe FTS5 MATCH expression from free text.
@@ -68,10 +95,21 @@ export interface AddKnowledgeInput {
   insight: string;
   source: string;
   zone?: string;
+  /** What she did, when this row is a case rather than a statement. */
+  her_move?: string;
+  /** The state he was in. See KnowledgeRow.context — a case reads as a rule without it. */
+  context?: string;
+  /** What he did about it. */
+  his_reaction?: string;
   /** Pre-computed semantic vector, when an embedding endpoint is configured. */
   embedding?: Buffer | null;
   confidence?: number;
 }
+
+/**
+ * Everything a row is searchable by is assembled in knowledge-text.ts, so that
+ * db.ts can reindex an old row into exactly the same shape a live write makes.
+ */
 
 /**
  * Add a knowledge entry to the database.
@@ -80,11 +118,11 @@ export interface AddKnowledgeInput {
  */
 export function addKnowledge(entry: AddKnowledgeInput, confidence = entry.confidence ?? 0.5): number {
   const db = getDB();
-  const stems = indexText(`${entry.topic} ${entry.insight}`);
   const result = db
     .prepare(
-      `INSERT INTO knowledge (topic, insight, source, confidence, timestamp, stems, zone, embedding)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO knowledge (topic, insight, source, confidence, timestamp, stems, zone, embedding,
+                              her_move, context, his_reaction)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       entry.topic,
@@ -92,9 +130,12 @@ export function addKnowledge(entry: AddKnowledgeInput, confidence = entry.confid
       entry.source,
       confidence,
       Math.floor(Date.now() / 1000),
-      stems,
+      searchableText(entry),
       entry.zone ?? "",
       entry.embedding ?? null,
+      entry.her_move ?? "",
+      entry.context ?? "",
+      entry.his_reaction ?? "",
     );
   return Number(result.lastInsertRowid);
 }
@@ -121,7 +162,8 @@ export function searchKnowledge(query: string, limit = 5): KnowledgeRow[] {
     const rows = db
       .prepare(
         `SELECT k.id, k.topic, k.insight, k.source, k.confidence, k.timestamp,
-                k.zone, k.access_count, k.last_used, k.superseded_at, k.superseded_by
+                k.zone, k.access_count, k.last_used, k.superseded_at, k.superseded_by,
+                k.her_move, k.context, k.his_reaction
          FROM knowledge_fts fts
          JOIN knowledge k ON k.id = fts.rowid
          WHERE knowledge_fts MATCH ?
@@ -153,6 +195,54 @@ export function touchKnowledge(ids: number[]): void {
   db.transaction(() => {
     for (const id of ids) stmt.run(now, id);
   })();
+}
+
+/**
+ * How many rows the answer prompt gets.
+ *
+ * Was 5, which was sized for the essays the base used to hold: a conclusion in
+ * three sentences needs a slot of its own, and five of them already filled the
+ * budget. A case is a line, and the value of the base is that the same thing
+ * happened more than once in more than one state — five rows cannot show a
+ * pattern, they can only show five examples and let the model guess.
+ */
+export const KNOWLEDGE_PROMPT_LIMIT = 12;
+
+/**
+ * The knowledge base as the answering model should read it.
+ *
+ * Two rules live here and nowhere else, because they are about form, and a form
+ * rule left in a prompt is a rule the next prompt rewrite forgets:
+ *
+ * 1. A case never appears without its state. "Answered coldly" on its own is a
+ *    rule, and rules are what this base stopped storing on purpose — the point
+ *    is the choice made in the moment, not a precedent obeyed. "He was busy, so
+ *    he answered coldly" is one Tuesday, and a second case about the same joke
+ *    in a different state is free to contradict it.
+ * 2. Nothing is phrased as an instruction. The rows are what happened, in the
+ *    words of whoever wrote them down. Whoever answers draws the conclusion for
+ *    the moment in front of them, which is the only place a conclusion belongs.
+ *
+ * A case with no recorded state says so rather than being hidden: rows written
+ * before these fields existed have none, and dropping them quietly would make
+ * the base look emptier every time the schema grew.
+ */
+export function renderKnowledge(rows: KnowledgeRow[]): string {
+  if (rows.length === 0) return "";
+
+  const lines = rows.map((row, i) => {
+    if (!isCase(row)) return `${i + 1}. ${row.insight}`;
+    const state = row.context.trim() || "не определяется";
+    return `${i + 1}. [случай] состояние: ${state}. она: ${row.her_move}. ты: ${row.his_reaction}`;
+  });
+
+  lines.push(
+    "",
+    "Это примеры из прошлого, а не правила. На один и тот же повод в разных состояниях",
+    "реакция была разной — так и есть, выбирай под то, что происходит сейчас.",
+  );
+
+  return lines.join("\n");
 }
 
 /**

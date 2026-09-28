@@ -2,6 +2,7 @@ import type { Tool, ToolResult } from "./types.js";
 import {
   searchKnowledge,
   getAllKnowledge,
+  renderKnowledge,
   type KnowledgeRow,
 } from "../memory/knowledge.js";
 import { learnInsight, type EmbeddingEndpoint } from "../memory/dedup.js";
@@ -18,6 +19,15 @@ function requireString(
   return val.trim();
 }
 
+/** Same as requireString, but absent and blank are both fine. */
+function optionalString(
+  params: Record<string, unknown>,
+  key: string,
+): string | null {
+  const val = params[key];
+  return typeof val === "string" && val.trim() ? val.trim() : null;
+}
+
 function handleSearch(params: Record<string, unknown>): ToolResult {
   const query = requireString(params, "query");
   const limit =
@@ -31,15 +41,15 @@ function handleSearch(params: Record<string, unknown>): ToolResult {
   // failed model call.
   const hits = searchKnowledge(query, limit);
 
-  if (hits.length === 0) {
+  // Same rendering the answer prompt uses, so a search made mid-chat hands back
+  // evidence framed as evidence. A different shape in each place would mean the
+  // framing has to be remembered twice and survives in one of them.
+  const rendered = renderKnowledge(hits);
+  if (!rendered) {
     return { success: true, output: "No relevant memories found." };
   }
 
-  const summary = hits
-    .map((h: KnowledgeRow, i: number) => `${i + 1}. [${h.topic}] ${h.insight.slice(0, 300)}`)
-    .join("\n\n");
-
-  return { success: true, output: summary };
+  return { success: true, output: rendered };
 }
 
 async function handleSave(
@@ -52,12 +62,40 @@ async function handleSave(
       ? params.topic.trim()
       : "general";
 
+  // A case is anything that records her doing something and him answering it.
+  // The fields are optional so a plain fact about a person still saves, but the
+  // three travel together: her_move without the other two is the note that reads
+  // back as a rule, and it is cheaper to refuse it here than to explain why
+  // later.
+  const herMove = optionalString(params, "her_move");
+  const context = optionalString(params, "context");
+  const hisReaction = optionalString(params, "his_reaction");
+
+  if (herMove && (!context || !hisReaction)) {
+    return {
+      success: false,
+      output:
+        "A case needs all three: her_move (what she did), context (the state he " +
+        "was in), his_reaction (what he did about it). Without the context the " +
+        "note is read back as a rule instead of a moment. Save it as a plain " +
+        "fact with no her_move, or fill in all three.",
+      error: "incomplete_case",
+    };
+  }
+
   // Through the shared writer, so a memory the agent volunteers goes through
   // the same dedup check as one a study session produces. Without this, Eva
   // could answer "не люблю грибы", store it, and then store "люблю грибы"
   // right after it — both passing straight to the table.
   const outcome = await learnInsight(
-    { topic, insight, source: "memory_tool" },
+    {
+      topic,
+      insight,
+      source: "memory_tool",
+      her_move: herMove ?? undefined,
+      context: context ?? undefined,
+      his_reaction: hisReaction ?? undefined,
+    },
     { embedding },
   );
 
@@ -124,15 +162,35 @@ export function createMemoryTool(opts: MemoryToolOptions = {}): Tool {
   return {
     name: "memory",
     description:
-      "Search, save, delete, or list entries in the knowledge base. " +
-      "Use action=search with a query to find relevant past knowledge, " +
-      "action=save to add new knowledge, action=delete to remove an entry, " +
-      "or action=list to see all entries.",
+      "Knowledge base: search it, save what just happened, list or delete entries.\n" +
+      "action=save takes what actually happened, not a conclusion drawn from it. A " +
+      "plain fact about him ('не любит айфоны') goes in content alone.\n" +
+      "When he reacted to something you did, save that as a case instead: her_move = " +
+      "what you did, context = the state he was in (busy, cheerful, in an " +
+      "argument, tired), his_reaction = what he did about it. All three are required " +
+      "together. The context is not decoration: without it the note comes back as a " +
+      "rule, and rules are what this base is not for. Save what happened, each time " +
+      "it happens — two cases about the same thing in different states are both true.",
     parameters: [
       { name: "action", type: "string", description: "One of: search, save, delete, list", required: true },
       { name: "query", type: "string", description: "Search query (required for action=search)" },
       { name: "content", type: "string", description: "Knowledge content to save (required for action=save)" },
       { name: "topic", type: "string", description: "Topic tag for the entry (optional, default: general)" },
+      {
+        name: "her_move",
+        type: "string",
+        description: "Case only: what she did or said that he reacted to",
+      },
+      {
+        name: "context",
+        type: "string",
+        description: "Case only, required: the state he was in when it happened",
+      },
+      {
+        name: "his_reaction",
+        type: "string",
+        description: "Case only, required: how he answered it (warmed up, went cold, laughed, let it go)",
+      },
       { name: "id", type: "string", description: "Entry ID (required for action=delete)" },
       { name: "limit", type: "number", description: "Max results for search (default 5)" },
       {

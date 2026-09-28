@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
-import { indexText } from "./stem-ru.js";
+import { searchableText } from "./knowledge-text.js";
 
 let db: Database.Database | null = null;
 let currentPath: string | null = null;
@@ -76,7 +76,16 @@ export function getDB(dbPath?: string): Database.Database {
       -- a pure DELETE would let the stale version come back on the next study
       -- pass and overwrite the correction.
       superseded_at INTEGER,
-      superseded_by INTEGER
+      superseded_by INTEGER,
+      -- The case fields. A row with a her_move is a record of something she
+      -- did and how he answered it, not a conclusion about it; a row without is
+      -- a plain statement about a person. They share a table on purpose: one
+      -- index, one lookup, one section of the prompt.
+      her_move TEXT NOT NULL DEFAULT '',
+      -- His state at the time. Kept beside the case because "answered coldly"
+      -- on its own is a rule, and a rule is what the base stopped storing.
+      context TEXT NOT NULL DEFAULT '',
+      his_reaction TEXT NOT NULL DEFAULT ''
     );
 
     CREATE TABLE IF NOT EXISTS events (
@@ -190,8 +199,10 @@ export function getDB(dbPath?: string): Database.Database {
  *   0 — no index, or the original raw topic/insight text
  *   1 — stems only
  *   2 — stems plus the raw tokens
+ *   3 — plus the case fields, so a note about how he took a joke is found by
+ *       the joke rather than only by the sentence describing it
  */
-export const KNOWLEDGE_INDEX_VERSION = 2;
+export const KNOWLEDGE_INDEX_VERSION = 3;
 
 /** Small key-value store used for schema versions and rotation cursors. */
 export function readMeta(key: string): string | null {
@@ -314,6 +325,9 @@ function migrateKnowledgeSchema(): void {
   add("last_used", "INTEGER");
   add("superseded_at", "INTEGER");
   add("superseded_by", "INTEGER");
+  add("her_move", "TEXT NOT NULL DEFAULT ''");
+  add("context", "TEXT NOT NULL DEFAULT ''");
+  add("his_reaction", "TEXT NOT NULL DEFAULT ''");
 
   if (added.length > 0) {
     console.log(`🗄 Схема памяти: добавлены колонки ${added.join(", ")}`);
@@ -385,13 +399,22 @@ function migrateKnowledgeIndex(): void {
   }
 
   const rows = conn
-    .prepare("SELECT id, topic, insight FROM knowledge")
-    .all() as Array<{ id: number; topic: string; insight: string }>;
+    .prepare(
+      "SELECT id, topic, insight, her_move, context, his_reaction FROM knowledge",
+    )
+    .all() as Array<{
+    id: number;
+    topic: string;
+    insight: string;
+    her_move: string;
+    context: string;
+    his_reaction: string;
+  }>;
   if (rows.length > 0) {
     const update = conn.prepare("UPDATE knowledge SET stems = ? WHERE id = ?");
     conn.transaction(() => {
       for (const row of rows) {
-        update.run(indexText(`${row.topic} ${row.insight}`), row.id);
+        update.run(searchableText(row), row.id);
       }
     })();
   }

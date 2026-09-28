@@ -11,7 +11,7 @@ import {
   loadConfig,
   type EvaConfig,
 } from "./config.js";
-import { searchKnowledge } from "./memory/knowledge.js";
+import { searchKnowledge, renderKnowledge, KNOWLEDGE_PROMPT_LIMIT } from "./memory/knowledge.js";
 import { saveMessage, loadHistory, extractText } from "./memory/conversations.js";
 import { compactHistory } from "./memory/compaction.js";
 import { alignHistory } from "./llm/history.js";
@@ -502,14 +502,14 @@ export class Engine {
 
     let prompt = buildSystemPrompt(this.liveConfig(), userMessage, chatId, connectedServiceNames);
 
-    // Search knowledge base for context relevant to the user's message
+    // What she has seen before, for this exact kind of moment. Rendered by
+    // knowledge.ts so a case can never reach the prompt stripped of the state it
+    // happened in — the same shaping is used by the memory tool's own search.
     try {
-      const hits = searchKnowledge(userMessage, 5);
-      if (hits.length > 0) {
-        const memoryContext = hits
-          .map((h, i) => `${i + 1}. [${h.topic}] ${h.insight}`)
-          .join("\n");
-        prompt += `\n\n## Релевантные знания из памяти\n\n${memoryContext}`;
+      const hits = searchKnowledge(userMessage, KNOWLEDGE_PROMPT_LIMIT);
+      const rendered = renderKnowledge(hits);
+      if (rendered) {
+        prompt += `\n\n## Что было раньше\n\n${rendered}`;
       }
     } catch {
       // Memory not initialized yet — skip

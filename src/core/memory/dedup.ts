@@ -181,6 +181,17 @@ export interface LearnInput {
   insight: string;
   source: string;
   zone?: string;
+  /**
+   * The case fields, carried through untouched by the dedup check.
+   *
+   * The check only compares `insight`, and that is right: two notes describing
+   * the same moment in different words are the same moment, while two notes
+   * about the same joke in different states are not, and those differ in the
+   * sentence just enough to both be worth keeping.
+   */
+  her_move?: string;
+  context?: string;
+  his_reaction?: string;
 }
 
 export type LearnOutcome =
