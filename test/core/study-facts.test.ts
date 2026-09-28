@@ -266,6 +266,16 @@ describe("study: the prompt it is asked with", () => {
     expect(text).toContain("Муська");
   });
 
+  it("treats the zone as where to look first, not as a prohibition", async () => {
+    // It was a prohibition, and it cost a real conversation on a live run: the
+    // session read two messages and returned "нет конкретных фактов или событий
+    // из зоны «сервер и задрот»" — there was material, it was the wrong subject,
+    // so it was thrown away, and the cursor had already moved past it.
+    const text = await prompt();
+    expect(text).toContain("а не запрет на остальное");
+    expect(text).not.toContain("не пиши вообще");
+  });
+
   it("no zone asks it for lessons any more", async () => {
     // "какие выводы и правила из этого следуют" is the sentence that produced
     // «Отказ от симметричной валидации» and «виртуальная пластичность».
