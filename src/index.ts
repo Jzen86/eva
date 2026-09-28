@@ -206,7 +206,6 @@ async function main() {
       owner: config.owner,
     },
     tools,
-    contextBudget: config.memory?.context_budget ?? 40000,
     encryptionKey: passwordHash,
   }) : null;
 

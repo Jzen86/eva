@@ -7,6 +7,13 @@ import os from "os";
 import fs from "fs";
 import crypto from "crypto";
 
+/**
+ * The window the model actually reads. `loadHistory` hands it the newest rows,
+ * so everything older is what compaction owns — those rows are the only copy of
+ * themselves, and this is the only thing that carries them forward.
+ */
+const WINDOW = 4;
+
 function mockLLM(summaryText: string) {
   return {
     chat: vi.fn().mockResolvedValue({
@@ -16,6 +23,22 @@ function mockLLM(summaryText: string) {
     }),
     chatStream: vi.fn(),
   };
+}
+
+function rowCount(userId: string): number {
+  return (
+    getDB().prepare("SELECT COUNT(*) n FROM conversations WHERE user_id = ?").get(userId) as { n: number }
+  ).n;
+}
+
+function contentOf(userId: string, order: "ASC" | "DESC", limit: number): string[] {
+  return (
+    getDB()
+      .prepare(
+        `SELECT content FROM conversations WHERE user_id = ? ORDER BY id ${order} LIMIT ?`,
+      )
+      .all(userId, limit) as { content: string }[]
+  ).map((r) => r.content);
 }
 
 describe("Compaction", () => {
@@ -33,18 +56,41 @@ describe("Compaction", () => {
     }
   });
 
-  it("summarizes old messages and deletes them from DB", async () => {
+  it("folds what has fallen out of the window and leaves the window alone", async () => {
     for (let i = 0; i < 10; i++) {
       saveMessage("u1", "tg", "user", `Question ${i}`);
       saveMessage("u1", "tg", "assistant", `Answer ${i}`);
     }
     const llm = mockLLM("Пользователь задал 10 вопросов и получил ответы.");
-    await compactHistory("u1", llm);
-    const s = loadSummary("u1");
-    expect(s?.summary).toContain("10 вопросов");
+    await compactHistory("u1", llm, WINDOW);
+
+    expect(loadSummary("u1")?.summary).toContain("10 вопросов");
+
+    // The four newest rows are what the model still reads, so they must survive
+    // untouched. This is what the old split got backwards: it cut down the
+    // middle of the table, which put the rows about to be dropped on the
+    // untouched side and summarised rows that were still in the window.
+    expect(contentOf("u1", "DESC", WINDOW)).toEqual(["Answer 9", "Question 9", "Answer 8", "Question 8"]);
+    expect(rowCount("u1")).toBe(WINDOW);
+
     const { messages } = loadHistory("u1");
-    expect(messages.length).toBeLessThan(20);
-    expect(messages.length).toBeGreaterThan(0);
+    expect(messages).toHaveLength(WINDOW);
+  });
+
+  it("does nothing while the whole conversation still fits the window", async () => {
+    for (let i = 0; i < 6; i++) {
+      saveMessage("u1", "tg", "user", `Question ${i}`);
+      saveMessage("u1", "tg", "assistant", `Answer ${i}`);
+    }
+    const llm = mockLLM("Саммари, которого быть не должно.");
+    await compactHistory("u1", llm, 40);
+
+    // Nothing has left the window, so there is nothing to carry forward. The
+    // old version always split the table in half and spent a request on a
+    // conversation the model could still read in full.
+    expect(llm.chat).not.toHaveBeenCalled();
+    expect(loadSummary("u1")).toBeNull();
+    expect(rowCount("u1")).toBe(12);
   });
 
   it("preserves existing summary in compaction prompt", async () => {
@@ -54,7 +100,7 @@ describe("Compaction", () => {
       saveMessage("u1", "tg", "assistant", `reply ${i}`);
     }
     const llm = mockLLM("Обновлённое саммари.");
-    await compactHistory("u1", llm);
+    await compactHistory("u1", llm, WINDOW);
     const callArgs = llm.chat.mock.calls[0][0];
     const promptText = callArgs[0].content as string;
     expect(promptText).toContain("Ранее обсуждали TypeScript");
@@ -66,9 +112,11 @@ describe("Compaction", () => {
       saveMessage("u1", "tg", "assistant", `reply ${i}`);
     }
     const llm = mockLLM("   ");
-    await expect(compactHistory("u1", llm)).rejects.toThrow("empty summary");
-    const { messages } = loadHistory("u1");
-    expect(messages.length).toBe(12);
+    await expect(compactHistory("u1", llm, WINDOW)).rejects.toThrow("empty summary");
+    // A summary that failed to come back leaves nothing to carry the old messages
+    // forward with, so they have to stay.
+    expect(rowCount("u1")).toBe(12);
+    expect(loadSummary("u1")).toBeNull();
   });
 
   it("keeps the messages it did not put in front of the model", async () => {
@@ -78,25 +126,17 @@ describe("Compaction", () => {
       saveMessage("u1", "tg", "user", `Q${i} ${big}`);
       saveMessage("u1", "tg", "assistant", `A${i} ${big}`);
     }
-    const db = getDB();
-    const before = (db.prepare("SELECT COUNT(*) n FROM conversations WHERE user_id='u1'").get() as { n: number }).n;
 
     const llm = mockLLM("Сжатое саммари.");
-    await compactHistory("u1", llm);
+    await compactHistory("u1", llm, WINDOW);
 
     // The prompt saw only the newest ~30k chars, so the rows before that window
-    // must still exist: the old code deleted them without ever summarising them.
-    const after = (db.prepare("SELECT COUNT(*) n FROM conversations WHERE user_id='u1'").get() as { n: number }).n;
-    expect(after).toBeGreaterThan(0);
-    expect(after).toBeLessThan(before);
-
-    const oldest = db
-      .prepare("SELECT content FROM conversations WHERE user_id='u1' ORDER BY id ASC LIMIT 1")
-      .get() as { content: string };
-    expect(oldest.content).toContain("Q0");
+    // must still exist: they were never summarised, so they are the only copy.
+    expect(rowCount("u1")).toBeLessThan(20);
+    expect(contentOf("u1", "ASC", 1)[0]).toContain("Q0");
   });
 
-  it("splits at turn boundary", async () => {
+  it("cuts on a turn boundary, so nothing is left answering a call that is gone", async () => {
     saveMessage("u1", "tg", "user", "Q1");
     saveMessage("u1", "tg", "assistant", "", undefined, [{ id: "tc1", name: "test", arguments: {} }]);
     saveMessage("u1", "tg", "tool", "result", "tc1");
@@ -104,9 +144,16 @@ describe("Compaction", () => {
     saveMessage("u1", "tg", "assistant", "A2");
     saveMessage("u1", "tg", "user", "Q3");
     saveMessage("u1", "tg", "assistant", "A3");
+
     const llm = mockLLM("Summary of Q1 and tool use.");
-    await compactHistory("u1", llm);
+    await compactHistory("u1", llm, WINDOW);
+
+    // The window edge falls between the call and its result. Walking back to the
+    // `user` that owns the turn takes the call, the result and the question
+    // together, so what stays is whole and starts on a user turn.
     const { messages } = loadHistory("u1");
     expect(messages[0].role).toBe("user");
+    expect(messages.map((m) => m.content)).toEqual(["Q2", "A2", "Q3", "A3"]);
+    expect(llm.chat.mock.calls[0][0][0].content as string).toContain("result");
   });
 });

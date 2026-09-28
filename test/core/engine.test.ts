@@ -20,7 +20,7 @@ const testConfig = {
 
 describe("Engine", () => {
   it("processes message and returns response", async () => {
-    const engine = new Engine({ llm: mockLLM("Привет!"), config: testConfig, tools: new ToolRegistry(), contextBudget: 40000 });
+    const engine = new Engine({ llm: mockLLM("Привет!"), config: testConfig, tools: new ToolRegistry() });
     const res = await engine.process({
       channelName: "test",
       userId: "1",
@@ -45,7 +45,7 @@ describe("Engine", () => {
       return { text: "ok", stopReason: "end_turn" };
     });
     const llm = { fast: () => ({ chat }), strong: () => ({ chat }) };
-    const engine = new Engine({ llm, config: testConfig, tools: new ToolRegistry(), contextBudget: 40000 });
+    const engine = new Engine({ llm, config: testConfig, tools: new ToolRegistry() });
     const msg = { channelName: "test", userId: "lock-user", text: "hi", timestamp: Date.now() };
 
     await Promise.all([engine.process(msg), engine.process(msg)]);
@@ -73,7 +73,7 @@ describe("Engine", () => {
       strong: () => ({ chat: strongChat }),
       hasRole: (n: string) => n === "strong",
     };
-    const engine = new Engine({ llm, config: testConfig, tools, contextBudget: 40000 });
+    const engine = new Engine({ llm, config: testConfig, tools });
     const res = await engine.process({
       channelName: "test",
       userId: "strong-user",
@@ -92,7 +92,7 @@ describe("Engine", () => {
       }),
       strong: () => ({ chat: vi.fn() }),
     };
-    const engine = new Engine({ llm, config: testConfig, tools: new ToolRegistry(), contextBudget: 40000 });
+    const engine = new Engine({ llm, config: testConfig, tools: new ToolRegistry() });
     const res = await engine.process({
       channelName: "test",
       userId: "1",
@@ -132,7 +132,7 @@ describe("Engine", () => {
       strong: () => ({ chat: chatMock }),
     };
 
-    const engine = new Engine({ llm, config: testConfig, tools, contextBudget: 40000 });
+    const engine = new Engine({ llm, config: testConfig, tools });
     const res = await engine.process({
       channelName: "test",
       userId: "1",

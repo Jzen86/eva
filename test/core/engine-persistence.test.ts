@@ -39,7 +39,7 @@ describe("Engine Persistence", () => {
   });
 
   it("persists user and assistant messages to DB", async () => {
-    const engine = new Engine({ llm: mockLLM("Привет!"), config: testConfig, tools: new ToolRegistry(), contextBudget: 40000 });
+    const engine = new Engine({ llm: mockLLM("Привет!"), config: testConfig, tools: new ToolRegistry() });
     await engine.process({ channelName: "test", userId: "u1", text: "Hello", timestamp: Date.now() });
     const { messages } = loadHistory("u1");
     expect(messages.length).toBe(2);
@@ -48,13 +48,13 @@ describe("Engine Persistence", () => {
   });
 
   it("loads history from DB on restart (new Engine instance)", async () => {
-    const engine1 = new Engine({ llm: mockLLM("Reply 1"), config: testConfig, tools: new ToolRegistry(), contextBudget: 40000 });
+    const engine1 = new Engine({ llm: mockLLM("Reply 1"), config: testConfig, tools: new ToolRegistry() });
     await engine1.process({ channelName: "test", userId: "u1", text: "First msg", timestamp: Date.now() });
 
     const mockChat = vi.fn().mockResolvedValue({ text: "Reply 2", stopReason: "end_turn", usage: { promptTokens: 200, completionTokens: 20 } });
     const engine2 = new Engine({
       llm: { fast: () => ({ chat: mockChat, chatStream: mockChat }), strong: () => ({ chat: vi.fn(), chatStream: vi.fn() }) },
-      config: testConfig, tools: new ToolRegistry(), contextBudget: 40000,
+      config: testConfig, tools: new ToolRegistry()
     });
     await engine2.process({ channelName: "test", userId: "u1", text: "Second msg", timestamp: Date.now() });
     const callMessages = mockChat.mock.calls[0][0];
@@ -62,9 +62,9 @@ describe("Engine Persistence", () => {
   });
 
   it("getHistory returns DB-backed history after restart", async () => {
-    const engine1 = new Engine({ llm: mockLLM("Hi"), config: testConfig, tools: new ToolRegistry(), contextBudget: 40000 });
+    const engine1 = new Engine({ llm: mockLLM("Hi"), config: testConfig, tools: new ToolRegistry() });
     await engine1.process({ channelName: "test", userId: "u1", text: "Hello", timestamp: Date.now() });
-    const engine2 = new Engine({ llm: mockLLM(""), config: testConfig, tools: new ToolRegistry(), contextBudget: 40000 });
+    const engine2 = new Engine({ llm: mockLLM(""), config: testConfig, tools: new ToolRegistry() });
     const history = engine2.getHistory("u1");
     expect(history.length).toBe(2);
   });

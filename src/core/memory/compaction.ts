@@ -1,5 +1,5 @@
 import { getDB } from "./db.js";
-import { loadSummary, saveSummary } from "./conversations.js";
+import { loadSummary, saveSummary, countMessages } from "./conversations.js";
 import type { LLMClient } from "../llm/types.js";
 
 interface CompactionRow {
@@ -9,31 +9,57 @@ interface CompactionRow {
   tool_calls: string | null;
 }
 
-export async function compactHistory(userId: string, llm: LLMClient): Promise<void> {
-  const db = getDB();
+/**
+ * Fold everything that has fallen out of the live window into one summary.
+ *
+ * The boundary is the window, not the middle of the table. `loadHistory` hands
+ * the model the newest `keepMessages` rows, so those are the only ones still
+ * seen raw — everything before them is either in the summary or in nothing at
+ * all, and splitting the table down the middle instead (as this used to) put
+ * the cut in the wrong place: the oldest half of a 1700-row table, while the
+ * messages that had actually just been dropped sat in the untouched newer half.
+ *
+ * The window edge is usually not a `user` message, so the split walks back to
+ * the turn that owns the cut rather than leaving a `tool` result at the top of
+ * what stays — the same rule `alignHistory` enforces on the other side.
+ *
+ * The summarising input is capped at `MAX_COMPACTION_CHARS` so one long message
+ * cannot blow up the request, and only the rows that reached the model are
+ * deleted. Anything older than that cap was not summarised, so it is still the
+ * only copy of itself — it stays, and a later compaction reaches it once the
+ * rows in front of it have been folded away.
+ */
+export async function compactHistory(
+  userId: string,
+  llm: LLMClient,
+  keepMessages: number,
+): Promise<void> {
+  // Cheap guard before the full read: when the whole conversation still fits the
+  // window there is nothing to fold, and answering that must not cost a table
+  // scan of the history, let alone a request to the model. Nothing writes
+  // between this count and the read below, so it is the row count either way.
+  if (countMessages(userId) <= keepMessages) return;
+
   const existing = loadSummary(userId);
+  const db = getDB();
 
   const allRows = db.prepare(
     "SELECT id, role, content, tool_calls FROM conversations WHERE user_id = ? ORDER BY timestamp ASC, id ASC",
   ).all(userId) as CompactionRow[];
 
-  if (allRows.length < 4) return;
-
-  const mid = Math.floor(allRows.length / 2);
+  // Walk back from the window edge to the `user` message that opens the turn
+  // crossing it, so what remains starts on a user turn. Zero means the cut lands
+  // on the very first message: the conversation fits, there is nothing older.
   let splitIdx = -1;
-
-  for (let i = mid; i < allRows.length; i++) {
-    if (allRows[i].role === "user") { splitIdx = i; break; }
-  }
-  if (splitIdx === -1) {
-    for (let i = mid - 1; i >= 0; i--) {
-      if (allRows[i].role === "user") { splitIdx = i; break; }
+  for (let i = allRows.length - keepMessages; i >= 0; i--) {
+    if (allRows[i].role === "user") {
+      splitIdx = i;
+      break;
     }
   }
-  if (splitIdx === -1) return;
+  if (splitIdx <= 0) return;
 
   const oldPart = allRows.slice(0, splitIdx);
-  if (oldPart.length === 0) return;
 
   const MAX_COMPACTION_CHARS = 30_000;
   const render = (m: CompactionRow) => `${m.role}: ${m.content}`;

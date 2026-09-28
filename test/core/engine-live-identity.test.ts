@@ -56,8 +56,7 @@ function engineWith(llm: ReturnType<typeof fakeLlm>) {
   return new Engine({
     llm: llm.client as never,
     config: STARTUP,
-    tools: new ToolRegistry(),
-    contextBudget: 40000,
+    tools: new ToolRegistry()
   });
 }
 

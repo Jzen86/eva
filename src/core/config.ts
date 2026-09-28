@@ -165,7 +165,6 @@ const configSchema = z.object({
     study_interval_min: z.number().default(30),
     study_model: z.string().optional(),
     learning_enabled: z.boolean().default(true),
-    context_budget: z.number().default(40000),
   }).default({}),
 
   plugins: z.array(z.string()).default([]),
@@ -256,7 +255,6 @@ function coerceNumericStrings(raw: Record<string, unknown>): void {
   numeric(raw.memory as Record<string, unknown> | undefined, [
     "max_knowledge",
     "study_interval_min",
-    "context_budget",
   ]);
   // Dials only. `tone` and `style` sit in the same object and are free text,
   // so a numeric-looking value there is a string and stays one.
@@ -330,7 +328,6 @@ function normalizeConfig(raw: Record<string, unknown>): Record<string, unknown> 
     study_interval_min: raw.study_interval_min ?? 30,
     study_model: raw.study_model,
     learning_enabled: raw.learning_enabled ?? true,
-    context_budget: raw.context_budget ?? 40000,
   };
 
   // voice

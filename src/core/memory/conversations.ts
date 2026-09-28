@@ -126,6 +126,21 @@ interface SummaryRow {
 }
 
 /**
+ * How many rows of raw conversation a user has.
+ *
+ * Compaction asks for this instead of the prompt's token count, because a
+ * conversation's size is driven by how many messages it has, not by how many
+ * tokens they happen to weigh — and only the first number knows what is about
+ * to fall out of the live window.
+ */
+export function countMessages(userId: string): number {
+  const row = getDB()
+    .prepare("SELECT COUNT(*) AS n FROM conversations WHERE user_id = ?")
+    .get(userId) as { n: number } | undefined;
+  return row?.n ?? 0;
+}
+
+/**
  * Upserts a conversation summary for a user.
  */
 export function saveSummary(userId: string, summary: string, tokenEstimate: number): void {

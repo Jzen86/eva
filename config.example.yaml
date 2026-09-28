@@ -126,7 +126,6 @@ memory:
   max_knowledge: 200
   study_interval_min: 60
   learning_enabled: true
-  context_budget: 40000
 
 # Секции ниже опциональны, включать только если нужно.
 # Голос (Gemini TTS). Лимит — на модель в сутки (у flash-lite tts обычно 10),

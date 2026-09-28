@@ -12,7 +12,7 @@ import {
   type EvaConfig,
 } from "./config.js";
 import { searchKnowledge } from "./memory/knowledge.js";
-import { saveMessage, loadHistory, extractText } from "./memory/conversations.js";
+import { saveMessage, loadHistory, extractText, countMessages } from "./memory/conversations.js";
 import { compactHistory } from "./memory/compaction.js";
 import { alignHistory } from "./llm/history.js";
 import { LLMUnavailableError } from "./llm/router.js";
@@ -45,7 +45,6 @@ export interface EngineDeps {
   llm: { fast(): LLMClient; strong(): LLMClient; hasRole?(name: string): boolean };
   config: PromptConfig;
   tools: ToolRegistry;
-  contextBudget: number;
   encryptionKey?: string;
 }
 
@@ -224,17 +223,19 @@ export class Engine {
     }
     let history = this.histories.get(userId)!;
 
-    // Hard truncation: if history is still too large after compaction, keep only recent messages.
-    // The cut is raw on purpose — `align` runs at the request boundary, and a
-    // second check here would be the same walk of the same array.
+    // The window is full: fold what falls out of it into the summary before the
+    // cut, so the oldest thing the model can still see does not simply stop
+    // existing. The cut itself stays raw — `align` runs at the request boundary,
+    // and a second pass over the same array would be the same walk twice.
     if (history.length > MAX_HISTORY * 2) {
       console.log(JSON.stringify({ tag: "engine:hard_truncate", userId, before: history.length, kept: MAX_HISTORY }));
+      this.startCompaction(userId);
       history = history.slice(-MAX_HISTORY);
       this.histories.set(userId, history);
     };
 
     // Build system prompt with memory context
-    let systemPrompt = this.buildPromptWithMemory(msg.text, userId);
+    const systemPrompt = this.buildPromptWithMemory(msg.text, userId);
 
     // Add user message (with reply context and/or images if present)
     const replyTo = msg.metadata?.replyToText as string | undefined;
@@ -264,7 +265,6 @@ export class Engine {
       let lastMediaUrl: string | undefined;
       let lastMediaPath: string | undefined;
       const toolCallCounts = new Map<string, number>();
-      let compactionAttempted = false;
       const processStart = Date.now();
 
       // Agentic loop: LLM → tool calls → execute → repeat
@@ -325,7 +325,10 @@ export class Engine {
           toolCalls: response.toolCalls?.map(t => t.name),
         }));
 
-        // Check 1: Token budget — if context is too large, stop the loop
+        // Hard ceiling against the provider's own context limit. Not a compaction
+        // trigger: at 128k prompt tokens a 40-message window has long since been
+        // summarised, so there is nothing left here to compact — this only runs if
+        // a single turn itself goes enormous, and then all it can do is stop.
         if (response.usage && response.usage.promptTokens > MAX_PROMPT_TOKENS) {
           const text = response.text || "Достигнут лимит контекста. Вот что удалось найти.";
           history.push({ role: "assistant", content: text });
@@ -335,8 +338,6 @@ export class Engine {
             reason: "token_budget",
             promptTokens: response.usage.promptTokens,
           }));
-          // Trigger compaction so the next message doesn't fail with context-too-long
-          this.startCompaction(userId);
           return { text, mediaUrl: lastMediaUrl, mediaPath: lastMediaPath };
         }
 
@@ -346,11 +347,6 @@ export class Engine {
           history.push({ role: "assistant", content: text });
           saveMessage(userId, msg.channelName, "assistant", text);
 
-          // Background compaction for terminal turns
-          if (response.usage && response.usage.promptTokens > this.deps.contextBudget) {
-            this.startCompaction(userId);
-          }
-
           return { text, mediaUrl: lastMediaUrl, mediaPath: lastMediaPath };
         }
 
@@ -358,23 +354,6 @@ export class Engine {
         // takes over for the rest of the task. A plain reply never reaches this
         // line, so chat stays on the fast model.
         if (strongAvailable) llm = this.deps.llm.strong();
-
-        // Compaction check for tool-use turns — BEFORE saving assistant tool-call
-        if (!compactionAttempted && response.usage && response.usage.promptTokens > this.deps.contextBudget) {
-          compactionAttempted = true;
-          turn--;
-          try {
-            await compactHistory(userId, this.deps.llm.fast());
-          } catch (err) {
-            console.error("Compaction failed:", err);
-          }
-          const { messages: m, summary: s } = loadHistory(userId);
-          this.histories.set(userId, m);
-          history = m;
-          if (s) this.summaries.set(userId, s);
-          systemPrompt = this.buildPromptWithMemory(msg.text, userId);
-          continue;
-        }
 
         // Add assistant message with tool calls to history (MOVED from before compaction check)
         history.push({
@@ -557,16 +536,47 @@ export class Engine {
     return prompt;
   }
 
-  /** Start background compaction for a user (deduplicates concurrent calls). */
+  /**
+   * Fold the conversation that has fallen out of the window into one summary,
+   * in the background, at most once per user at a time.
+   *
+   * Called from the one place where messages actually leave the model's view —
+   * the hard truncation. It used to be called when the prompt passed a token
+   * budget, which could not happen: the window is 40 messages, and 40 messages
+   * of chat with her come to roughly 14k prompt tokens, well under the 40k that
+   * budget was set to. A conversation that was not already in trouble never
+   * compacted, and every truncation dropped its oldest messages with no trace.
+   * The budget was a property of the prompt; what fills a conversation and what
+   * is about to be lost is the number of messages in it.
+   *
+   * It runs after the cut, off the critical path, on the fast model: a failure
+   * here costs the old messages their summary, which is a far smaller loss than
+   * refusing to answer. The next message waits for it at the top of
+   * `processLocked`, which is what puts the finished summary into that prompt.
+   */
   private startCompaction(userId: string): void {
     if (this.compactionInFlight.has(userId)) return;
-    const promise = compactHistory(userId, this.deps.llm.fast())
+    const before = countMessages(userId);
+    const started = Date.now();
+    const promise = compactHistory(userId, this.deps.llm.fast(), MAX_HISTORY)
       .then(() => {
         const { messages: m, summary: s } = loadHistory(userId);
         this.histories.set(userId, m);
         if (s) this.summaries.set(userId, s);
+        // Folded rows leave the table and enter the summary, so a drop is the
+        // whole point — and a fold that folded nothing is the failure worth
+        // seeing, not the one that gets a line.
+        console.log(
+          JSON.stringify({
+            tag: "engine:compaction",
+            userId,
+            ms: Date.now() - started,
+            folded: before - countMessages(userId),
+            summaryChars: s?.length ?? 0,
+          }),
+        );
       })
-      .catch(err => console.error("Compaction failed:", err))
+      .catch((err) => console.error("Compaction failed:", err))
       .finally(() => this.compactionInFlight.delete(userId));
     this.compactionInFlight.set(userId, promise);
   }

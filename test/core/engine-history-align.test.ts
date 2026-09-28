@@ -104,7 +104,7 @@ describe("engine: a history that outgrew its buffer", () => {
         return { success: true, output: "ок" };
       },
     });
-    return new Engine({ llm, config: testConfig, tools, contextBudget: 400_000 });
+    return new Engine({ llm, config: testConfig, tools });
   }
 
   it("never sends a request the provider would reject", async () => {

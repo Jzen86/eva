@@ -75,12 +75,20 @@ llm:
     expect(getLLMApiKey(config!)).toBe("sk-new-key");
   });
 
-  it("includes context_budget in memory schema with default 40000", () => {
+  it("ignores a context_budget left in an older config file", () => {
+    // The knob used to promise "compact when the prompt passes this many
+    // tokens", and nothing read it: a 40-message window is nowhere near 40k
+    // tokens, so compaction could not run. The key is gone from the schema,
+    // and an install upgrading over it must still boot.
     const tmpPath = path.join(os.tmpdir(), `betsy-cfg-${crypto.randomUUID()}.yaml`);
-    fs.writeFileSync(tmpPath, "agent:\n  name: Test\nllm:\n  provider: openrouter\n  api_key: test\n");
+    fs.writeFileSync(
+      tmpPath,
+      "agent:\n  name: Test\nllm:\n  provider: openrouter\n  api_key: test\nmemory:\n  context_budget: 40000\n",
+    );
     const config = loadConfig(tmpPath);
     fs.unlinkSync(tmpPath);
-    expect(config?.memory?.context_budget).toBe(40000);
+    expect(config).not.toBeNull();
+    expect(config?.memory).not.toHaveProperty("context_budget");
   });
 
   it("accepts fallback_models in flat llm format", () => {
