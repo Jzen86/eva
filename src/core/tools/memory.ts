@@ -6,6 +6,7 @@ import {
   type KnowledgeRow,
 } from "../memory/knowledge.js";
 import { learnInsight, type EmbeddingEndpoint } from "../memory/dedup.js";
+import { retireKnowledge } from "../memory/knowledge.js";
 import { getDB } from "../memory/db.js";
 
 function requireString(
@@ -105,6 +106,41 @@ async function handleSave(
       output: `Not saved — ${outcome.reason}. Entry #${outcome.duplicate?.id ?? "?"} already says it.`,
     };
   }
+
+  // The correction case, and the only one: he said something that makes an older
+  // statement false. "Бросил полгода назад" retires "пьёт энергетики 15 лет" and
+  // points at the row that replaced it, which is what makes the two columns
+  // distinguishable from a trim. Without this the base could only ever say yes to
+  // the first thing it heard.
+  //
+  // After the write, never before. Retiring on a refused write would leave the
+  // old fact gone and nothing in its place — the exact amnesia this pair of
+  // columns exists to prevent.
+  const supersedes = optionalString(params, "supersedes");
+  if (supersedes) {
+    const oldId = Number(supersedes);
+    if (!Number.isInteger(oldId) || oldId <= 0) {
+      return {
+        success: false,
+        output: `Saved as #${outcome.id}, but supersedes is not an entry id: ${supersedes}`,
+        error: "invalid_id",
+      };
+    }
+    const retired = retireKnowledge(oldId, outcome.id);
+    if (!retired) {
+      return {
+        success: true,
+        output:
+          `Saved as #${outcome.id}, but entry #${oldId} is not a live entry — ` +
+          `nothing to retire. Use action=list with include_retired=1 to see retired ones.`,
+      };
+    }
+    return {
+      success: true,
+      output: `Saved knowledge entry #${outcome.id}. Entry #${oldId} is now retired as corrected by it.`,
+    };
+  }
+
   return { success: true, output: `Saved knowledge entry #${outcome.id}.` };
 }
 
@@ -192,6 +228,14 @@ export function createMemoryTool(opts: MemoryToolOptions = {}): Tool {
         description: "Case only, required: how he answered it (warmed up, went cold, laughed, let it go)",
       },
       { name: "id", type: "string", description: "Entry ID (required for action=delete)" },
+      {
+        name: "supersedes",
+        type: "string",
+        description:
+          "With action=save: the id of an entry this one makes false. Only for facts " +
+          "he corrected ('бросил полгода назад' retires 'пьёт энергетики 15 лет'). " +
+          "Never for a case that differs from another — those are different moments.",
+      },
       { name: "limit", type: "number", description: "Max results for search (default 5)" },
       {
         name: "include_retired",

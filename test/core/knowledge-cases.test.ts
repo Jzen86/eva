@@ -12,6 +12,7 @@ import {
   KNOWLEDGE_PROMPT_LIMIT,
 } from "../../src/core/memory/knowledge";
 import { createMemoryTool } from "../../src/core/tools/memory";
+import { retireKnowledge } from "../../src/core/memory/knowledge";
 import { SqliteShim } from "../shim/better-sqlite3";
 
 let dir: string;
@@ -188,6 +189,79 @@ describe("memory tool, case fields", () => {
   });
 });
 
+/**
+ * The one thing that may retire a fact: he corrected it.
+ *
+ * Until this existed, `superseded_by` was written by nobody in the whole life of
+ * the install. Not one of the 45 rows had ever been superseded, because the only
+ * caller passed no replacement — so the columns that say "this was corrected"
+ * were indistinguishable from the ones that say "this was dropped for space", and
+ * in practice neither ever fired.
+ */
+describe("memory tool, a corrected fact", () => {
+  it("retires the old row and points it at the new one", async () => {
+    const tool = createMemoryTool();
+    await tool.execute({ action: "save", content: "Женя пьёт энергетики 10-15 лет", topic: "привычки" });
+    const oldId = byId(getAll()[0].id).id;
+
+    const result = await tool.execute({
+      action: "save",
+      content: "Женя бросил энергетики полгода назад",
+      topic: "привычки",
+      supersedes: String(oldId),
+    });
+
+    expect(result.success).toBe(true);
+    const db = getDB();
+    const old = db.prepare("SELECT superseded_at, superseded_by FROM knowledge WHERE id = ?").get(oldId) as {
+      superseded_at: number | null;
+      superseded_by: number | null;
+    };
+    const newRow = getAll()[0];
+    expect(old.superseded_at).not.toBeNull();
+    expect(old.superseded_by).toBe(newRow.id);
+
+    // And the retired one stops answering: it is out of the search index.
+    expect(searchKnowledge("энергетики", 5).map((r) => r.id)).not.toContain(oldId);
+  });
+
+  it("keeps the old fact when the new one is refused as a duplicate", async () => {
+    // The order matters. Retiring first and writing second would leave the base
+    // with neither version of the fact.
+    const tool = createMemoryTool();
+    await tool.execute({ action: "save", content: "Женя пьёт энергетики 10-15 лет", topic: "привычки" });
+    const oldId = getAll()[0].id;
+
+    const result = await tool.execute({
+      action: "save",
+      content: "Женя пьёт энергетики 10-15 лет",
+      topic: "привычки",
+      supersedes: String(oldId),
+    });
+
+    expect(result.success).toBe(true);
+    const row = byId(oldId);
+    expect(row.superseded_at).toBeNull();
+  });
+
+  it("says so when the row it was told to retire is not live", async () => {
+    const tool = createMemoryTool();
+    await tool.execute({ action: "save", content: "Женя пьёт энергетики", topic: "привычки" });
+    const oldId = getAll()[0].id;
+    retireKnowledge(oldId);
+
+    const result = await tool.execute({
+      action: "save",
+      content: "Женя бросил энергетики",
+      topic: "привычки",
+      supersedes: String(oldId),
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("not a live entry");
+  });
+});
+
 describe("migration", () => {
   it("adds the case columns to an install that predates them", () => {
     // The live install: 45 rows written by the memory tool and by study, none of
@@ -263,4 +337,6 @@ interface CaseRow {
   her_move: string;
   context: string;
   his_reaction: string;
+  superseded_at: number | null;
+  superseded_by: number | null;
 }

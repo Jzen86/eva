@@ -282,11 +282,17 @@ export function getKnowledgeCount(includeSuperseded = false): number {
  * doing it twice corrupts the table — `database disk image is malformed` on the
  * next read.
  */
-export function retireKnowledge(id: number, supersededBy?: number): void {
+export function retireKnowledge(id: number, supersededBy?: number): boolean {
   const db = getDB();
-  db.prepare(
-    "UPDATE knowledge SET superseded_at = ?, superseded_by = ? WHERE id = ?",
-  ).run(Math.floor(Date.now() / 1000), supersededBy ?? null, id);
+  const result = db
+    .prepare(
+      "UPDATE knowledge SET superseded_at = ?, superseded_by = ? WHERE id = ? AND superseded_at IS NULL",
+    )
+    .run(Math.floor(Date.now() / 1000), supersededBy ?? null, id);
+  // False means the row was already retired or never existed. Retiring it twice
+  // would stamp a second timestamp and, worse, leave a correction pointing at
+  // itself — so the guard is in the WHERE, not only in the caller.
+  return result.changes > 0;
 }
 
 /**
