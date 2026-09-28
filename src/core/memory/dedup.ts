@@ -69,6 +69,7 @@ export interface DedupSubject {
   her_move?: string | null;
   context?: string | null;
   his_reaction?: string | null;
+  conclusion?: string | null;
 }
 
 /**
@@ -89,14 +90,21 @@ export function identityOf(
   row: DedupSubject | string,
 ): { text: string; exactOnly: boolean } {
   if (typeof row === "string") return { text: row, exactOnly: false };
+  const conclusion = row.conclusion?.trim() ?? "";
   if (row.her_move?.trim()) {
     return {
-      text: [row.her_move, row.context ?? "", row.his_reaction ?? ""]
+      text: [row.her_move, row.context ?? "", row.his_reaction ?? "", conclusion]
         .map((part) => part.trim())
         .join(" | "),
       exactOnly: true,
     };
   }
+  // A conclusion marks an occasion. It answers "чем кончилось", and only something
+  // that happened has an ending: "Gemini лучше DeepSeek" settled on Tuesday and
+  // "DeepSeek лучше Gemini" settled on Friday are two results of two arguments,
+  // and the loose rule would see two nearly identical sentences and keep one —
+  // leaving the base holding whichever happened to be written first, as a verdict.
+  if (conclusion) return { text: `${row.insight} | ${conclusion}`, exactOnly: true };
   return { text: row.insight, exactOnly: false };
 }
 

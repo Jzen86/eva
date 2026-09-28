@@ -33,6 +33,15 @@ export interface KnowledgeRow {
   context: string;
   /** What he did about it: warmed up, went cold, laughed it off, let it go. */
   his_reaction: string;
+  /**
+   * How it ended, when there was an end.
+   *
+   * Belongs to this row and to no other: "Gemini лучше DeepSeek" is the result of
+   * one argument, not a fact and not a rule, and it is only readable next to the
+   * row that says which argument it came from. A conclusion stored away from its
+   * moment is the thing this base was rebuilt to stop holding.
+   */
+  conclusion: string;
 }
 
 /**
@@ -43,6 +52,17 @@ export interface KnowledgeRow {
  */
 export function isCase(row: KnowledgeRow): boolean {
   return row.her_move.trim() !== "";
+}
+
+/**
+ * A row that records something that happened, rather than a standing property.
+ *
+ * A conclusion is the mark of an event: it answers "и чем кончилось", which only
+ * a dated occasion has. A fact about a person has no ending. This matters beyond
+ * bookkeeping — the duplicate check treats the two differently, see identityOf.
+ */
+export function isEvent(row: KnowledgeRow): boolean {
+  return isCase(row) || row.conclusion.trim() !== "";
 }
 
 /** Words that carry no retrieval signal and would only widen the query. */
@@ -57,7 +77,7 @@ const QUERY_STOPWORDS = new Set([
 ]);
 
 const SELECT_COLUMNS =
-  "id, topic, insight, source, confidence, timestamp, zone, access_count, last_used, superseded_at, superseded_by, her_move, context, his_reaction";
+  "id, topic, insight, source, confidence, timestamp, zone, access_count, last_used, superseded_at, superseded_by, her_move, context, his_reaction, conclusion";
 
 /**
  * Build a safe FTS5 MATCH expression from free text.
@@ -102,6 +122,13 @@ export interface AddKnowledgeInput {
   /** What he did about it. */
   his_reaction?: string | null;
   /**
+   * How it ended: what was decided, what came of it. Empty when there was no ending.
+   *
+   * Not a fact about a person and never rendered as one — it is the result of one
+   * particular conversation, and it is read only beside the row that says which.
+   */
+  conclusion?: string | null;
+  /**
    * When it happened, in unix seconds.
    *
    * Omitted by a writer who is recording the moment it is in — she does, in chat.
@@ -131,8 +158,8 @@ export function addKnowledge(entry: AddKnowledgeInput, confidence = entry.confid
   const result = db
     .prepare(
       `INSERT INTO knowledge (topic, insight, source, confidence, timestamp, stems, zone, embedding,
-                              her_move, context, his_reaction)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                              her_move, context, his_reaction, conclusion)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       entry.topic,
@@ -146,6 +173,7 @@ export function addKnowledge(entry: AddKnowledgeInput, confidence = entry.confid
       entry.her_move ?? "",
       entry.context ?? "",
       entry.his_reaction ?? "",
+      entry.conclusion ?? "",
     );
   return Number(result.lastInsertRowid);
 }
@@ -173,7 +201,7 @@ export function searchKnowledge(query: string, limit = 5): KnowledgeRow[] {
       .prepare(
         `SELECT k.id, k.topic, k.insight, k.source, k.confidence, k.timestamp,
                 k.zone, k.access_count, k.last_used, k.superseded_at, k.superseded_by,
-                k.her_move, k.context, k.his_reaction
+                k.her_move, k.context, k.his_reaction, k.conclusion
          FROM knowledge_fts fts
          JOIN knowledge k ON k.id = fts.rowid
          WHERE knowledge_fts MATCH ?
@@ -263,6 +291,11 @@ function shortDate(timestamp: number, offsetHours: number): string {
  *    her. "Мы говорили о самолётах" and "помнишь, ты рассказывал про кошку" are
  *    the two things a person says when they remember you, and neither is
  *    answerable from rows that carry no subject and no date.
+ * 4. A conclusion is printed on its row, never on its own. "Gemini лучше" is the
+ *    end of one argument and is only true of it; peeled off the row it came from
+ *    it becomes a law, which is what the previous version of this base was full
+ *    of. The note below the rows says as much, because the model reads it there
+ *    rather than here.
  *
  * A case with no recorded state says so rather than being hidden: rows written
  * before these fields existed have none, and dropping them quietly would make
@@ -280,9 +313,12 @@ export function renderKnowledge(
   const lines = rows.map((row, i) => {
     const when = `${shortDate(row.timestamp, offsetHours)}, ${relativeAge(row.timestamp, now)}`;
     const head = `[${when}${row.topic ? ` · ${row.topic}` : ""}]`;
-    if (!isCase(row)) return `${i + 1}. ${head} ${row.insight}`;
+    // "итог", not "вывод": a вывод is what one draws and generalises, and this is
+    // only ever how that one conversation ended.
+    const outcome = row.conclusion.trim() ? ` итог: ${row.conclusion.trim()}` : "";
+    if (!isCase(row)) return `${i + 1}. ${head} ${row.insight}${outcome}`;
     const state = row.context.trim() || "не определяется";
-    return `${i + 1}. ${head} состояние: ${state}. она: ${row.her_move}. ты: ${row.his_reaction}`;
+    return `${i + 1}. ${head} состояние: ${state}. она: ${row.her_move}. ты: ${row.his_reaction}${outcome}`;
   });
 
   lines.push(
@@ -291,6 +327,8 @@ export function renderKnowledge(
     "На один и тот же повод в разных состояниях реакция была разной — так и есть,",
     "выбирай под то, что происходит сейчас. Если он спрашивает «помнишь» или «когда» —",
     "у тебя есть и тема, и дата, отвечай по ним.",
+    "«итог» — это чем кончился тот конкретный разговор, а не истина. Другой спор на ту",
+    "же тему мог кончиться наоборот, и это нормально: опирайся, но не как на закон.",
   );
 
   return lines.join("\n");

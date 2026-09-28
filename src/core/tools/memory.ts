@@ -71,6 +71,9 @@ async function handleSave(
   const herMove = optionalString(params, "her_move");
   const context = optionalString(params, "context");
   const hisReaction = optionalString(params, "his_reaction");
+  // The итог of the conversation or the moment. Free to be absent: most things
+  // that happen do not end in a decision.
+  const conclusion = optionalString(params, "conclusion");
 
   if (herMove && (!context || !hisReaction)) {
     return {
@@ -96,6 +99,7 @@ async function handleSave(
       her_move: herMove ?? undefined,
       context: context ?? undefined,
       his_reaction: hisReaction ?? undefined,
+      conclusion: conclusion ?? undefined,
     },
     { embedding },
   );
@@ -210,7 +214,10 @@ export function createMemoryTool(opts: MemoryToolOptions = {}): Tool {
       "his_reaction = what he did about it. All three together — the context is not " +
       "decoration, without it the note comes back as a rule, and rules are what this " +
       "base is not for. Two cases about the same thing in different states are both " +
-      "true; save each as it happens. The date is set for you.",
+      "true; save each as it happens. The date is set for you.\n" +
+      "conclusion = how it ended, when it ended in something: what was decided, what " +
+      "he settled on. It belongs to that one conversation and is read only beside it, " +
+      "so write it with the argument it came from, never as advice for later.",
     parameters: [
       { name: "action", type: "string", description: "One of: search, save, delete, list", required: true },
       { name: "query", type: "string", description: "Search query (required for action=search)" },
@@ -230,6 +237,13 @@ export function createMemoryTool(opts: MemoryToolOptions = {}): Tool {
         name: "his_reaction",
         type: "string",
         description: "Case only, required: how he answered it (warmed up, went cold, laughed, let it go)",
+      },
+      {
+        name: "conclusion",
+        type: "string",
+        description:
+          "How it ended, when it ended in something: what was decided, what he settled on. " +
+          "Tied to this entry only — never advice for later.",
       },
       { name: "id", type: "string", description: "Entry ID (required for action=delete)" },
       {

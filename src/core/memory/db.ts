@@ -85,7 +85,12 @@ export function getDB(dbPath?: string): Database.Database {
       -- His state at the time. Kept beside the case because "answered coldly"
       -- on its own is a rule, and a rule is what the base stopped storing.
       context TEXT NOT NULL DEFAULT '',
-      his_reaction TEXT NOT NULL DEFAULT ''
+      his_reaction TEXT NOT NULL DEFAULT '',
+      -- How it ended, when there was an end: what was decided, what he settled
+      -- on, what came of it. "Gemini лучше DeepSeek" is the result of one
+      -- argument and belongs to it — it is not a fact and not a rule, and it is
+      -- only readable next to the row that says which argument it came from.
+      conclusion TEXT NOT NULL DEFAULT ''
     );
 
     CREATE TABLE IF NOT EXISTS events (
@@ -201,8 +206,10 @@ export function getDB(dbPath?: string): Database.Database {
  *   2 — stems plus the raw tokens
  *   3 — plus the case fields, so a note about how he took a joke is found by
  *       the joke rather than only by the sentence describing it
+ *   4 — plus the conclusion, so "чем кончился спор про нейросети" is reachable
+ *       by what was decided and not only by the fact that a dispute happened
  */
-export const KNOWLEDGE_INDEX_VERSION = 3;
+export const KNOWLEDGE_INDEX_VERSION = 4;
 
 /** Small key-value store used for schema versions and rotation cursors. */
 export function readMeta(key: string): string | null {
@@ -328,6 +335,7 @@ function migrateKnowledgeSchema(): void {
   add("her_move", "TEXT NOT NULL DEFAULT ''");
   add("context", "TEXT NOT NULL DEFAULT ''");
   add("his_reaction", "TEXT NOT NULL DEFAULT ''");
+  add("conclusion", "TEXT NOT NULL DEFAULT ''");
 
   if (added.length > 0) {
     console.log(`🗄 Схема памяти: добавлены колонки ${added.join(", ")}`);
@@ -400,7 +408,7 @@ function migrateKnowledgeIndex(): void {
 
   const rows = conn
     .prepare(
-      "SELECT id, topic, insight, her_move, context, his_reaction FROM knowledge",
+      "SELECT id, topic, insight, her_move, context, his_reaction, conclusion FROM knowledge",
     )
     .all() as Array<{
     id: number;
@@ -409,6 +417,7 @@ function migrateKnowledgeIndex(): void {
     her_move: string;
     context: string;
     his_reaction: string;
+    conclusion: string;
   }>;
   if (rows.length > 0) {
     const update = conn.prepare("UPDATE knowledge SET stems = ? WHERE id = ?");

@@ -53,7 +53,7 @@ describe("study: what a session may leave in the base", () => {
   function rows() {
     return getDB()
       .prepare(
-        "SELECT topic, insight, her_move, context, his_reaction FROM knowledge ORDER BY id",
+        "SELECT topic, insight, her_move, context, his_reaction, conclusion FROM knowledge ORDER BY id",
       )
       .all() as Array<{
       topic: string;
@@ -61,8 +61,43 @@ describe("study: what a session may leave in the base", () => {
       her_move: string;
       context: string;
       his_reaction: string;
+      conclusion: string;
     }>;
   }
+
+  it("stores a conversation's subject and how it ended", async () => {
+    const { result } = await session(
+      JSON.stringify({
+        facts: [
+          {
+            topic: "спор о нейросетях",
+            fact: "сравнивали Gemini и DeepSeek",
+            conclusion: "он остался на Gemini",
+          },
+        ],
+      }),
+    );
+
+    expect(result.wrote).toBe(true);
+    const row = rows()[0];
+    expect(row.topic).toBe("спор о нейросетях");
+    expect(row.conclusion).toBe("он остался на Gemini");
+    // No case fields: nothing happened between them here, a subject was discussed.
+    expect(row.her_move).toBe("");
+  });
+
+  it("takes a topic with no ending as readily as one with", async () => {
+    // Most conversations decide nothing. A subject is still worth a row — it is
+    // what lets her ask about the cats next week.
+    const { result } = await session(
+      JSON.stringify({
+        facts: [{ topic: "кошки", fact: "рассказывал про свою кошку" }],
+      }),
+    );
+
+    expect(result.wrote).toBe(true);
+    expect(rows()[0].conclusion).toBe("");
+  });
 
   it("stores a case with the state it happened in", async () => {
     const { result } = await session(JSON.stringify({

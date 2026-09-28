@@ -358,6 +358,7 @@ describe("migration", () => {
     expect(cols).toContain("her_move");
     expect(cols).toContain("context");
     expect(cols).toContain("his_reaction");
+    expect(cols).toContain("conclusion");
 
     // The old rows are statements, not broken cases, and the index still finds
     // them by the words they always answered to.
@@ -373,7 +374,7 @@ function getAll() {
   return getDB()
     .prepare(
       "SELECT id, topic, insight, source, confidence, timestamp, zone, access_count, " +
-        "last_used, superseded_at, superseded_by, her_move, context, his_reaction " +
+        "last_used, superseded_at, superseded_by, her_move, context, his_reaction, conclusion " +
         "FROM knowledge WHERE superseded_at IS NULL ORDER BY id ASC",
     )
     .all() as CaseRow;
@@ -395,9 +396,94 @@ interface CaseRow {
   her_move: string;
   context: string;
   his_reaction: string;
+  conclusion: string;
   superseded_at: number | null;
   superseded_by: number | null;
 }
+
+/**
+ * The итог of a row: how that one conversation ended.
+ *
+ * It exists because the owner drew the base as four columns and this was the one
+ * missing — date, subject, description, outcome. What makes it safe where the old
+ * conclusions were not is that it lives on the row: "Gemini лучше DeepSeek" is
+ * printed next to the argument it came from, dated, so it reads as one dispute's
+ * result. Stored away from its moment it would be a law again.
+ */
+describe("the итог of a row", () => {
+  it("is printed on the row it belongs to", () => {
+    addKnowledge({
+      topic: "спор о нейросетях",
+      insight: "сравнивали Gemini и DeepSeek",
+      source: "memory_tool",
+      conclusion: "он остался на Gemini",
+    });
+
+    const out = renderKnowledge(searchKnowledge("DeepSeek", 5));
+    expect(out).toContain("итог: он остался на Gemini");
+    // Beside what it came from, in the same entry, not on a line of its own.
+    expect(out).toContain("сравнивали Gemini и DeepSeek");
+  });
+
+  it("is reachable by what was decided, not only by what was discussed", () => {
+    addKnowledge({
+      topic: "спор о нейросетях",
+      insight: "сравнивали модели",
+      source: "memory_tool",
+      conclusion: "он остался на Gemini",
+    });
+
+    expect(searchKnowledge("Gemini", 5)).toHaveLength(1);
+  });
+
+  it("does not appear on a fact", () => {
+    // A fact about a person has no ending. An итог on one would be advice.
+    addKnowledge({ topic: "техника", insight: "не любит айфоны", source: "memory_tool" });
+
+    expect(getAll()[0].conclusion).toBe("");
+    expect(renderKnowledge(searchKnowledge("айфон", 5))).not.toContain("итог:");
+  });
+
+  it("keeps two arguments that ended differently", async () => {
+    // The one thing it must not do is collapse into a verdict. Tuesday's argument
+    // concluded one way, Friday's the other, so the base holds two results —
+    // otherwise it holds whichever was written first, and that is a law.
+    const a = await learnInsight(
+      {
+        topic: "нейросети",
+        insight: "сравнивали Gemini и DeepSeek",
+        source: "memory_tool",
+        conclusion: "он остался на Gemini",
+      },
+      {},
+    );
+    const b = await learnInsight(
+      {
+        topic: "нейросети",
+        insight: "сравнивали Gemini и DeepSeek",
+        source: "memory_tool",
+        conclusion: "на этот раз выбрал DeepSeek",
+      },
+      {},
+    );
+
+    expect(a.written).toBe(true);
+    expect(b.written).toBe(true);
+    expect(getAll()).toHaveLength(2);
+  });
+
+  it("tells the model in the prompt that it is not a law", () => {
+    addKnowledge({
+      topic: "нейросети",
+      insight: "сравнивали",
+      source: "memory_tool",
+      conclusion: "остался на Gemini",
+    });
+
+    const out = renderKnowledge(searchKnowledge("сравнивали", 5));
+    expect(out).toContain("не как на закон");
+  });
+});
 
 /**
  * What counts as "we already have this" for a case.

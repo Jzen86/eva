@@ -19,6 +19,7 @@ export interface SearchableKnowledge {
   her_move?: string | null;
   context?: string | null;
   his_reaction?: string | null;
+  conclusion?: string | null;
 }
 
 /**
@@ -37,6 +38,7 @@ export function searchableText(row: SearchableKnowledge): string {
       row.her_move ?? "",
       row.context ?? "",
       row.his_reaction ?? "",
+      row.conclusion ?? "",
     ].join(" "),
   );
 }
