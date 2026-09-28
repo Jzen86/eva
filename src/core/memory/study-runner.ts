@@ -431,7 +431,7 @@ function loadChat(
       .map((m) => ({ role: m.role, text: truncate(plainText(m.content), MAX_CHAT_CHARS) }))
       .filter((m) => m.text.length > 0)
       .slice(-limit),
-    summary: summary ? truncate(summary, MAX_SUMMARY_CHARS) : null,
+    summary: summary ? keepNewest(summary, MAX_SUMMARY_CHARS) : null,
   };
 }
 
@@ -451,6 +451,20 @@ function plainText(content: string | unknown): string {
 
 function truncate(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max)}…`;
+}
+
+/**
+ * Keep the end of the text, not the beginning.
+ *
+ * The digest used to be one rolling summary of a fixed size, so cutting its head
+ * was never a decision. It is now a list of summarised stretches, oldest first,
+ * and it grows: cut the head and a study run would see the first four thousand
+ * characters of the conversation — the part already distilled into `knowledge`
+ * many times over — and none of the part that just happened, which is the only
+ * part a study run has not read yet.
+ */
+function keepNewest(text: string, max: number): string {
+  return text.length <= max ? text : `…${text.slice(-max)}`;
 }
 
 /** Lenient JSON extraction: strips ``` fences, takes the outermost {...}. */
