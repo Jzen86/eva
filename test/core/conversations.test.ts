@@ -3,8 +3,10 @@ import { getDB, closeDB } from "../../src/core/memory/db.js";
 import {
   saveMessage,
   loadHistory,
-  saveSummary,
+  saveSummaryChunk,
   loadSummary,
+  loadSummaryChunks,
+  foldedUpTo,
   extractText,
 } from "../../src/core/memory/conversations.js";
 import path from "path";
@@ -132,30 +134,44 @@ describe("conversations", () => {
     });
   });
 
-  describe("saveSummary + loadSummary", () => {
-    it("saves and loads a summary", () => {
-      saveSummary("user1", "User likes TypeScript", 150);
-      const result = loadSummary("user1");
-      expect(result).not.toBeNull();
-      expect(result!.summary).toBe("User likes TypeScript");
-      expect(result!.tokenEstimate).toBe(150);
+  describe("summary chunks", () => {
+    it("records a summarised stretch and reads it back", () => {
+      saveSummaryChunk("user1", { fromId: 1, toId: 12, summary: "User likes TypeScript", tokenEstimate: 150 });
+      expect(loadSummary("user1")).toBe("User likes TypeScript");
+      expect(loadSummaryChunks("user1")[0]).toMatchObject({ fromId: 1, toId: 12, tokenEstimate: 150 });
     });
 
-    it("upserts on duplicate user_id", () => {
-      saveSummary("user1", "First summary", 100);
-      saveSummary("user1", "Updated summary", 200);
-      const result = loadSummary("user1");
-      expect(result!.summary).toBe("Updated summary");
-      expect(result!.tokenEstimate).toBe(200);
+    it("keeps each stretch as its own chunk, oldest first", () => {
+      saveSummaryChunk("user1", { fromId: 1, toId: 12, summary: "Первый кусок", tokenEstimate: 10 });
+      saveSummaryChunk("user1", { fromId: 13, toId: 30, summary: "Второй кусок", tokenEstimate: 10 });
+
+      // The rolling summary this replaced kept one text and overwrote it, so a
+      // second fold could only get the first one into itself by paraphrasing it
+      // again. Chunks keep both, each written once from its own rows.
+      expect(loadSummaryChunks("user1")).toHaveLength(2);
+      expect(loadSummary("user1")).toBe("Первый кусок\n\nВторой кусок");
+    });
+
+    it("replaces a chunk that ends at the same row", () => {
+      saveSummaryChunk("user1", { fromId: 1, toId: 12, summary: "Первый вариант", tokenEstimate: 10 });
+      saveSummaryChunk("user1", { fromId: 1, toId: 12, summary: "Уточнённый вариант", tokenEstimate: 20 });
+      expect(loadSummaryChunks("user1")).toHaveLength(1);
+      expect(loadSummary("user1")).toBe("Уточнённый вариант");
+    });
+
+    it("reports the watermark a fold must not cross", () => {
+      expect(foldedUpTo("user1")).toBe(0);
+      saveSummaryChunk("user1", { fromId: 1, toId: 12, summary: "Первый кусок", tokenEstimate: 10 });
+      saveSummaryChunk("user1", { fromId: 13, toId: 30, summary: "Второй кусок", tokenEstimate: 10 });
+      expect(foldedUpTo("user1")).toBe(30);
     });
 
     it("returns null for nonexistent user", () => {
-      const result = loadSummary("nonexistent-user");
-      expect(result).toBeNull();
+      expect(loadSummary("nonexistent-user")).toBeNull();
     });
 
-    it("loadHistory includes summary when one exists", () => {
-      saveSummary("user1", "User prefers brevity", 50);
+    it("loadHistory includes the digest when one exists", () => {
+      saveSummaryChunk("user1", { fromId: 1, toId: 12, summary: "User prefers brevity", tokenEstimate: 50 });
       saveMessage("user1", "telegram", "user", "Hi");
       const { messages, summary } = loadHistory("user1");
       expect(summary).toBe("User prefers brevity");

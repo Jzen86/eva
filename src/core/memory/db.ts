@@ -148,12 +148,7 @@ export function getDB(dbPath?: string): Database.Database {
     }
   }
 
-  db.exec(`CREATE TABLE IF NOT EXISTS conversation_summaries (
-    user_id TEXT PRIMARY KEY,
-    summary TEXT NOT NULL,
-    token_estimate INTEGER NOT NULL DEFAULT 0,
-    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-  )`);
+  migrateSummaryChunks();
 
   db.exec("CREATE INDEX IF NOT EXISTS idx_conv_user ON conversations(user_id, timestamp)");
 
@@ -229,6 +224,69 @@ function addColumnIfMissing(
   if (columnsOf(conn, table).includes(column)) return false;
   conn.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   return true;
+}
+
+/**
+ * Fold bookkeeping: one row per stretch of the conversation that has been
+ * summarised, recording exactly which `conversations.id` range it covers.
+ *
+ * The table used to hold a single rolling summary per user and nothing else, so
+ * a fold had no way to know what it had already read. Every fold therefore fed
+ * the previous summary back into the prompt, reworded the whole of it, and then
+ * deleted the rows it had just summarised. Both halves of that are amnesia: the
+ * same fact restated a dozen times, each restatement a chance to distort it, and
+ * nothing left in the archive to rebuild from when one did.
+ *
+ * `to_id` is the watermark — rows at or below it for that user are already
+ * covered by a chunk, so a fold starts above it and no stretch is ever summarised
+ * twice. `to_id = 0` marks the carry: text written by the old rolling summary,
+ * which covers no rows of its own and is absorbed by the first real fold.
+ *
+ * The old table is read once and rebuilt, never dropped blind: a pre-migration
+ * database holds a summary somebody would notice losing, and its rows were
+ * deleted as they went in, so there is nothing to re-derive them from.
+ */
+function migrateSummaryChunks(): void {
+  const conn = db;
+  if (!conn) return;
+
+  const cols = (conn.pragma("table_info(conversation_summaries)") as Array<{ name: string }>).map(
+    (c) => c.name,
+  );
+
+  if (cols.includes("to_id") && !cols.includes("from_id")) {
+    conn.exec("ALTER TABLE conversation_summaries ADD COLUMN from_id INTEGER NOT NULL DEFAULT 0");
+  } else if (cols.length > 0 && !cols.includes("to_id")) {
+    conn.transaction(() => {
+      conn.exec(`
+        CREATE TABLE conversation_summaries_chunks (
+          user_id TEXT NOT NULL,
+          from_id INTEGER NOT NULL DEFAULT 0,
+          to_id   INTEGER NOT NULL,
+          summary TEXT NOT NULL,
+          token_estimate INTEGER NOT NULL DEFAULT 0,
+          updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+          PRIMARY KEY (user_id, to_id)
+        );
+        INSERT INTO conversation_summaries_chunks
+          (user_id, from_id, to_id, summary, token_estimate, updated_at)
+        SELECT user_id, 0, 0, summary, token_estimate, updated_at FROM conversation_summaries;
+        DROP TABLE conversation_summaries;
+        ALTER TABLE conversation_summaries_chunks RENAME TO conversation_summaries;
+      `);
+    })();
+    console.log("🗄 Схема памяти: сводка разбита на куски по диапазонам сообщений");
+  }
+
+  conn.exec(`CREATE TABLE IF NOT EXISTS conversation_summaries (
+    user_id TEXT NOT NULL,
+    from_id INTEGER NOT NULL DEFAULT 0,
+    to_id   INTEGER NOT NULL,
+    summary TEXT NOT NULL,
+    token_estimate INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    PRIMARY KEY (user_id, to_id)
+  )`);
 }
 
 /**

@@ -99,21 +99,24 @@ describe("engine: compaction", () => {
     });
     await engine.process({ channelName: "test", userId: user, text: "а что мы обсуждали?", timestamp: Date.now() });
 
-    expect(loadSummary(user)?.summary).toContain("первые пять вопросов");
+    expect(loadSummary(user)).toContain("первые пять вопросов");
     const system = seen.at(-1)?.find((m) => m.role === "system");
     expect(system?.content).toContain("Краткое содержание предыдущего разговора");
     expect(system?.content).toContain("первые пять вопросов");
 
-    // What the fold covered is gone from the table and present in the prompt —
-    // carried forward, not silently dropped. The window is still read raw.
+    // The fold covered the rows that fell out of the window and left them in the
+    // table to be covered again if the digest ever has to be rebuilt. The window
+    // is still read raw.
     const oldest = getDB()
       .prepare("SELECT content FROM conversations WHERE user_id = ? ORDER BY id ASC LIMIT 1")
       .get(user) as { content: string };
-    expect(oldest.content).not.toBe("вопрос 0");
-    expect(countMessages(user)).toBeLessThan(45 + 26 * 2);
+    expect(oldest.content).toBe("вопрос 0");
+    // 45 seeded turns and 27 more answers, two rows each, and a fold that no
+    // longer takes any of them away.
+    expect(countMessages(user)).toBe((45 + 27) * 2);
 
     // And it says so in the log, with the number of rows it actually carried
-    // over — a fold that folded nothing is the failure worth noticing.
+    // over — a fold that carried nothing is the failure worth noticing.
     expect(folded.length).toBeGreaterThan(0);
     expect(Math.max(...folded)).toBeGreaterThan(40);
     logSpy.mockRestore();
@@ -134,8 +137,9 @@ describe("engine: compaction", () => {
       expect(res.text).toBe("ок");
     }
 
-    // Nothing was summarised, so nothing was deleted: a failed fold costs the
-    // old messages their summary, not the conversation its history.
+    // Nothing was summarised, so nothing was recorded and the watermark stayed
+    // put: a failed fold costs the old messages their digest, and the next fold
+    // reads those rows again rather than skipping past them.
     expect(loadSummary(user)).toBeNull();
     expect(countMessages(user)).toBeGreaterThan(45);
   });
@@ -149,8 +153,8 @@ describe("engine: compaction", () => {
     // result has not been written yet. The turn itself would not notice; the
     // next message would, because it starts from the map and would find the
     // previous exchange missing its own tool result. That is the hazard
-    // `turnLocks` was added for, and the fold only deletes rows older than the
-    // window, so it has no reason to write to the history at all.
+    // `turnLocks` was added for, and the fold only appends a chunk, so it has no
+    // reason to write to the history at all.
     const user = "mid-turn";
     seedTurns(user, 45);
 

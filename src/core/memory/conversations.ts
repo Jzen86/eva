@@ -110,19 +110,112 @@ export function loadHistory(
   // and its result do.
   const result = alignHistory(messages);
 
-  const summaryRecord = loadSummary(userId);
-
   return {
     messages: result,
-    summary: summaryRecord?.summary ?? null,
+    summary: loadSummary(userId),
   };
 }
 
 interface SummaryRow {
-  user_id: string;
+  from_id: number;
+  to_id: number;
   summary: string;
   token_estimate: number;
-  updated_at: number;
+}
+
+/**
+ * One summarised stretch of the conversation, and the `conversations.id` range
+ * it stands for. `toId` is what makes forgetting undoable: the rows themselves
+ * stay in the table, so a summary that lost something can be thrown away and
+ * rebuilt from them.
+ */
+export interface SummaryChunk {
+  fromId: number;
+  toId: number;
+  summary: string;
+  tokenEstimate: number;
+}
+
+/**
+ * Every fold ever made for a user, oldest first.
+ */
+export function loadSummaryChunks(userId: string): SummaryChunk[] {
+  const rows = getDB()
+    .prepare(
+      `SELECT from_id, to_id, summary, token_estimate FROM conversation_summaries
+       WHERE user_id = ? ORDER BY to_id ASC`,
+    )
+    .all(userId) as SummaryRow[];
+
+  return rows.map((row) => ({
+    fromId: row.from_id,
+    toId: row.to_id,
+    summary: row.summary,
+    tokenEstimate: row.token_estimate,
+  }));
+}
+
+/**
+ * The highest `conversations.id` already covered by a summary, or 0.
+ *
+ * This is the watermark a fold reads: everything at or below it has been
+ * summarised once, and summarising it again would be a second, differently
+ * worded copy of the same stretch — the drift that made a rolling summary lose
+ * its contents one rewrite at a time.
+ */
+export function foldedUpTo(userId: string): number {
+  const row = getDB()
+    .prepare("SELECT MAX(to_id) AS m FROM conversation_summaries WHERE user_id = ?")
+    .get(userId) as { m: number | null } | undefined;
+  return row?.m ?? 0;
+}
+
+/**
+ * Records a summarised stretch, replacing any chunk that already ends at the
+ * same row.
+ */
+export function saveSummaryChunk(userId: string, chunk: SummaryChunk): void {
+  getDB()
+    .prepare(
+      `INSERT INTO conversation_summaries (user_id, from_id, to_id, summary, token_estimate, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, to_id) DO UPDATE SET
+         from_id = excluded.from_id,
+         summary = excluded.summary,
+         token_estimate = excluded.token_estimate,
+         updated_at = excluded.updated_at`,
+    )
+    .run(
+      userId,
+      chunk.fromId,
+      chunk.toId,
+      chunk.summary,
+      chunk.tokenEstimate,
+      Math.floor(Date.now() / 1000),
+    );
+}
+
+/**
+ * Drops chunks that end at or before `toId`. Used to absorb the carry left by an
+ * older install, and to retire chunks that have been merged into an older one.
+ */
+export function dropSummaryChunks(userId: string, toId: number): void {
+  getDB()
+    .prepare("DELETE FROM conversation_summaries WHERE user_id = ? AND to_id <= ?")
+    .run(userId, toId);
+}
+
+/**
+ * The digest the prompt gets: every chunk, oldest first, in the order they
+ * happened. The model reads it as one account of the conversation that came
+ * before the raw window.
+ */
+export function loadSummary(userId: string): string | null {
+  const text = loadSummaryChunks(userId)
+    .map((chunk) => chunk.summary)
+    .filter((s) => s.trim().length > 0)
+    .join("\n\n");
+  return text.length > 0 ? text : null;
 }
 
 /**
@@ -138,38 +231,4 @@ export function countMessages(userId: string): number {
     .prepare("SELECT COUNT(*) AS n FROM conversations WHERE user_id = ?")
     .get(userId) as { n: number } | undefined;
   return row?.n ?? 0;
-}
-
-/**
- * Upserts a conversation summary for a user.
- */
-export function saveSummary(userId: string, summary: string, tokenEstimate: number): void {
-  const db = getDB();
-  db.prepare(
-    `INSERT INTO conversation_summaries (user_id, summary, token_estimate, updated_at)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT(user_id) DO UPDATE SET
-       summary = excluded.summary,
-       token_estimate = excluded.token_estimate,
-       updated_at = excluded.updated_at`,
-  ).run(userId, summary, tokenEstimate, Math.floor(Date.now() / 1000));
-}
-
-/**
- * Loads the conversation summary for a user, or null if none exists.
- */
-export function loadSummary(
-  userId: string,
-): { summary: string; tokenEstimate: number } | null {
-  const db = getDB();
-  const row = db
-    .prepare("SELECT * FROM conversation_summaries WHERE user_id = ?")
-    .get(userId) as SummaryRow | undefined;
-
-  if (!row) return null;
-
-  return {
-    summary: row.summary,
-    tokenEstimate: row.token_estimate,
-  };
 }

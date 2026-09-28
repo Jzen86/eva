@@ -12,7 +12,7 @@ import {
   type EvaConfig,
 } from "./config.js";
 import { searchKnowledge } from "./memory/knowledge.js";
-import { saveMessage, loadHistory, extractText, countMessages } from "./memory/conversations.js";
+import { saveMessage, loadHistory, extractText } from "./memory/conversations.js";
 import { compactHistory } from "./memory/compaction.js";
 import { alignHistory } from "./llm/history.js";
 import { LLMUnavailableError } from "./llm/router.js";
@@ -223,7 +223,7 @@ export class Engine {
     }
     let history = this.histories.get(userId)!;
 
-    // The window is full: fold what falls out of it into the summary before the
+    // The window is full: fold what falls out of it into the digest before the
     // cut, so the oldest thing the model can still see does not simply stop
     // existing. The cut itself stays raw — `align` runs at the request boundary,
     // and a second pass over the same array would be the same walk twice.
@@ -537,8 +537,8 @@ export class Engine {
   }
 
   /**
-   * Fold the conversation that has fallen out of the window into one summary,
-   * in the background, at most once per user at a time.
+   * Fold the conversation that has fallen out of the window into the digest, in
+   * the background, at most once per user at a time.
    *
    * Called from the one place where messages actually leave the model's view —
    * the hard truncation. It used to be called when the prompt passed a token
@@ -552,33 +552,33 @@ export class Engine {
    * It runs after the cut, off the critical path, on the fast model: a failure
    * here costs the old messages their summary, which is a far smaller loss than
    * refusing to answer. The next message waits for it at the top of
-   * `processLocked`, which is what puts the finished summary into that prompt.
+   * `processLocked`, which is what puts the finished digest into that prompt.
    *
-   * It writes the summary and nothing else. The fold deletes rows older than the
-   * window, so reloading the history afterwards would hand back the very array
-   * the running turn is already appending to — and a turn that is halfway
-   * through a tool block would lose the rest of itself. That is the same
-   * "someone else wrote the history mid-turn" hazard `turnLocks` exists for,
-   * and a compaction that is a no-op on the window has no business doing it.
+   * It writes the digest and nothing else. A fold does not delete rows or touch
+   * the history, so reloading the history afterwards would hand back the very
+   * array the running turn is already appending to — and a turn halfway through a
+   * tool block would lose the rest of itself. That is the same "someone else
+   * wrote the history mid-turn" hazard `turnLocks` exists for, and a fold that
+   * only appends a summary has no reason to write to the history at all.
    */
   private startCompaction(userId: string): void {
     if (this.compactionInFlight.has(userId)) return;
-    const before = countMessages(userId);
     const started = Date.now();
     const promise = compactHistory(userId, this.deps.llm.fast(), MAX_HISTORY)
-      .then(() => {
-        const { summary } = loadHistory(userId);
+      .then((result) => {
+        const summary = loadHistory(userId).summary;
         if (summary) this.summaries.set(userId, summary);
-        // Folded rows leave the table and enter the summary, so a drop is the
-        // whole point — and a fold that folded nothing is the failure worth
-        // seeing, not the one that gets a line.
+        // A fold that carried nothing forward is the failure worth seeing, not
+        // the one that gets a line: `result` is null precisely when there was
+        // nothing new to summarise.
         console.log(
           JSON.stringify({
             tag: "engine:compaction",
             userId,
             ms: Date.now() - started,
-            folded: before - countMessages(userId),
-            summaryChars: summary?.length ?? 0,
+            folded: result?.folded ?? 0,
+            chunks: result?.chunks ?? 0,
+            digestChars: result?.digestChars ?? 0,
           }),
         );
       })
