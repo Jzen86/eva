@@ -10,7 +10,7 @@ import { Engine } from "./core/engine.js";
 import { SchedulerService } from "./core/tools/scheduler.js";
 import { SchedulerStore } from "./core/tools/scheduler-store.js";
 import { getDB } from "./core/memory/db.js";
-import { primeStudyTimer, runStudyIfDue } from "./core/memory/study-runner.js";
+import { runStudyIfDue } from "./core/memory/study-runner.js";
 import type { LLMClient } from "./core/llm/types.js";
 import type { Channel } from "./channels/types.js";
 import { buildTools, describeToolset } from "./core/toolsets.js";
@@ -329,7 +329,9 @@ async function main() {
       }
     };
 
-    primeStudyTimer();
+    // No priming on boot. The cooldown is recorded in the database, so a restart
+    // inherits it instead of pushing the next session back by a full interval —
+    // see lastRunMs for what that cost the live install.
     const studyTimer = setInterval(runOneStudy, 5 * 60_000);
     studyTimer.unref?.();
     console.log(

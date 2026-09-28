@@ -208,11 +208,6 @@ export interface StudyRunResult {
 let inFlight = false;
 let sessionCount = 0;
 
-/** Reset the cooldown on boot so a restart doesn't instantly fire a session. */
-export function primeStudyTimer(): void {
-  markStudyComplete();
-}
-
 /** Cooldown check + no-op result when it's not time yet. */
 export async function runStudyIfDue(opts: StudyRunOptions): Promise<StudyRunResult> {
   if (inFlight) {

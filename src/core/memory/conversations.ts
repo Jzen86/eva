@@ -244,9 +244,11 @@ export function countMessages(userId: string): number {
  * not age out of a cursor.
  *
  * Persisted rather than held in memory, and this is the second half of the same
- * point. The study timer deliberately resets on boot (`primeStudyTimer`), which
- * is right for a cooldown and would be wrong for a cursor: a restart would forget
- * what had been read and send the next session back over the same messages.
+ * point. The study timer used to reset on boot, which was right for a cooldown and
+ * wrong for a cursor: a restart forgot what had been read and sent the next
+ * session back over the same messages. The cooldown itself is recorded for the
+ * same reason — a bot that restarts more often than its interval would otherwise
+ * never study at all, which is exactly what happened.
  */
 export function studyCursor(userId: string): number {
   return Number(readMeta(`study_cursor:${userId}`) ?? "0") || 0;
