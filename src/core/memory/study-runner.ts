@@ -284,11 +284,16 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
       });
     }
 
-    // What the prompt cannot be trusted to enforce about itself. Both checks drop
-    // rather than repair: a conclusion in the base goes into every future prompt,
-    // and a case with a guessed half is indistinguishable from a memory of
-    // something that happened. An empty session costs one cheap run; a bad row
-    // costs every conversation after it.
+    // The one check the prompt cannot be trusted to enforce about itself, and the
+    // only one worth keeping. A rule in the base is not a slightly worse row: it is
+    // an instruction the answering model obeys instead of weighing, and that is
+    // what the previous version of this base was full of.
+    //
+    // The case fields are no longer checked here. Requiring the three together
+    // meant a moment the model could not describe in that exact shape was thrown
+    // away whole, and the shape itself was the problem: it asked for the state he
+    // was in, and he does not write to her angry or sad, he just writes to her.
+    // What the model leaves out is simply absent; what it fills in is kept.
     const accepted: Array<{ f: StudyFact; c: CaseFields }> = [];
     const dropped: string[] = [];
     for (const f of facts) {
@@ -296,12 +301,7 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
         dropped.push(`«${truncate(f.fact, 60)}» — это правило, а не факт`);
         continue;
       }
-      const c = caseFieldsOf(f);
-      if (c.kind === "partial") {
-        dropped.push(`«${truncate(f.fact, 60)}» — случай заполнен наполовину`);
-        continue;
-      }
-      accepted.push({ f, c });
+      accepted.push({ f, c: caseFieldsOf(f) });
     }
 
     if (accepted.length === 0) {
@@ -340,9 +340,9 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
         findLexicalDuplicate(
           {
             insight: f.fact,
-            her_move: c.kind === "full" ? c.her_move : null,
-            context: c.kind === "full" ? c.context : null,
-            his_reaction: c.kind === "full" ? c.his_reaction : null,
+            her_move: c.her_move,
+            context: c.context,
+            his_reaction: c.his_reaction,
             conclusion: f.conclusion,
           },
           getAllKnowledge(),
@@ -364,9 +364,9 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
           // about itself.
           timestamp: generated.coveredAt,
           ...(f.conclusion ? { conclusion: f.conclusion } : {}),
-          ...(c.kind === "full"
-            ? { her_move: c.her_move, context: c.context, his_reaction: c.his_reaction }
-            : {}),
+          ...(c.her_move ? { her_move: c.her_move } : {}),
+          ...(c.context ? { context: c.context } : {}),
+          ...(c.his_reaction ? { his_reaction: c.his_reaction } : {}),
         },
         { known: getAllKnowledge(), embedding: opts.embedding ?? null },
       );
@@ -405,9 +405,9 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
         `📚 Сессия #${sessionCount} · зона: ${zone}${window} · записано ${written.length} из ${facts.length}`,
         ...written.map((w) => {
           const head = `· ${w.topic}: ${w.fact}`;
-          return w.c.kind === "full"
-            ? `${head}\n    состояние: ${w.c.context} → он: ${w.c.his_reaction}`
-            : head;
+          if (!w.c.her_move) return head;
+          const state = w.c.context || "состояние не названо";
+          return `${head}\n    она: ${w.c.her_move} · ${state} → он: ${w.c.his_reaction}`;
         }),
         ...refused.map((r) => `  (отброшено) ${r}`),
         ...dropped.map((d) => `  (отброшено) ${d}`),
@@ -502,78 +502,31 @@ function buildStudyMessages(
   const system = [
     `Ты — ${opts.agentName}, AI-компаньон. Сейчас идёт твоя фоновая учебная сессия.`,
     "",
-    `Задача: посмотреть на свежую переписку с владельцем и записать в базу то, что там`,
-    `произошло. Факты, темы разговоров и случаи — не выводы.`,
+    `Задача: перечитать свежую переписку с владельцем и записать в память то,`,
+    `что стоит помнить.`,
     "",
     "Жёсткие правила:",
-    "1. Отвечай ТОЛЬКО валидным JSON. Никаких пояснений, никаких markdown-заглушек вокруг JSON.",
-    '2. Формат: {"facts": [{"topic": "тема", "fact": "что было", "conclusion": null,',
-    '   "her_move": null, "context": null, "his_reaction": null}]}',
-    "   Три поля случая — либо все строками, либо все null. Половины быть не может.",
-    "   conclusion — итог: чем кончилось, что решили, к чему пришли. Пусто, если ничем.",
-    "3. Сколько записей — столько и есть по-настоящему. Обычно одна-три, но если в переписке",
-    '   было больше разного — пиши больше, ничего не выкидывая. Если не произошло ничего',
-    '   стоящего — верни {"facts": [], "reason": "причина"}.',
-    "4. Три вида записей, выбирай подходящий:",
-    "   а) О ЧЁМ ГОВОРИЛИ — тема разговора и что по ней было. Чаще всего нужен именно он.",
-    '      topic = короткое имя темы, 1-4 слова («кошки», «спор о нейросетях», «сервер»),',
-    "      fact = о чём говорили, что он рассказал, к чему пришли.",
-    '      «летал в Саратов на самолёте, вспоминал посадку в грозу»',
-    '      «сравнивали Gemini и DeepSeek, он остался на Gemini»',
-    "      Даже если по теме ничего не решили — сама тема уже стоит записи.",
-    "   б) ФАКТ О ЧЕЛОВЕКЕ — утверждение о нём или о ней, проверяемое по переписке.",
-    '      «не любит айфоны», «в Саратове, UTC+4», «она любит подкалывать».',
-    "   в) СЛУЧАЙ — она что-то сделала, он отреагировал. Тогда все три поля:",
-    "      her_move = что она сделала или сказала;",
-    "      context = в каком он был состоянии (занят, весёлый, поссорился, устал, выпил);",
-    "      his_reaction = как он отреагировал (подхватил, огрызнулся, отшутился, замолчал,",
-    "      попросил больше так не делать, сдался, согласился).",
-    "      context обязателен: без него запись прочитается как правило, а правила здесь не хранят.",
-    "   В любой записи описание должно быть конкретным. Имя, число, цвет, версия, место,",
-    "   срок — что угодно, за что потом зацепится память.",
-    '      Плохо: «рассказывал про кошку», «обсуждали нейросети» — вспомнить по этому нечего,',
-    "      такая строка занимает место и не даёт ничего.",
-    '      Хорошо: «кошку зовут Муська, трёхцветная, подобрал на улице, спит на клавиатуре».',
-    '      Хорошо: «сравнивали Gemini и DeepSeek, пробовал оба на своём коде».',
-    "   Если конкретного не назвать ни одного слова — записывать нечего, не пиши строку.",
-    "   Пиши сжато: одно-два предложения. Обрамление срезай первым, суть оставляй всю.",
-    '      Плохо: «Открыто заявил, что специально не создаёт бэкапы, описывая это как',
-    '      проверку на живучесть. Он самостоятельно написал код и подтвердил, что тест идёт».',
-    '      Хорошо: «бэкапы не делает намеренно, называет это проверкой на живучесть».',
-    "   «Открыто заявил, что», «в ходе диалога», «Владелец», «самостоятельно»,",
-    "   «подтвердил, что», «в свою очередь» — это обрамление, его не пиши.",
-    "5. conclusion (итог) ставь только там, где разговор или случай чем-то кончился:",
-    "   что решили, на чём он остановился, чем спор закончился. У факта о человеке итога",
-    "   нет — оставь null. Итог принадлежит именно этой записи: другой спор в другой день",
-    "   мог кончиться наоборот, и это нормально. Поэтому пиши итог вместе с тем, из чего он",
-    "   вышел, а не «на будущее» — не «не спорь с ним», а «сравнивали Gemini и DeepSeek,",
-    "   он остался на Gemini».",
-    "6. ГЛАВНОЕ. Выводы и правила не пиши. Ни «вывод:», ни «не надо», ни «не стоит»,",
-    "   ни «значит надо», ни «следует», ни «полагается». Если ты не можешь назвать конкретный",
-    "   момент, случай или тему разговора — это вывод, и его писать не надо. Лучше facts: [].",
-    "7. Смотри не только на поправки. Правки видны первыми, потому что он поправляет. Ищи так",
-    "   же: где он был доволен, где смеялся, где она была права и настояла, где он сдался, где",
-    "   он сам о чём-то попросил. База, где записаны только её промахи — это список её ошибок,",
-    "   и по нему она учится только соглашаться.",
-    "8. Если новое противоречит старому из уже_известно — это разные моменты, а не исправление.",
-    "   Запиши новое. Старое не трогай и не переписывай.",
-    "9. Не повторяй то, что уже есть в базе: полный список — ниже, в уже_известно.",
-    "   Перефразировка НЕ считается новым. Если там уже есть то же самое другими словами —",
-    "   не пиши это, даже когда формулировки не совпадают. Сравнивай смысл, не слова.",
-    "   Короткий чек-лист тем, которые нельзя дублировать: не_дублировать_эти_темы.",
-    "   Но та же тема в другой день — это новое: «говорили о самолётах» бывает и трижды.",
-    `10. Начни со своей зоны: «${zone.name}» — ${zone.hint}.`,
-    "   Материал по ней — в первую очередь, его и разбирай подробнее.",
-    "   Но зона — это куда смотреть первым делом, а не запрет на остальное.",
-    "   Если в переписке было стоящее и по другим зонам — тоже пиши, не выбрасывай.",
-    "   Верни facts: [] только если записывать правда нечего. И уж точно не потому,",
-    "   что материал не по твоей зоне: сессия читает разговор один раз, и пропущенное",
-    "   не вернётся — на живом прогоне так и потерялась переписка про флирт.",
-    "11. Ничего не выдумывай: только то, что реально есть в переписке, в сводке или в базе.",
-    "12. Пиши на русском, как внутреннюю заметку. Без обращений к владельцу, он этого не видит.",
-    "13. сводка_старой_переписки — это то, что было раньше, чем свежая_переписка. Паттерны,",
-    "   проявившиеся за недели, видны там, а не в последних сообщениях. Учитывай её наравне.",
-    "14. Дату и время ставить не надо — система проставит сама по времени сообщений.",
+    "",
+    "Отвечай ТОЛЬКО валидным JSON, без пояснений и обёрток:",
+    '{"facts": [{"topic": "тема", "fact": "что было", "conclusion": null}]}',
+    "",
+    "Пиши то, что важно помнить: факты о нём и о ней, события — что было и чем",
+    "кончилось, темы разговоров. Своими словами, одно-два предложения, конкретно —",
+    "имя, число, место, версия. «рассказывал про кошку» не пиши, по ней нечего вспомнить.",
+    "Если был обмен: что она сделала, в каком он был состоянии, как он ответил — можно",
+    "добавить полями her_move, context, his_reaction. Не обязательно, пиши как удобно.",
+    "Дату система проставит сама.",
+    "",
+    "Не пиши выводы и правила, как себя вести: ни «не надо», ни «вывод:», ни «следует».",
+    "Такое она потом выполняет как приказ вместо того, чтобы смотреть на момент.",
+    "Не можешь назвать, что именно произошло — не пиши ничего.",
+    "",
+    "Не повторяй то, что уже есть в уже_известно. Противоречит старому — это разные",
+    "моменты, пиши новое, старое не трогай и не переписывай. Где было хорошо — тоже",
+    "пиши, не только промахи. Ничего не выдумывай. По-русски, как заметку для себя.",
+    "",
+    `Первым делом смотри на «${zone.name}» — ${zone.hint}. Но это не запрет`,
+    "на остальное: было стоящее по другому — тоже пиши, сессия читает разговор один раз.",
   ].join("\n");
 
   const payload = {
@@ -780,29 +733,25 @@ function looksLikePrescription(fact: string): boolean {
 }
 
 /**
- * The case fields, or why they are unusable.
+ * Whatever the model put in the three optional fields, whitespace-trimmed.
  *
- * A half-filled case is dropped rather than completed. "She made a joke" with no
- * state recorded is the note that reads back as a rule, and guessing the missing
- * half is worse than losing it — the guess would be indistinguishable from a
- * memory of something that happened.
+ * They used to be all-or-nothing, and a row that named two of the three was
+ * dropped rather than stored. That was the shape's fault, not the model's: it
+ * asked for the state he was in, and he does not write to her angry or sad, he
+ * just writes to her. So the shape is gone and the fields are kept as written —
+ * absent is absent, present is kept, and nothing is guessed either way.
  */
-type CaseFields =
-  | { kind: "none" }
-  | { kind: "partial" }
-  | { kind: "full"; her_move: string; context: string; his_reaction: string };
+interface CaseFields {
+  her_move: string;
+  context: string;
+  his_reaction: string;
+}
 
 function caseFieldsOf(f: StudyFact): CaseFields {
-  const present = [f.her_move, f.context, f.his_reaction].filter(
-    (v): v is string => typeof v === "string" && v.trim() !== "",
-  );
-  if (present.length === 0) return { kind: "none" };
-  if (present.length < 3) return { kind: "partial" };
   return {
-    kind: "full",
-    her_move: f.her_move!.trim(),
-    context: f.context!.trim(),
-    his_reaction: f.his_reaction!.trim(),
+    her_move: f.her_move?.trim() ?? "",
+    context: f.context?.trim() ?? "",
+    his_reaction: f.his_reaction?.trim() ?? "",
   };
 }
 

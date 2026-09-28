@@ -135,22 +135,26 @@ describe("study: what a session may leave in the base", () => {
     expect(result.report).toContain("правило, а не факт");
   });
 
-  it("drops a case with only half of it filled in", async () => {
-    // Completing the missing half would mean guessing, and a guess is stored the
-    // same as a memory of something that happened.
+  it("keeps a case however much of it was filled in", async () => {
+    // The three fields used to be all-or-nothing, and a row naming two of them was
+    // dropped rather than stored. The shape was the problem, not the model: it
+    // asked for the state he was in, and he does not write to her angry or sad, he
+    // just writes to her. So nothing is guessed and nothing is thrown away — what
+    // is there is kept, what is missing is simply absent.
     const { result } = await session(JSON.stringify({
       facts: [{
         topic: "шутки",
-        fact: "околололо",
+        fact: "назвала его ангелом, ему понравилось",
         her_move: "назвала его ангелом",
-        context: "был занят",
-        his_reaction: null,
+        his_reaction: "подхватил",
       }],
     }));
 
-    expect(result.wrote).toBe(false);
-    expect(rows()).toHaveLength(0);
-    expect(result.report).toContain("наполовину");
+    expect(result.wrote).toBe(true);
+    const row = rows()[0];
+    expect(row.her_move).toBe("назвала его ангелом");
+    expect(row.his_reaction).toBe("подхватил");
+    expect(row.context).toBe("");
   });
 
   it("takes every fact of a multi-fact answer, not just the first", async () => {
@@ -232,48 +236,39 @@ describe("study: the prompt it is asked with", () => {
     return text;
   }
 
-  it("asks for facts and cases, not for a conclusion", async () => {
+  it("asks for what is worth remembering, in a list", async () => {
     const text = await prompt();
     expect(text).toContain('"facts"');
     expect(text).toContain("her_move");
-    expect(text).toContain("Выводы и правила не пиши");
     // The old task line. It is what filled the base with self-descriptions.
     expect(text).not.toContain("вывести РОВНО ОДИН новый полезный вывод");
   });
 
-  it("tells it to look past the corrections", async () => {
-    // The sampling bias, named in the prompt: a window of chat is mostly his
-    // corrections to her, and a base of nothing but those teaches one thing.
+  it("keeps the one rule that was holding the base together", async () => {
+    // Everything else here has been simplified twice at the owner's request. This
+    // is the one that cannot go: a row shaped like an instruction is obeyed by the
+    // answering model instead of weighed, and the previous base was full of them —
+    // "не стоит включать оборону", "обязана отбрасывать парную похвалу".
     const text = await prompt();
-    expect(text).toContain("где она была права");
-    expect(text).toContain("учится только соглашаться");
+    expect(text).toContain("Не пиши выводы и правила");
   });
 
-  it("says a contradiction is a second moment, not a correction", async () => {
-    const text = await prompt();
-    expect(text).toContain("разные моменты, а не исправление");
-  });
-
-  it("demands something concrete in the description", async () => {
+  it("still asks for something concrete and still asks for it briefly", async () => {
+    // Both complaints from live rows, both kept through the simplification.
     // "рассказывал про кошку" is a row that takes space and gives nothing to
-    // remember. The prompt asked for short and never asked for a single name,
-    // colour or number, so it got summaries of the fact that a conversation had
-    // happened. Vagueness is not machine-detectable without guessing, so this is
-    // the lever — and this test is what stops a rewrite from dropping it.
+    // remember; and the first two live rows came back at 271 and 189 characters,
+    // most of the longest being scaffolding. Twelve rows reach every answer.
     const text = await prompt();
-    expect(text).toContain("должно быть конкретным");
     expect(text).toContain("рассказывал про кошку");
-    expect(text).toContain("Муська");
+    expect(text).toContain("одно-два предложения");
   });
 
-  it("asks for a short entry and names the framing to cut", async () => {
-    // The first live row was 271 characters, and most of it was scaffolding:
-    // "Открыто заявил, что", "в ходе диалога". Twelve rows go into every answer,
-    // so length buys fewer examples rather than more memory.
+  it("says a contradiction is a second moment, and not only mistakes are worth it", async () => {
     const text = await prompt();
-    expect(text).toContain("одно-два предложения");
-    expect(text).toContain("обрамление");
-    expect(text).toContain("бэкапы не делает намеренно");
+    expect(text).toContain("Противоречит старому — это разные");
+    // The sampling bias: a window of chat is mostly his corrections, so a base fed
+    // on that alone teaches one thing — to agree.
+    expect(text).toContain("Где было хорошо — тоже");
   });
 
   it("treats the zone as where to look first, not as a prohibition", async () => {
@@ -282,7 +277,7 @@ describe("study: the prompt it is asked with", () => {
     // из зоны «сервер и задрот»" — there was material, it was the wrong subject,
     // so it was thrown away, and the cursor had already moved past it.
     const text = await prompt();
-    expect(text).toContain("а не запрет на остальное");
+    expect(text).toContain("это не запрет");
     expect(text).not.toContain("не пиши вообще");
   });
 
