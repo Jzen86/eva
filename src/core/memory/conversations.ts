@@ -1,4 +1,4 @@
-import { getDB } from "./db.js";
+import { getDB, readMeta, writeMeta } from "./db.js";
 import { alignHistory } from "../llm/history.js";
 import type { LLMMessage, ContentPart, ToolUseRequest } from "../llm/types.js";
 
@@ -231,4 +231,86 @@ export function countMessages(userId: string): number {
     .prepare("SELECT COUNT(*) AS n FROM conversations WHERE user_id = ?")
     .get(userId) as { n: number } | undefined;
   return row?.n ?? 0;
+}
+
+/**
+ * The study cursor: the highest `conversations.id` a study session has read for
+ * this user.
+ *
+ * A study run used to take the last N messages. That is a window, not a cursor,
+ * and the difference is the whole bug: a correction said forty messages ago was
+ * in the table the entire time and no session ever looked at it, because by the
+ * next run it had scrolled out of the window. Rows age out of a window. They do
+ * not age out of a cursor.
+ *
+ * Persisted rather than held in memory, and this is the second half of the same
+ * point. The study timer deliberately resets on boot (`primeStudyTimer`), which
+ * is right for a cooldown and would be wrong for a cursor: a restart would forget
+ * what had been read and send the next session back over the same messages.
+ */
+export function studyCursor(userId: string): number {
+  return Number(readMeta(`study_cursor:${userId}`) ?? "0") || 0;
+}
+
+/** Never moves backwards — the cursor only ever means "read up to here". */
+export function setStudyCursor(userId: string, id: number): void {
+  if (id > studyCursor(userId)) writeMeta(`study_cursor:${userId}`, String(id));
+}
+
+/**
+ * How much of the recent past a session may read before it starts following live.
+ *
+ * A cursor of zero is correct on a fresh install and wrong on one that has been
+ * talking for weeks. Started at zero, the first session would read the oldest
+ * messages there are — already distilled into `knowledge`, already standing in the
+ * digest — and at one budget an hour it would grind forward for days before
+ * reaching anything current, refusing its own duplicates the whole way. So the
+ * absent cursor starts here instead: near the end, with enough room behind it to
+ * re-read the last few days under the current rules. This is the newest-N window
+ * the study prompt used to have, kept as a starting point rather than as the
+ * thing that decides what gets read.
+ */
+const BACKFILL_MESSAGES = 200;
+
+/**
+ * Where a session should start reading: the cursor, or the seeded backfill point
+ * on an install that has never had one.
+ *
+ * Re-derived on each call until a session succeeds and the cursor is written, so
+ * a first run that errors leaves the start pointing at the newest messages rather
+ * than at the beginning of time. The cost is that a long failure can push the
+ * start forward past a stretch that was never read; the stretch is the same
+ * recent one the old window kept re-reading, so it is a smaller loss than the
+ * grind the seed exists to avoid.
+ */
+export function studyStart(userId: string): number {
+  const cursor = studyCursor(userId);
+  if (cursor > 0) return cursor;
+  const row = getDB()
+    .prepare("SELECT COALESCE(MAX(id), 0) AS m FROM conversations WHERE user_id = ?")
+    .get(userId) as { m: number } | undefined;
+  return Math.max(0, (row?.m ?? 0) - BACKFILL_MESSAGES);
+}
+
+/**
+ * Raw transcript newer than the cursor, oldest first.
+ *
+ * Bounded by `limit` rows so that a long silence cannot make one session pull the
+ * whole table into memory. Whatever does not fit stays above the cursor and the
+ * next run picks it up, because the caller advances the cursor only as far as it
+ * actually read — see the note on `coveredTo` in the study prompt builder.
+ */
+export function messagesSince(
+  userId: string,
+  sinceId: number,
+  limit: number,
+): Array<{ id: number; role: string; content: string }> {
+  return getDB()
+    .prepare(
+      `SELECT id, role, content FROM conversations
+       WHERE user_id = ? AND id > ?
+       ORDER BY id ASC
+       LIMIT ?`,
+    )
+    .all(userId, sinceId, limit) as Array<{ id: number; role: string; content: string }>;
 }

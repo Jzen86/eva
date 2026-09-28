@@ -1,10 +1,10 @@
 /**
  * Study session runner — background self-learning glue.
  *
- * A "session" = read the knowledge base + the recent conversation, ask a small
- * LLM what happened in it, store that. If the model answers "nothing happened",
- * nothing is written (keeps the base clean — the hits get injected into every
- * prompt by the engine, so junk in = junk everywhere).
+ * A "session" = read the knowledge base + everything in the transcript since the
+ * last session, ask a small LLM what happened in it, store that. If the model
+ * answers "nothing happened", nothing is written (keeps the base clean — the hits
+ * get injected into every prompt by the engine, so junk in = junk everywhere).
  *
  * What a session is allowed to write is the load-bearing part. It used to ask
  * for "ровно один новый полезный вывод", and the base filled with conclusions
@@ -18,6 +18,9 @@
  *  - hard dedupe in code (the "do not repeat" rule was a request, not a check)
  *  - source-aware trim (plain recency trim flushed study rows first, because her
  *    chat-driven memory writes are always denser and newer)
+ *  - a persistent read cursor instead of a newest-N window, so a moment is read
+ *    because it has not been read, not because the chat happened to be quiet when
+ *    the session fired
  */
 
 import {
@@ -36,15 +39,36 @@ import {
   type KnowledgeRow,
 } from "./knowledge.js";
 import { findLexicalDuplicate, learnInsight, type EmbeddingEndpoint } from "./dedup.js";
-import { loadHistory, extractText } from "./conversations.js";
+import {
+  extractText,
+  loadSummary,
+  messagesSince,
+  studyStart,
+  setStudyCursor,
+} from "./conversations.js";
 import type { LLMClient, LLMMessage } from "../llm/types.js";
 
 /** Knowledge entries fed to the model as "what I already know". */
 const DEFAULT_KNOWLEDGE_WINDOW = 20;
-/** Conversation messages fed to the model as raw material. */
-const DEFAULT_CHAT_WINDOW = 20;
 /** Max chars per conversation message in the prompt (prompt-size guard). */
 const MAX_CHAT_CHARS = 700;
+/**
+ * Rows one session may pull from the transcript at once.
+ *
+ * Not a coverage limit — the cursor means nothing is skipped, only deferred.
+ * It bounds memory on the first run after a long outage, when the gap can be
+ * tens of thousands of messages: four hundred rows drain in a couple of runs and
+ * the alternative is loading the whole table to keep twelve thousand characters.
+ */
+const MAX_CHAT_ROWS = 400;
+/**
+ * Total budget for the raw transcript in one study prompt.
+ *
+ * Sized to what the old twenty-message window cost, so moving from a window to a
+ * cursor does not grow the prompt — the same budget just buys the messages that
+ * have not been read instead of the messages that happen to be newest.
+ */
+const MAX_CHAT_TOTAL_CHARS = 12000;
 /**
  * Cap for the rolling summary. Generous relative to one message, because it
  * stands in for everything that has already scrolled out of the window — but
@@ -159,7 +183,6 @@ export interface StudyRunOptions {
   learning: LearningConfig;
   maxKnowledge: number;
   knowledgeWindow?: number;
-  chatWindow?: number;
   /**
    * Optional embedding endpoint. Present it and every insight is compared
    * semantically against what is stored and written with its vector; leave it
@@ -201,9 +224,13 @@ export async function runStudyIfDue(opts: StudyRunOptions): Promise<StudyRunResu
 }
 
 /**
- * Run one study session: generate an insight, store it, trim the base.
+ * Run one study session: read what is new in the transcript, store what happened,
+ * trim the base.
+ *
  * Always resets the cooldown, even when the model has nothing new to say —
- * otherwise a "nothing new" answer would re-fire the LLM on every tick.
+ * otherwise a "nothing new" answer would re-fire the LLM on every tick. Advances
+ * the read cursor the same way, and only on a session that actually read
+ * something; see `finish` below for why the two are one call.
  */
 export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
   if (inFlight) {
@@ -221,20 +248,44 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
       return { ran: true, wrote: false, zone, error: generated.error, report: "" };
     }
 
+    /**
+     * Close a session that actually read something.
+     *
+     * Both halves move together or neither does: the cursor because the batch was
+     * read and the model answered it, the cooldown because the run is over. A
+     * session that errored resets the cooldown and leaves the cursor where it was
+     * — nothing was read, so nothing may be marked as covered, and the next run
+     * reads the same messages against a working model.
+     *
+     * One call rather than a line repeated in five places, because it was exactly
+     * that before and one of the five had been forgotten: when every fact came
+     * back as a duplicate, `markStudyComplete` was never reached and the LLM
+     * re-fired on the next tick and on every tick after it.
+     */
+    const finish = (result: StudyRunResult): StudyRunResult => {
+      setStudyCursor(opts.userId, generated.coveredTo);
+      markStudyComplete();
+      return result;
+    };
+
+    const window =
+      generated.chatCount > 0
+        ? ` · окно ${generated.chatCount}` +
+          (generated.deferred > 0 ? ` (+${generated.deferred} в следующую сессию)` : "")
+        : "";
     const { facts, reason, known } = generated;
 
     if (facts.length === 0) {
-      markStudyComplete();
       sessionCount++;
       noWriteSessions++;
       trimKnowledge(opts.maxKnowledge, STUDY_SOURCE);
-      return {
+      return finish({
         ran: true,
         wrote: false,
         zone,
         reason,
-        report: `📚 Сессия #${sessionCount} [${zone}]: записей нет${reason ? ` — ${reason}` : ""}`,
-      };
+        report: `📚 Сессия #${sessionCount} [${zone}]${window}: записей нет${reason ? ` — ${reason}` : ""}`,
+      });
     }
 
     // What the prompt cannot be trusted to enforce about itself. Both checks drop
@@ -258,19 +309,18 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
     }
 
     if (accepted.length === 0) {
-      markStudyComplete();
       sessionCount++;
       noWriteSessions++;
       trimKnowledge(opts.maxKnowledge, STUDY_SOURCE);
-      return {
+      return finish({
         ran: true,
         wrote: false,
         zone,
         reason: "всё, что вернула модель, отброшено фильтром",
         report:
-          `📚 Сессия #${sessionCount} [${zone}]: отброшено ${dropped.length}\n` +
+          `📚 Сессия #${sessionCount} [${zone}]${window}: отброшено ${dropped.length}\n` +
           dropped.map((d) => `  · ${d}`).join("\n"),
-      };
+      });
     }
 
     // The lexical half of the dedupe, run here as a check rather than a request.
@@ -316,27 +366,26 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
     if (written.length === 0) {
       sessionCount++;
       noWriteSessions++;
-      return {
+      return finish({
         ran: true,
         wrote: false,
         zone,
         reason: "ничего нового",
         report:
-          `📚 Сессия #${sessionCount} [${zone}]: нового нет\n` +
+          `📚 Сессия #${sessionCount} [${zone}]${window}: нового нет\n` +
           refused.map((r) => `  · ${r}`).join("\n"),
-      };
+      });
     }
 
     noWriteSessions = 0;
-    markStudyComplete();
     sessionCount++;
     const total = getKnowledgeCount();
-    return {
+    return finish({
       ran: true,
       wrote: true,
       zone,
       report: [
-        `📚 Сессия #${sessionCount} · зона: ${zone} · записано ${written.length} из ${facts.length}`,
+        `📚 Сессия #${sessionCount} · зона: ${zone}${window} · записано ${written.length} из ${facts.length}`,
         ...written.map((w) => {
           const head = `· ${w.topic}: ${w.fact}`;
           return w.c.kind === "full"
@@ -347,7 +396,7 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
         ...dropped.map((d) => `  (отброшено) ${d}`),
         `База знаний: ${total}`,
       ].join("\n"),
-    };
+    });
   } catch (err) {
     markStudyComplete();
     const message = err instanceof Error ? err.message : String(err);
@@ -365,6 +414,12 @@ interface Generated {
   zone: string;
   /** Knowledge snapshot the prompt was built from — the dedupe baseline. */
   known: KnowledgeRow[];
+  /** How far the cursor may move once this session is over. See loadChatSince. */
+  coveredTo: number;
+  /** Messages of transcript this session actually read. */
+  chatCount: number;
+  /** Read-but-not-shown messages the budget pushed to the next session. */
+  deferred: number;
 }
 
 /** Ask the LLM what happened. Tries each client in order. */
@@ -375,14 +430,23 @@ async function generateInsight(opts: StudyRunOptions): Promise<Generated> {
   // counts as having looked at this zone, otherwise the tie-break would send
   // the next session straight back to a zone that clearly refuses to produce.
   markZoneStudied(zone.name);
-  const messages = buildStudyMessages(opts, zone, known);
+  const built = buildStudyMessages(opts, zone, known);
   let lastError = "";
 
   for (const client of opts.clients) {
     try {
-      const res = await client.chat(messages);
+      const res = await client.chat(built.messages);
       const parsed = parseStudyJson(res.text ?? "");
-      if (parsed) return { ...parsed, zone: zone.name, known };
+      if (parsed) {
+        return {
+          ...parsed,
+          zone: zone.name,
+          known,
+          coveredTo: built.coveredTo,
+          chatCount: built.chatCount,
+          deferred: built.deferred,
+        };
+      }
       lastError = "не удалось разобрать ответ модели как JSON";
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err);
@@ -394,6 +458,9 @@ async function generateInsight(opts: StudyRunOptions): Promise<Generated> {
     error: lastError || "нет доступных клиентов",
     zone: zone.name,
     known,
+    coveredTo: built.coveredTo,
+    chatCount: built.chatCount,
+    deferred: built.deferred,
   };
 }
 
@@ -401,9 +468,9 @@ function buildStudyMessages(
   opts: StudyRunOptions,
   zone: (typeof ZONES)[number],
   known: KnowledgeRow[],
-): LLMMessage[] {
+): { messages: LLMMessage[]; coveredTo: number; chatCount: number; deferred: number } {
   const knowledge = known.slice(0, opts.knowledgeWindow ?? DEFAULT_KNOWLEDGE_WINDOW);
-  const chat = loadChat(opts.userId, opts.chatWindow ?? DEFAULT_CHAT_WINDOW);
+  const chat = loadChatSince(opts.userId, studyStart(opts.userId));
 
   const system = [
     `Ты — ${opts.agentName}, AI-компаньон. Сейчас идёт твоя фоновая учебная сессия.`,
@@ -471,43 +538,94 @@ function buildStudyMessages(
     свежая_переписка: chat.messages,
   };
 
-  return [
-    { role: "system", content: system },
-    { role: "user", content: JSON.stringify(payload, null, 1) },
-  ];
+  return {
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: JSON.stringify(payload, null, 1) },
+    ],
+    coveredTo: chat.coveredTo,
+    chatCount: chat.messages.length,
+    deferred: chat.deferred,
+  };
 }
 
 /**
- * Recent user/assistant messages, oldest first, as plain text, plus the rolling
- * summary of everything older.
+ * Everything the transcript holds since the last session, oldest first, as plain
+ * text, plus the rolling summary of everything older.
  *
- * The summary is the point. Without it the session only ever sees the last ~20
- * messages, so a pattern that took a month to emerge — how the owner actually
- * talks, what he circles back to, what annoys him — was invisible exactly when
- * it became visible. The table existed the whole time; the study prompt just
+ * The summary is half the point. Without it a session sees only what has not been
+ * read yet, and a pattern that took a month to emerge — how the owner actually
+ * talks, what he circles back to, what annoys him — would be invisible exactly
+ * when it became visible. The table existed the whole time; the study prompt just
  * threw the value away.
+ *
+ * The cursor is the other half. Taking the newest N messages is the wrong axis:
+ * it makes what a session reads a function of how busy the chat was, so a
+ * correction landing in a quiet hour is read and one landing in a loud hour is
+ * skipped, and neither has anything to do with whether the moment mattered. The
+ * cursor makes it a function of what has been read, which is the only question
+ * worth asking.
+ *
+ * `coveredTo` is what the cursor may advance to. The batch is kept oldest-first
+ * and the pointer moves to the last message kept, and the two have to agree: the
+ * cursor is a high-water mark, so everything up to it counts as read. A batch cut
+ * from the front would leave the dropped messages below the mark and the cursor
+ * claiming they had been read, which is the exact failure it exists to prevent.
+ *
+ * The overflow is then deferred, not dropped — the next session reads it — and
+ * reported, so a chat that produces more than one budget an hour shows up as a
+ * backlog instead of quietly falling behind.
  */
-function loadChat(
+function loadChatSince(
   userId: string,
-  limit: number,
-): { messages: Array<{ role: string; text: string }>; summary: string | null } {
-  let messages: LLMMessage[];
+  sinceId: number,
+): {
+  messages: Array<{ role: string; text: string }>;
+  summary: string | null;
+  coveredTo: number;
+  deferred: number;
+} {
+  let rows: Array<{ id: number; role: string; content: string }>;
   let summary: string | null = null;
   try {
-    const history = loadHistory(userId, limit * 3);
-    messages = history.messages;
-    summary = history.summary;
+    rows = messagesSince(userId, sinceId, MAX_CHAT_ROWS);
+    summary = loadSummary(userId);
   } catch {
-    return { messages: [], summary: null };
+    return { messages: [], summary: null, coveredTo: sinceId, deferred: 0 };
   }
 
+  const all = rows
+    .filter((r) => r.role === "user" || r.role === "assistant")
+    .map((r) => ({
+      id: r.id,
+      role: r.role,
+      text: truncate(plainText(r.content), MAX_CHAT_CHARS),
+    }))
+    .filter((r) => r.text.length > 0);
+
+  // Oldest first, and this is the opposite of what the digest below does with the
+  // same budget. The digest is a static account of a stretch, and in an account
+  // the newest end is the interesting one. This batch is a queue behind a read
+  // pointer, and a pointer only moves forward: keeping the newest would push the
+  // pointer past messages nobody read, while keeping the oldest makes the pointer
+  // true and drains a backlog at one budget per session.
+  let used = 0;
+  let last = -1;
+  for (let i = 0; i < all.length; i++) {
+    used += all[i].text.length;
+    // The first one always goes in, even alone over budget: a single message
+    // longer than the whole budget would otherwise pin the pointer in place and
+    // the session would re-read it for the rest of the install's life.
+    if (used > MAX_CHAT_TOTAL_CHARS && i > 0) break;
+    last = i;
+  }
+  const kept = all.slice(0, last + 1);
+
   return {
-    messages: messages
-      .filter((m) => m.role === "user" || m.role === "assistant")
-      .map((m) => ({ role: m.role, text: truncate(plainText(m.content), MAX_CHAT_CHARS) }))
-      .filter((m) => m.text.length > 0)
-      .slice(-limit),
+    messages: kept.map((r) => ({ role: r.role, text: r.text })),
     summary: summary ? keepNewest(summary, MAX_SUMMARY_CHARS) : null,
+    coveredTo: kept.length > 0 ? kept[kept.length - 1].id : sinceId,
+    deferred: all.length - kept.length,
   };
 }
 
