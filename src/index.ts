@@ -319,10 +319,10 @@ async function main() {
         }
         if (!result.ran || !result.report) return;
         if (result.wrote) {
-          console.log("🧠 study:", result.topic);
+          console.log("🧠 study:", result.zone);
           await channels.get("telegram")?.send(ownerId, { text: result.report });
         } else {
-          console.log("🧠 study: новых выводов нет —", result.reason ?? "без причины");
+          console.log("🧠 study: записей нет —", result.reason ?? "без причины");
         }
       } catch (err) {
         console.error("❌ study:", err instanceof Error ? err.message : err);

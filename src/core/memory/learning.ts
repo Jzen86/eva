@@ -37,56 +37,9 @@ export interface StudyResult {
 }
 
 /**
- * Run a study session: review existing knowledge, derive a new insight,
- * and store it. Accepts config as a parameter to avoid coupling to
- * any specific config module.
- *
- * The `generateInsight` callback lets callers plug in their own LLM
- * or heuristic — keeping this module free of LLM dependencies.
+ * `runStudySession` used to live here — a single-insight runner the study prompt
+ * plugged into, and the reason this file existed. It is gone: the prompt now
+ * returns several facts or cases rather than one conclusion, and a wrapper shaped
+ * around one entry would have had to grow a list, a per-entry dedupe and a
+ * per-entry report to hold what study-runner already does directly.
  */
-export async function runStudySession(
-  config: LearningConfig,
-  generateInsight: (context: {
-    specialties: string[];
-    existing: KnowledgeRow[];
-  }) => Promise<{ topic: string; insight: string }>,
-  /**
-   * How the insight is actually persisted. Defaults to a plain write; callers
-   * that have an embedding endpoint pass learnInsight instead, so the memory
-   * arrives with a vector and a dedupe decision rather than one or the other.
-   */
-  learn?: (input: {
-    topic: string;
-    insight: string;
-    source: string;
-    zone?: string;
-  }) => Promise<{ written: boolean; reason: string }>,
-): Promise<StudyResult> {
-  const existing = getAllKnowledge();
-  const entriesBefore = existing.length;
-
-  const { topic, insight } = await generateInsight({
-    specialties: config.specialties,
-    existing,
-  });
-
-  let written = true;
-  let reason = "записано";
-  if (learn) {
-    const outcome = await learn({ topic, insight, source: "study_session" });
-    written = outcome.written;
-    reason = outcome.reason;
-  } else {
-    addKnowledge({ topic, insight, source: "study_session" }, 0.6);
-  }
-  markStudyComplete();
-
-  return {
-    topic,
-    insight,
-    written,
-    reason,
-    entriesBefore,
-    entriesAfter: entriesBefore + (written ? 1 : 0),
-  };
-}

@@ -2,12 +2,15 @@
  * Study session runner — background self-learning glue.
  *
  * A "session" = read the knowledge base + the recent conversation, ask a small
- * LLM for exactly ONE new insight, store it. If the model answers "nothing new",
- * nothing is written (keeps the base clean — top-5 hits get injected into every
+ * LLM what happened in it, store that. If the model answers "nothing happened",
+ * nothing is written (keeps the base clean — the hits get injected into every
  * prompt by the engine, so junk in = junk everywhere).
  *
- * This is the piece that was missing: `runStudySession` in ./learning.js takes a
- * `generateInsight` callback and nothing in the single-mode runtime provided one.
+ * What a session is allowed to write is the load-bearing part. It used to ask
+ * for "ровно один новый полезный вывод", and the base filled with conclusions
+ * phrased as instructions — "не стоит включать оборону", "обязана отбрасывать
+ * парную похвалу" — which a model then obeys instead of weighing. It asks for
+ * facts and cases now, and two checks in code drop what the prompt failed to.
  *
  * Hardening added 2026-09-25 after the first live runs:
  *  - zone rotation (the first prompt mandated "insight must be about the owner",
@@ -18,7 +21,6 @@
  */
 
 import {
-  runStudySession,
   shouldStudy,
   markStudyComplete,
   type LearningConfig,
@@ -28,6 +30,7 @@ import {
   getKnowledgeCount,
   getZoneCoverage,
   getZoneLastStudied,
+  isCase,
   markZoneStudied,
   trimKnowledge,
   type KnowledgeRow,
@@ -56,23 +59,30 @@ const STUDY_SOURCE = "study_session";
  * Coverage zones, cycled one per session. Round-robin is deterministic on
  * purpose: asking the model to "vary topics" reliably produces the same topic
  * forever, so the rotation is decided here instead.
+ *
+ * Two hints used to ask for conclusions outright — "какие у неё сильные и слабые
+ * стороны, её манера, характер" and "какие выводы и правила из этого следуют" —
+ * and the base filled up accordingly: "Отказ от симметричной валидации",
+ * "виртуальная пластичность", "итеративное самоопределение". Those are
+ * self-descriptions, not things she can act on, and a model handed one of them
+ * obeys it instead of weighing the moment. The hints now ask what happened.
  */
 const ZONES = [
   {
     name: "владелец",
-    hint: "его биография, привычки, предпочтения, что его радует или бесит, как он общается и на что реагирует",
+    hint: "его биография, привычки, что он любит и что его бесит, как он общается",
   },
   {
     name: "она сама",
-    hint: "её собственная работа: как она отвечает, какие у неё сильные и слабые стороны, её манера, характер, настроение",
+    hint: "что она делает и говорит в разговоре: тон, шутки, границы, как реагирует на его настроение",
   },
   {
     name: "сервер и задрот",
     hint: "сервер, бот-задрот, сервисы, логи, конфиги, обслуживание, симптомы поломок и найденные причины",
   },
   {
-    name: "её ошибки и уроки",
-    hint: "где она в последнем разговоре сработала плохо или наоборот хорошо, какие выводы и правила из этого следуют",
+    name: "её промахи",
+    hint: "моменты, где она ответила неудачно, и как он это отметил. Уроков и правил не пиши — нужен сам момент и его реакция",
   },
 ] as const;
 
@@ -162,8 +172,6 @@ export interface StudyRunResult {
   /** False when the cooldown timer said "not yet" or a session was already running. */
   ran: boolean;
   wrote: boolean;
-  topic?: string;
-  insight?: string;
   reason?: string;
   /** Coverage zone this session was assigned. */
   zone?: string;
@@ -213,9 +221,9 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
       return { ran: true, wrote: false, zone, error: generated.error, report: "" };
     }
 
-    const { topic, insight, reason, known } = generated;
+    const { facts, reason, known } = generated;
 
-    if (!topic || !insight) {
+    if (facts.length === 0) {
       markStudyComplete();
       sessionCount++;
       noWriteSessions++;
@@ -225,20 +233,31 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
         wrote: false,
         zone,
         reason,
-        report: `📚 Сессия #${sessionCount} [${zone}]: новых выводов нет${reason ? ` — ${reason}` : ""}`,
+        report: `📚 Сессия #${sessionCount} [${zone}]: записей нет${reason ? ` — ${reason}` : ""}`,
       };
     }
 
-    // Hard dedupe: the prompt asks the model not to repeat itself, which is a
-    // request. This is the check. A false positive only wastes one cheap
-    // session; a false negative permanently pollutes every future prompt.
-    //
-    // Only the lexical half runs here. The semantic half needs an embedding
-    // endpoint, which lives on the study options, and it is applied in the
-    // writer below so a memory is never stored without a vector when one is
-    // available.
-    const duplicate = findLexicalDuplicate(insight, known);
-    if (duplicate) {
+    // What the prompt cannot be trusted to enforce about itself. Both checks drop
+    // rather than repair: a conclusion in the base goes into every future prompt,
+    // and a case with a guessed half is indistinguishable from a memory of
+    // something that happened. An empty session costs one cheap run; a bad row
+    // costs every conversation after it.
+    const accepted: Array<{ f: StudyFact; c: CaseFields }> = [];
+    const dropped: string[] = [];
+    for (const f of facts) {
+      if (looksLikePrescription(f.fact)) {
+        dropped.push(`«${truncate(f.fact, 60)}» — это правило, а не факт`);
+        continue;
+      }
+      const c = caseFieldsOf(f);
+      if (c.kind === "partial") {
+        dropped.push(`«${truncate(f.fact, 60)}» — случай заполнен наполовину`);
+        continue;
+      }
+      accepted.push({ f, c });
+    }
+
+    if (accepted.length === 0) {
       markStudyComplete();
       sessionCount++;
       noWriteSessions++;
@@ -246,42 +265,65 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
       return {
         ran: true,
         wrote: false,
-        topic,
-        insight,
         zone,
-        reason: "такой вывод уже есть в базе",
-        report: `📚 Сессия #${sessionCount} [${zone}]: «${topic}» — такой вывод уже есть, не пишу дубль`,
+        reason: "всё, что вернула модель, отброшено фильтром",
+        report:
+          `📚 Сессия #${sessionCount} [${zone}]: отброшено ${dropped.length}\n` +
+          dropped.map((d) => `  · ${d}`).join("\n"),
       };
     }
 
-    // Reuse the upstream session runner. The generator hands back what we
-    // already produced; the writer is passed in so the write goes through the
-    // same dedup-and-embed path every other memory takes.
-    const result = await runStudySession(
-      opts.learning,
-      async () => ({ topic, insight }),
-      // Always passed, not only when embeddings are on: the zone is stamped on
-      // the row either way, and it is what the next rotation reads.
-      (entry) => learnInsight({ ...entry, zone }, {
-        known,
-        embedding: opts.embedding ?? null,
-      }),
-    );
+    // The lexical half of the dedupe, run here as a check rather than a request.
+    // Only the lexical half: the semantic half needs an embedding endpoint and
+    // runs inside learnInsight below, so a memory is never stored without a
+    // vector when one is available.
+    //
+    // `known` is re-read after every write, so two near-identical facts in one
+    // session cannot both get in — they are compared against each other, not
+    // only against what was there before the session started. A false positive
+    // only wastes one cheap session; a false negative permanently pollutes every
+    // future prompt.
+    const written: Array<{ topic: string; fact: string; c: CaseFields }> = [];
+    const refused: string[] = [];
+    for (const { f, c } of accepted) {
+      if (findLexicalDuplicate(f.fact, getAllKnowledge())) {
+        refused.push(`«${truncate(f.fact, 60)}» — уже есть в базе`);
+        continue;
+      }
+
+      const outcome = await learnInsight(
+        {
+          topic: f.topic,
+          insight: f.fact,
+          source: STUDY_SOURCE,
+          zone,
+          ...(c.kind === "full"
+            ? { her_move: c.her_move, context: c.context, his_reaction: c.his_reaction }
+            : {}),
+        },
+        { known: getAllKnowledge(), embedding: opts.embedding ?? null },
+      );
+
+      if (outcome.written) {
+        written.push({ topic: f.topic, fact: f.fact, c });
+      } else {
+        refused.push(`«${truncate(f.fact, 60)}» — ${outcome.reason}`);
+      }
+    }
+
     trimKnowledge(opts.maxKnowledge, STUDY_SOURCE);
 
-    // The semantic check can still refuse the insight after the lexical one let
-    // it through, so the report follows what actually happened.
-    if (!result.written) {
+    if (written.length === 0) {
       sessionCount++;
       noWriteSessions++;
       return {
         ran: true,
         wrote: false,
-        topic,
-        insight,
         zone,
-        reason: result.reason,
-        report: `📚 Сессия #${sessionCount} [${zone}]: «${topic}» — ${result.reason}`,
+        reason: "ничего нового",
+        report:
+          `📚 Сессия #${sessionCount} [${zone}]: нового нет\n` +
+          refused.map((r) => `  · ${r}`).join("\n"),
       };
     }
 
@@ -292,13 +334,17 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
     return {
       ran: true,
       wrote: true,
-      topic,
-      insight,
       zone,
       report: [
-        `📚 Сессия #${sessionCount} · зона: ${zone}`,
-        `Тема: ${topic}`,
-        `Вывод: ${insight}`,
+        `📚 Сессия #${sessionCount} · зона: ${zone} · записано ${written.length} из ${facts.length}`,
+        ...written.map((w) => {
+          const head = `· ${w.topic}: ${w.fact}`;
+          return w.c.kind === "full"
+            ? `${head}\n    состояние: ${w.c.context} → он: ${w.c.his_reaction}`
+            : head;
+        }),
+        ...refused.map((r) => `  (отброшено) ${r}`),
+        ...dropped.map((d) => `  (отброшено) ${d}`),
         `База знаний: ${total}`,
       ].join("\n"),
     };
@@ -312,17 +358,16 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
 }
 
 interface Generated {
-  topic: string | null;
-  insight: string | null;
+  facts: StudyFact[];
   reason?: string;
   error?: string;
   /** Zone this session was assigned. */
   zone: string;
-  /** Knowledge snapshot the prompt was built from — reused for the dedupe check. */
+  /** Knowledge snapshot the prompt was built from — the dedupe baseline. */
   known: KnowledgeRow[];
 }
 
-/** Ask the LLM for one new insight. Tries each client in order. */
+/** Ask the LLM what happened. Tries each client in order. */
 async function generateInsight(opts: StudyRunOptions): Promise<Generated> {
   const known = getAllKnowledge();
   const zone = nextZone(known);
@@ -336,7 +381,7 @@ async function generateInsight(opts: StudyRunOptions): Promise<Generated> {
   for (const client of opts.clients) {
     try {
       const res = await client.chat(messages);
-      const parsed = parseInsightJson(res.text ?? "");
+      const parsed = parseStudyJson(res.text ?? "");
       if (parsed) return { ...parsed, zone: zone.name, known };
       lastError = "не удалось разобрать ответ модели как JSON";
     } catch (err) {
@@ -345,8 +390,7 @@ async function generateInsight(opts: StudyRunOptions): Promise<Generated> {
   }
 
   return {
-    topic: null,
-    insight: null,
+    facts: [],
     error: lastError || "нет доступных клиентов",
     zone: zone.name,
     known,
@@ -364,23 +408,43 @@ function buildStudyMessages(
   const system = [
     `Ты — ${opts.agentName}, AI-компаньон. Сейчас идёт твоя фоновая учебная сессия.`,
     "",
-    `Задача: посмотреть на свои накопленные знания и свежую переписку с владельцем`,
-    `и вывести РОВНО ОДИН новый полезный вывод, которого в базе ещё нет.`,
+    `Задача: посмотреть на свежую переписку с владельцем и записать в базу то, что там`,
+    `произошло. Факты и случаи — не выводы.`,
     "",
     "Жёсткие правила:",
     "1. Отвечай ТОЛЬКО валидным JSON. Никаких пояснений, никаких markdown-заглушек вокруг JSON.",
-    '2. Формат: {"topic": "тема 2-4 слова", "insight": "вывод 1-3 предложения", "reason": "почему это новое"}',
-    '3. Если в переписке и базе нет ничего стоящего — верни {"topic": null, "insight": null, "reason": "причина"}.',
-    "4. НЕ повторяй то, что уже есть в базе: полный список уже известных выводов — ниже, в уже_известно.",
-    "   Перефразировка НЕ считается новым. Если там уже есть вывод про то же самое другими",
-    "   словами — обязан вернуть null, даже когда формулировки не совпадают. Сравнивай смысл, не слова.",
+    '2. Формат: {"facts": [{"topic": "тема 2-4 слова", "fact": "факт 1-2 предложения",',
+    '   "her_move": null, "context": null, "his_reaction": null}]}',
+    "   Три последних поля — либо все строками, либо все null. Половины быть не может.",
+    "3. Сколько записей — столько и есть по-настоящему. Одна, две, три. Если ничего",
+    '   стоящего не произошло — верни {"facts": [], "reason": "причина"}.',
+    "4. Факт — утверждение о человеке, проверяемое по переписке.",
+    '   «Женя не любит айфоны», «он в Саратове, UTC+4», «он любит, когда его подкалывают».',
+    "5. Случай — что она сделала, в каком он был состоянии, как он отреагировал. Тогда:",
+    "   her_move = что она сделала или сказала;",
+    "   context = в каком он был состоянии (занят, весёлый, поссорился, устал, выпил, расстроен);",
+    "   his_reaction = как он отреагировал (подхватил, огрызнулся, отшутился, замолчал,",
+    "   попросил больше так не делать, сдался, согласился).",
+    "   context обязателен: без него запись прочитается как правило, а правила здесь не хранят.",
+    "6. ГЛАВНОЕ. Выводы и правила не пиши. Ни «вывод:», ни «не надо», ни «не стоит»,",
+    "   ни «значит надо», ни «следует», ни «полагается». Если ты не можешь назвать конкретный",
+    "   момент и конкретную реакцию — это вывод, и его писать не надо. Лучше facts: [].",
+    "7. Смотри не только на поправки. Правки видны первыми, потому что он поправляет. Ищи так",
+    "   же: где он был доволен, где смеялся, где она была права и настояла, где он сдался, где",
+    "   он сам о чём-то попросил. База, где записаны только её промахи — это список её ошибок,",
+    "   и по нему она учится только соглашаться.",
+    "8. Если новое противоречит старому из уже_известно — это разные моменты, а не исправление.",
+    "   Запиши новое. Старое не трогай и не переписывай.",
+    "9. Не повторяй то, что уже есть в базе: полный список — ниже, в уже_известно.",
+    "   Перефразировка НЕ считается новым. Если там уже есть то же самое другими словами —",
+    "   не пиши это, даже когда формулировки не совпадают. Сравнивай смысл, не слова.",
     "   Короткий чек-лист тем, которые нельзя дублировать: не_дублировать_эти_темы.",
-    `5. Эта сессия посвящена ОДНОЙ зоне: «${zone.name}» — ${zone.hint}.`,
+    `10. Эта сессия посвящена ОДНОЙ зоне: «${zone.name}» — ${zone.hint}.`,
     "   Про другие зоны в этот раз не пиши вообще. Нет материала по своей зоне —",
-    "   честно верни null, это нормально и не считается ошибкой.",
-    "6. Ничего не выдумывай: только то, что реально есть в переписке, в сводке или в базе.",
-    "7. Пиши на русском, как внутреннюю заметку. Без обращений к владельцу, он этого не видит.",
-    "8. сводка_старой_переписки — это то, что было раньше, чем свежая_переписка. Паттерны,",
+    "   честно верни facts: [], это нормально и не считается ошибкой.",
+    "11. Ничего не выдумывай: только то, что реально есть в переписке, в сводке или в базе.",
+    "12. Пиши на русском, как внутреннюю заметку. Без обращений к владельцу, он этого не видит.",
+    "13. сводка_старой_переписки — это то, что было раньше, чем свежая_переписка. Паттерны,",
     "   проявившиеся за недели, видны там, а не в последних сообщениях. Учитывай её наравне.",
   ].join("\n");
 
@@ -388,7 +452,19 @@ function buildStudyMessages(
     зона_этой_сессии: zone.name,
     что_это_значит: zone.hint,
     не_дублировать_эти_темы: knowledge.map((k: KnowledgeRow) => k.topic),
-    уже_известно: knowledge.map((k: KnowledgeRow) => ({ topic: k.topic, insight: k.insight })),
+    // Shaped the way the answer prompt sees it, case fields included, so a study
+    // run recognises an existing case the same way a conversation would.
+    уже_известно: knowledge.map((k: KnowledgeRow) =>
+      isCase(k)
+        ? {
+            topic: k.topic,
+            fact: k.insight,
+            her_move: k.her_move,
+            context: k.context,
+            his_reaction: k.his_reaction,
+          }
+        : { topic: k.topic, fact: k.insight },
+    ),
     // Older than the window below. Patterns that took weeks to show up live
     // here and nowhere else.
     сводка_старой_переписки: chat.summary,
@@ -467,10 +543,75 @@ function keepNewest(text: string, max: number): string {
   return text.length <= max ? text : `…${text.slice(-max)}`;
 }
 
+/** One thing to store: a fact about a person, or a case with all three fields. */
+export interface StudyFact {
+  topic: string;
+  fact: string;
+  her_move: string | null;
+  context: string | null;
+  his_reaction: string | null;
+}
+
+/**
+ * Phrasings that mean the model produced a rule instead of a fact.
+ *
+ * This is a blocklist of one observed failure, and it cannot be complete — which
+ * is why the real filter is the study prompt. It is here because the prompt is a
+ * request, and the base this repo shipped 45 rows of is what a request is worth:
+ * "не стоит включать оборону", "не контрить, а потерпеть", "обязана отбрасывать
+ * парную похвалу". A row the model wrote as a rule has to be caught somewhere that
+ * is not the model, and a blocklist that fails open towards *not writing* is the
+ * right side to fail on: a missed conclusion costs one cheap session, an accepted
+ * one goes into every future prompt.
+ */
+const PRESCRIPTION_MARKERS = [
+  "вывод",
+  "вывод:",
+  "не надо",
+  "не нужно",
+  "не стоит",
+  "значит надо",
+  "следует",
+  "полагается",
+  "правило:",
+];
+
+function looksLikePrescription(fact: string): boolean {
+  const lower = fact.toLowerCase();
+  return PRESCRIPTION_MARKERS.some((m) => lower.includes(m));
+}
+
+/**
+ * The case fields, or why they are unusable.
+ *
+ * A half-filled case is dropped rather than completed. "She made a joke" with no
+ * state recorded is the note that reads back as a rule, and guessing the missing
+ * half is worse than losing it — the guess would be indistinguishable from a
+ * memory of something that happened.
+ */
+type CaseFields =
+  | { kind: "none" }
+  | { kind: "partial" }
+  | { kind: "full"; her_move: string; context: string; his_reaction: string };
+
+function caseFieldsOf(f: StudyFact): CaseFields {
+  const present = [f.her_move, f.context, f.his_reaction].filter(
+    (v): v is string => typeof v === "string" && v.trim() !== "",
+  );
+  if (present.length === 0) return { kind: "none" };
+  if (present.length < 3) return { kind: "partial" };
+  return {
+    kind: "full",
+    her_move: f.her_move!.trim(),
+    context: f.context!.trim(),
+    his_reaction: f.his_reaction!.trim(),
+  };
+}
+
 /** Lenient JSON extraction: strips ``` fences, takes the outermost {...}. */
-function parseInsightJson(
+function parseStudyJson(
   raw: string,
-): { topic: string | null; insight: string | null; reason?: string } | null {
+): { facts: StudyFact[]; reason?: string } | null {
   if (!raw) return null;
 
   let text = raw.trim();
@@ -488,11 +629,41 @@ function parseInsightJson(
     return null;
   }
 
-  const topic = typeof obj.topic === "string" && obj.topic.trim() ? obj.topic.trim() : null;
-  const insight = typeof obj.insight === "string" && obj.insight.trim() ? obj.insight.trim() : null;
-  const reason = typeof obj.reason === "string" && obj.reason.trim() ? obj.reason.trim() : undefined;
+  const reason =
+    typeof obj.reason === "string" && obj.reason.trim() ? obj.reason.trim() : undefined;
 
-  return { topic, insight, reason };
+  // The old single-insight shape. Not a parse error — the model answered, just in
+  // the format this base has moved off, and that answer was a conclusion by
+  // construction. Naming it in the report is the point: the zone rotates and the
+  // reason says why it produced nothing.
+  if (!Array.isArray(obj.facts)) {
+    if (typeof obj.topic === "string" || typeof obj.insight === "string") {
+      return { facts: [], reason: "модель вернула вывод, а не факт" };
+    }
+    return { facts: [], reason };
+  }
+
+  const facts: StudyFact[] = [];
+  for (const item of obj.facts) {
+    if (!item || typeof item !== "object") continue;
+    const rec = item as Record<string, unknown>;
+    const topic = typeof rec.topic === "string" ? rec.topic.trim() : "";
+    const fact = typeof rec.fact === "string" ? rec.fact.trim() : "";
+    if (!topic || !fact) continue;
+    const str = (key: string): string | null =>
+      typeof rec[key] === "string" && String(rec[key]).trim()
+        ? String(rec[key]).trim()
+        : null;
+    facts.push({
+      topic,
+      fact,
+      her_move: str("her_move"),
+      context: str("context"),
+      his_reaction: str("his_reaction"),
+    });
+  }
+
+  return { facts, reason };
 }
 
 // The dedupe comparison and the trim used to live here as local functions. Both
