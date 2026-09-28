@@ -14,6 +14,7 @@ import {
 import { searchKnowledge } from "./memory/knowledge.js";
 import { saveMessage, loadHistory, extractText } from "./memory/conversations.js";
 import { compactHistory } from "./memory/compaction.js";
+import { alignHistory } from "./llm/history.js";
 import { LLMUnavailableError } from "./llm/router.js";
 import { TokenStore } from "../services/tokens.js";
 import { getService } from "../services/catalog.js";
@@ -138,6 +139,39 @@ export class Engine {
     this.summaries.delete(userId);
   }
 
+  /**
+   * Keep only the part of the history a provider will parse, and remember it.
+   *
+   * The single place this happens, called before every request the engine
+   * builds — which covers each way a history can arrive wrong: loaded from the
+   * database, cut by `hard_truncate`, replaced wholesale by a compaction, or
+   * appended to by a turn that died midway. Checking at the request boundary
+   * rather than at each source is the point: a second source added later gets
+   * the guarantee for free, and there is no ordering to get wrong between a
+   * cut and a check.
+   *
+   * This is not a nicety. On 27.09 Eva went quiet for the rest of the
+   * process's life: `slice(-40)` landed inside an `assistant(tool_calls)` +
+   * `tool` pair, every request came back `400` with no body, and the catch that
+   * apologises to the user sent the same broken history, so the apology failed
+   * too. A request that cannot be parsed is not a provider having a bad day.
+   */
+  private align(userId: string, history: LLMMessage[], reason: string): LLMMessage[] {
+    const aligned = alignHistory(history);
+    if (aligned === history) return history;
+    console.log(
+      JSON.stringify({
+        tag: "engine:history_align",
+        userId,
+        reason,
+        dropped: history.length - aligned.length,
+        kept: aligned.length,
+      }),
+    );
+    this.histories.set(userId, aligned);
+    return aligned;
+  }
+
   getHistory(userId: string): Array<{ role: string; content: string }> {
     this.hydrateUser(userId);
     const history = this.histories.get(userId);
@@ -190,7 +224,9 @@ export class Engine {
     }
     let history = this.histories.get(userId)!;
 
-    // Hard truncation: if history is still too large after compaction, keep only recent messages
+    // Hard truncation: if history is still too large after compaction, keep only recent messages.
+    // The cut is raw on purpose — `align` runs at the request boundary, and a
+    // second check here would be the same walk of the same array.
     if (history.length > MAX_HISTORY * 2) {
       console.log(JSON.stringify({ tag: "engine:hard_truncate", userId, before: history.length, kept: MAX_HISTORY }));
       history = history.slice(-MAX_HISTORY);
@@ -250,21 +286,30 @@ export class Engine {
 
         onProgress?.({ type: "thinking" });
 
-        const messages: LLMMessage[] = [
-          { role: "system", content: systemPrompt },
-          ...history,
-        ];
+        history = this.align(userId, history, "request");
 
         // Use streaming for text responses, non-streaming for tool calls
         const streamChunk = onProgress
           ? (chunk: string) => onProgress({ type: "text_chunk", chunk })
           : undefined;
 
+        const request: LLMMessage[] = [
+          { role: "system", content: systemPrompt },
+          ...history,
+        ];
+
         const histSize = historyChars(history);
         const llmStart = Date.now();
+        // No retry on a 400, and that is deliberate. The history is aligned
+        // right above, before the request is assembled, so a rejected request
+        // was rejected for a reason that survives the same request being sent
+        // again — a model that is not allowed, a body nobody here reads. What
+        // used to happen instead: the request 400'd, the catch apologised to
+        // the user on the very same history, that call 400'd too, and Eva went
+        // silent for the rest of the process's life.
         const response = streamChunk
-          ? await llm.chatStream(messages, streamChunk, tools.length ? tools : undefined)
-          : await llm.chat(messages, tools.length ? tools : undefined);
+          ? await llm.chatStream(request, streamChunk, tools.length ? tools : undefined)
+          : await llm.chat(request, tools.length ? tools : undefined);
         const llmMs = Date.now() - llmStart;
 
         console.log(JSON.stringify({
@@ -437,6 +482,11 @@ export class Engine {
           : `техническая проблема: ${errorMsg}`;
 
         history.push({ role: "user", content: `[Системное сообщение: произошла ошибка — ${errorContext}. Объясни пользователю своими словами что случилось, извинись и предложи попробовать ещё раз. Не используй технические термины. Будь краткой.]` });
+
+        // Last chance to leave the history in a state someone can answer: the
+        // apology below is the last thing Eva says this turn, and if it goes
+        // out on an unparseable history the user gets silence instead of it.
+        history = this.align(userId, history, "recovery");
 
         const recoveryMessages: LLMMessage[] = [
           { role: "system", content: systemPrompt },

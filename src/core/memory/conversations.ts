@@ -1,4 +1,5 @@
 import { getDB } from "./db.js";
+import { alignHistory } from "../llm/history.js";
 import type { LLMMessage, ContentPart, ToolUseRequest } from "../llm/types.js";
 
 /**
@@ -104,24 +105,10 @@ export function loadHistory(
     messages.push(msg);
   }
 
-  // Trim start: advance past any leading non-user messages
-  let start = 0;
-  while (start < messages.length && messages[start].role !== "user") {
-    start++;
-  }
-  const trimmed = messages.slice(start);
-
-  // Trim end: remove trailing assistant messages that have toolCalls but no following tool result
-  let end = trimmed.length;
-  while (end > 0) {
-    const last = trimmed[end - 1];
-    if (last.role === "assistant" && last.toolCalls && last.toolCalls.length > 0) {
-      end--;
-    } else {
-      break;
-    }
-  }
-  const result = trimmed.slice(0, end);
+  // The same border rules the live history gets, see `llm/history.ts`: this
+  // window starts and ends wherever SQLite felt like, not where a tool call
+  // and its result do.
+  const result = alignHistory(messages);
 
   const summaryRecord = loadSummary(userId);
 
