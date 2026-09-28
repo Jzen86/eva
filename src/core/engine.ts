@@ -553,6 +553,13 @@ export class Engine {
    * here costs the old messages their summary, which is a far smaller loss than
    * refusing to answer. The next message waits for it at the top of
    * `processLocked`, which is what puts the finished summary into that prompt.
+   *
+   * It writes the summary and nothing else. The fold deletes rows older than the
+   * window, so reloading the history afterwards would hand back the very array
+   * the running turn is already appending to — and a turn that is halfway
+   * through a tool block would lose the rest of itself. That is the same
+   * "someone else wrote the history mid-turn" hazard `turnLocks` exists for,
+   * and a compaction that is a no-op on the window has no business doing it.
    */
   private startCompaction(userId: string): void {
     if (this.compactionInFlight.has(userId)) return;
@@ -560,9 +567,8 @@ export class Engine {
     const started = Date.now();
     const promise = compactHistory(userId, this.deps.llm.fast(), MAX_HISTORY)
       .then(() => {
-        const { messages: m, summary: s } = loadHistory(userId);
-        this.histories.set(userId, m);
-        if (s) this.summaries.set(userId, s);
+        const { summary } = loadHistory(userId);
+        if (summary) this.summaries.set(userId, summary);
         // Folded rows leave the table and enter the summary, so a drop is the
         // whole point — and a fold that folded nothing is the failure worth
         // seeing, not the one that gets a line.
@@ -572,7 +578,7 @@ export class Engine {
             userId,
             ms: Date.now() - started,
             folded: before - countMessages(userId),
-            summaryChars: s?.length ?? 0,
+            summaryChars: summary?.length ?? 0,
           }),
         );
       })

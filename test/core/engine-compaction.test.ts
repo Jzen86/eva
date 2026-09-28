@@ -139,4 +139,78 @@ describe("engine: compaction", () => {
     expect(loadSummary(user)).toBeNull();
     expect(countMessages(user)).toBeGreaterThan(45);
   });
+
+  it("does not take the history away from a turn that is still running", async () => {
+    // The fold is in flight when the turn that triggered it reaches its tool,
+    // and it lands there: between the call and its result, while the engine is
+    // holding a history array and about to keep appending to it. Reloading the
+    // history on the way out would put a *different* array into the map — one
+    // read from a table whose tail stops at the unanswered call, because the
+    // result has not been written yet. The turn itself would not notice; the
+    // next message would, because it starts from the map and would find the
+    // previous exchange missing its own tool result. That is the hazard
+    // `turnLocks` was added for, and the fold only deletes rows older than the
+    // window, so it has no reason to write to the history at all.
+    const user = "mid-turn";
+    seedTurns(user, 45);
+
+    let releaseFold: (() => void) | undefined;
+    const foldInFlight = new Promise<void>((resolve) => {
+      releaseFold = resolve;
+    });
+    const isSummaryRequest = (m: LLMMessage[]) => m.length === 1 && m[0].role === "user";
+
+    let wantTool = false;
+    const chat = vi.fn().mockImplementation(async (messages: LLMMessage[]) => {
+      if (isSummaryRequest(messages)) {
+        await foldInFlight;
+        return { text: "Свернуто.", stopReason: "end_turn" };
+      }
+      if (wantTool) {
+        wantTool = false;
+        return { text: "", stopReason: "tool_use", toolCalls: [{ id: "mid1", name: "t", arguments: {} }] };
+      }
+      return { text: "ок", stopReason: "end_turn" };
+    });
+    const tools = new ToolRegistry();
+    tools.register({
+      name: "t",
+      description: "t",
+      parameters: [],
+      async execute() {
+        // Let the fold finish right here, mid tool block: the assistant row with
+        // the call is already saved, this result is not.
+        releaseFold!();
+        for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+        return { success: true, output: "ок" };
+      },
+    });
+    const engine = new Engine({
+      llm: { fast: () => ({ chat }), strong: () => ({ chat }), hasRole: () => false },
+      config: testConfig,
+      tools,
+    });
+
+    // 40 messages load, two per answer, so 21 plain answers put the history at
+    // 82 and the turn that trips the cut is the next one.
+    for (let i = 0; i < 21; i++) {
+      await engine.process({ channelName: "test", userId: user, text: `ещё ${i}`, timestamp: Date.now() });
+    }
+    const next: LLMMessage[][] = [];
+    wantTool = true;
+    await engine.process({ channelName: "test", userId: user, text: "сделай", timestamp: Date.now() });
+    wantTool = false;
+    chat.mockImplementation(async (messages: LLMMessage[]) => {
+      if (isSummaryRequest(messages)) return { text: "Свернуто.", stopReason: "end_turn" };
+      next.push(messages);
+      return { text: "ок", stopReason: "end_turn" };
+    });
+
+    await engine.process({ channelName: "test", userId: user, text: "а ты?", timestamp: Date.now() });
+
+    // The fold did happen — this is not a test that passes because nothing ran.
+    expect(loadSummary(user)).not.toBeNull();
+    // And the next message still sees the tool result the fold landed on top of.
+    expect(next.at(-1)?.filter((m) => m.role === "tool")).toHaveLength(1);
+  });
 });
