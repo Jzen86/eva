@@ -209,7 +209,9 @@ export function createMemoryTool(opts: MemoryToolOptions = {}): Tool {
       "content = what was said about it, and it has to be concrete — a name, a number, a " +
       "colour, a version, a place. 'рассказывал про кошку' is worthless: it takes a row " +
       "and gives nothing to remember. 'кошку зовут Муська, трёхцветная, спит на клавиатуре' " +
-      "is a row. Even a plain chat about nothing in particular has a subject, and this is " +
+      "is a row. Keep it to a sentence or two and cut the framing — 'заявил, что', " +
+      "'в ходе диалога', 'подтвердил, что' — the substance is what is worth the space. " +
+      "Even a plain chat about nothing in particular has a subject, and this is " +
       "how you can bring it up yourself a week later.\n" +
       "2) A fact about him or her: content alone ('не любит айфоны').\n" +
       "3) A case, when he reacted to something you did: her_move = what you did, " +

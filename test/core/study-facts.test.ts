@@ -266,6 +266,16 @@ describe("study: the prompt it is asked with", () => {
     expect(text).toContain("Муська");
   });
 
+  it("asks for a short entry and names the framing to cut", async () => {
+    // The first live row was 271 characters, and most of it was scaffolding:
+    // "Открыто заявил, что", "в ходе диалога". Twelve rows go into every answer,
+    // so length buys fewer examples rather than more memory.
+    const text = await prompt();
+    expect(text).toContain("одно-два предложения");
+    expect(text).toContain("обрамление");
+    expect(text).toContain("бэкапы не делает намеренно");
+  });
+
   it("treats the zone as where to look first, not as a prohibition", async () => {
     // It was a prohibition, and it cost a real conversation on a live run: the
     // session read two messages and returned "нет конкретных фактов или событий
