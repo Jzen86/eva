@@ -206,8 +206,11 @@ export function createMemoryTool(opts: MemoryToolOptions = {}): Tool {
       "action=save takes what actually happened, not a conclusion drawn from it. Three " +
       "kinds of entry, and the first is the one you will need most often:\n" +
       "1) What you talked about: topic = the subject in a word ('самолёты', 'работа'), " +
-      "content = what was said about it. Even a plain chat about nothing in particular " +
-      "has a subject, and this is how you can bring it up yourself a week later.\n" +
+      "content = what was said about it, and it has to be concrete — a name, a number, a " +
+      "colour, a version, a place. 'рассказывал про кошку' is worthless: it takes a row " +
+      "and gives nothing to remember. 'кошку зовут Муська, трёхцветная, спит на клавиатуре' " +
+      "is a row. Even a plain chat about nothing in particular has a subject, and this is " +
+      "how you can bring it up yourself a week later.\n" +
       "2) A fact about him or her: content alone ('не любит айфоны').\n" +
       "3) A case, when he reacted to something you did: her_move = what you did, " +
       "context = the state he was in (busy, cheerful, in an argument, tired), " +

@@ -254,6 +254,18 @@ describe("study: the prompt it is asked with", () => {
     expect(text).toContain("разные моменты, а не исправление");
   });
 
+  it("demands something concrete in the description", async () => {
+    // "рассказывал про кошку" is a row that takes space and gives nothing to
+    // remember. The prompt asked for short and never asked for a single name,
+    // colour or number, so it got summaries of the fact that a conversation had
+    // happened. Vagueness is not machine-detectable without guessing, so this is
+    // the lever — and this test is what stops a rewrite from dropping it.
+    const text = await prompt();
+    expect(text).toContain("должно быть конкретным");
+    expect(text).toContain("рассказывал про кошку");
+    expect(text).toContain("Муська");
+  });
+
   it("no zone asks it for lessons any more", async () => {
     // "какие выводы и правила из этого следуют" is the sentence that produced
     // «Отказ от симметричной валидации» and «виртуальная пластичность».
