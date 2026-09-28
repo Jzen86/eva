@@ -283,6 +283,28 @@ export function indexText(text: string): string {
 }
 
 /**
+ * Russian count agreement: 1 копия, 2 копии, 5 копий.
+ *
+ * Lives beside the stemmer because it is the same kind of thing — a piece of
+ * Russian this code has to produce correctly — and because two callers need it
+ * now: the doctor report and the memory prompt. A second copy would be a rule
+ * that agrees with itself until one of them is fixed.
+ */
+export function plural(n: number, one: string, few: string, many: string): string {
+  const abs = Math.abs(n) % 100;
+  const last = abs % 10;
+  if (abs > 10 && abs < 20) return many;
+  if (last > 1 && last < 5) return few;
+  if (last === 1) return one;
+  return many;
+}
+
+/** "3 копии" — the number and its noun, agreed. */
+export function counted(n: number, one: string, few: string, many: string): string {
+  return `${n} ${plural(n, one, few, many)}`;
+}
+
+/**
  * Stems of the text, skipping words the caller considers noise.
  *
  * The stop check has to run on the original token, not on the stem: "знаешь"

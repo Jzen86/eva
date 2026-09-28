@@ -5,7 +5,7 @@ import path from "node:path";
 
 import { getDB, closeDB } from "../../src/core/memory/db.js";
 import { saveMessage, studyCursor, setStudyCursor } from "../../src/core/memory/conversations.js";
-import { addKnowledge } from "../../src/core/memory/knowledge.js";
+import { addKnowledge, relativeAge } from "../../src/core/memory/knowledge.js";
 import { runStudy } from "../../src/core/memory/study-runner.js";
 import { shouldStudy, markStudyComplete } from "../../src/core/memory/learning.js";
 import type { LLMMessage } from "../../src/core/llm/types.js";
@@ -203,6 +203,26 @@ describe("study: the read cursor", () => {
     });
 
     expect(result.report).toContain("в следующую сессию");
+  });
+
+  it("dates a row by the conversation, not by the run", async () => {
+    // A session reading a backfill is reconstructing days-old talk. Stamped at
+    // the run, every row recovered from an old conversation would be dated today,
+    // and "мы говорили об этом неделю назад" would be a falsehood the base tells
+    // about itself — precisely during the backfill, which is when it happens.
+    say(["обсуждали самолёты, он летал в Саратов"]);
+    const fiveDaysAgo = Math.floor(Date.now() / 1000) - 5 * 86_400;
+    getDB().prepare("UPDATE conversations SET timestamp = ?").run(fiveDaysAgo);
+
+    await session(
+      JSON.stringify({ facts: [{ topic: "самолёты", fact: "летал в Саратов" }] }),
+    );
+
+    const row = getDB().prepare("SELECT timestamp FROM knowledge").get() as {
+      timestamp: number;
+    };
+    expect(row.timestamp).toBe(fiveDaysAgo);
+    expect(relativeAge(row.timestamp)).toBe("5 дней назад");
   });
 
   it("resets the cooldown even when every fact turned out to be a duplicate", async () => {

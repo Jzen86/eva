@@ -35,6 +35,7 @@ import {
   getZoneLastStudied,
   isCase,
   markZoneStudied,
+  relativeAge,
   trimKnowledge,
   type KnowledgeRow,
 } from "./knowledge.js";
@@ -361,6 +362,11 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
           insight: f.fact,
           source: STUDY_SOURCE,
           zone,
+          // Dated by the conversation, not by the run. A session reading a
+          // backfill is reconstructing days-old talk, and stamping it today
+          // would make "мы говорили об этом вчера" a falsehood the base tells
+          // about itself.
+          timestamp: generated.coveredAt,
           ...(c.kind === "full"
             ? { her_move: c.her_move, context: c.context, his_reaction: c.his_reaction }
             : {}),
@@ -430,6 +436,8 @@ interface Generated {
   known: KnowledgeRow[];
   /** How far the cursor may move once this session is over. See loadChatSince. */
   coveredTo: number;
+  /** When the last message read was sent — what the written rows are dated. */
+  coveredAt: number;
   /** Messages of transcript this session actually read. */
   chatCount: number;
   /** Read-but-not-shown messages the budget pushed to the next session. */
@@ -457,6 +465,7 @@ async function generateInsight(opts: StudyRunOptions): Promise<Generated> {
           zone: zone.name,
           known,
           coveredTo: built.coveredTo,
+          coveredAt: built.coveredAt,
           chatCount: built.chatCount,
           deferred: built.deferred,
         };
@@ -473,6 +482,7 @@ async function generateInsight(opts: StudyRunOptions): Promise<Generated> {
     zone: zone.name,
     known,
     coveredTo: built.coveredTo,
+    coveredAt: built.coveredAt,
     chatCount: built.chatCount,
     deferred: built.deferred,
   };
@@ -482,7 +492,13 @@ function buildStudyMessages(
   opts: StudyRunOptions,
   zone: (typeof ZONES)[number],
   known: KnowledgeRow[],
-): { messages: LLMMessage[]; coveredTo: number; chatCount: number; deferred: number } {
+): {
+  messages: LLMMessage[];
+  coveredTo: number;
+  coveredAt: number;
+  chatCount: number;
+  deferred: number;
+} {
   const knowledge = known.slice(0, opts.knowledgeWindow ?? DEFAULT_KNOWLEDGE_WINDOW);
   const chat = loadChatSince(opts.userId, studyStart(opts.userId));
 
@@ -490,43 +506,54 @@ function buildStudyMessages(
     `Ты — ${opts.agentName}, AI-компаньон. Сейчас идёт твоя фоновая учебная сессия.`,
     "",
     `Задача: посмотреть на свежую переписку с владельцем и записать в базу то, что там`,
-    `произошло. Факты и случаи — не выводы.`,
+    `произошло. Факты, темы разговоров и случаи — не выводы.`,
     "",
     "Жёсткие правила:",
     "1. Отвечай ТОЛЬКО валидным JSON. Никаких пояснений, никаких markdown-заглушек вокруг JSON.",
-    '2. Формат: {"facts": [{"topic": "тема 2-4 слова", "fact": "факт 1-2 предложения",',
+    '2. Формат: {"facts": [{"topic": "тема", "fact": "что было",',
     '   "her_move": null, "context": null, "his_reaction": null}]}',
     "   Три последних поля — либо все строками, либо все null. Половины быть не может.",
-    "3. Сколько записей — столько и есть по-настоящему. Одна, две, три. Если ничего",
-    '   стоящего не произошло — верни {"facts": [], "reason": "причина"}.',
-    "4. Факт — утверждение о человеке, проверяемое по переписке.",
-    '   «Женя не любит айфоны», «он в Саратове, UTC+4», «он любит, когда его подкалывают».',
-    "5. Случай — что она сделала, в каком он был состоянии, как он отреагировал. Тогда:",
-    "   her_move = что она сделала или сказала;",
-    "   context = в каком он был состоянии (занят, весёлый, поссорился, устал, выпил, расстроен);",
-    "   his_reaction = как он отреагировал (подхватил, огрызнулся, отшутился, замолчал,",
-    "   попросил больше так не делать, сдался, согласился).",
-    "   context обязателен: без него запись прочитается как правило, а правила здесь не хранят.",
-    "6. ГЛАВНОЕ. Выводы и правила не пиши. Ни «вывод:», ни «не надо», ни «не стоит»,",
+    "3. Сколько записей — столько и есть по-настоящему. Обычно одна-три, но если в переписке",
+    '   было больше разного — пиши больше, ничего не выкидывая. Если не произошло ничего',
+    '   стоящего — верни {"facts": [], "reason": "причина"}.',
+    "4. Три вида записей, выбирай подходящий:",
+    "   а) О ЧЁМ ГОВОРИЛИ — тема разговора и что по ней было. Чаще всего нужен именно он.",
+    '      topic = короткое имя темы («самолёты», «кошки», «еда», «машины», «сервер», «работа»),',
+    "      fact = о чём говорили, что он рассказал, к чему пришли.",
+    '      «летал в Саратов на самолёте, вспоминал посадку в грозу»',
+    '      «обсуждали починку сервера: systemd падал после обновления, решили откатить»',
+    "      Даже если по теме ничего не решили — сама тема уже стоит записи.",
+    "   б) ФАКТ О ЧЕЛОВЕКЕ — утверждение о нём или о ней, проверяемое по переписке.",
+    '      «не любит айфоны», «в Саратове, UTC+4», «она любит подкалывать».',
+    "   в) СЛУЧАЙ — она что-то сделала, он отреагировал. Тогда все три поля:",
+    "      her_move = что она сделала или сказала;",
+    "      context = в каком он был состоянии (занят, весёлый, поссорился, устал, выпил);",
+    "      his_reaction = как он отреагировал (подхватил, огрызнулся, отшутился, замолчал,",
+    "      попросил больше так не делать, сдался, согласился).",
+    "      context обязателен: без него запись прочитается как правило, а правила здесь не хранят.",
+    "5. ГЛАВНОЕ. Выводы и правила не пиши. Ни «вывод:», ни «не надо», ни «не стоит»,",
     "   ни «значит надо», ни «следует», ни «полагается». Если ты не можешь назвать конкретный",
-    "   момент и конкретную реакцию — это вывод, и его писать не надо. Лучше facts: [].",
-    "7. Смотри не только на поправки. Правки видны первыми, потому что он поправляет. Ищи так",
+    "   момент, случай или тему разговора — это вывод, и его писать не надо. Лучше facts: [].",
+    "6. Смотри не только на поправки. Правки видны первыми, потому что он поправляет. Ищи так",
     "   же: где он был доволен, где смеялся, где она была права и настояла, где он сдался, где",
     "   он сам о чём-то попросил. База, где записаны только её промахи — это список её ошибок,",
     "   и по нему она учится только соглашаться.",
-    "8. Если новое противоречит старому из уже_известно — это разные моменты, а не исправление.",
+    "7. Если новое противоречит старому из уже_известно — это разные моменты, а не исправление.",
     "   Запиши новое. Старое не трогай и не переписывай.",
-    "9. Не повторяй то, что уже есть в базе: полный список — ниже, в уже_известно.",
+    "8. Не повторяй то, что уже есть в базе: полный список — ниже, в уже_известно.",
     "   Перефразировка НЕ считается новым. Если там уже есть то же самое другими словами —",
     "   не пиши это, даже когда формулировки не совпадают. Сравнивай смысл, не слова.",
     "   Короткий чек-лист тем, которые нельзя дублировать: не_дублировать_эти_темы.",
-    `10. Эта сессия посвящена ОДНОЙ зоне: «${zone.name}» — ${zone.hint}.`,
+    "   Но та же тема в другой день — это новое: «говорили о самолётах» бывает и трижды.",
+    `9. Эта сессия посвящена ОДНОЙ зоне: «${zone.name}» — ${zone.hint}.`,
     "   Про другие зоны в этот раз не пиши вообще. Нет материала по своей зоне —",
     "   честно верни facts: [], это нормально и не считается ошибкой.",
-    "11. Ничего не выдумывай: только то, что реально есть в переписке, в сводке или в базе.",
-    "12. Пиши на русском, как внутреннюю заметку. Без обращений к владельцу, он этого не видит.",
-    "13. сводка_старой_переписки — это то, что было раньше, чем свежая_переписка. Паттерны,",
+    "   Исключение: темы разговоров пиши всегда, какой бы зона ни была.",
+    "10. Ничего не выдумывай: только то, что реально есть в переписке, в сводке или в базе.",
+    "11. Пиши на русском, как внутреннюю заметку. Без обращений к владельцу, он этого не видит.",
+    "12. сводка_старой_переписки — это то, что было раньше, чем свежая_переписка. Паттерны,",
     "   проявившиеся за недели, видны там, а не в последних сообщениях. Учитывай её наравне.",
+    "13. Дату и время ставить не надо — система проставит сама по времени сообщений.",
   ].join("\n");
 
   const payload = {
@@ -535,17 +562,21 @@ function buildStudyMessages(
     не_дублировать_эти_темы: knowledge.map((k: KnowledgeRow) => k.topic),
     // Shaped the way the answer prompt sees it, case fields included, so a study
     // run recognises an existing case the same way a conversation would.
-    уже_известно: knowledge.map((k: KnowledgeRow) =>
-      isCase(k)
+    уже_известно: knowledge.map((k: KnowledgeRow) => ({
+      topic: k.topic,
+      fact: k.insight,
+      // When it was. The same subject on another day is new material, and this is
+      // what lets the model tell the two apart instead of refusing the second as
+      // a repeat of the first.
+      когда: relativeAge(k.timestamp),
+      ...(isCase(k)
         ? {
-            topic: k.topic,
-            fact: k.insight,
             her_move: k.her_move,
             context: k.context,
             his_reaction: k.his_reaction,
           }
-        : { topic: k.topic, fact: k.insight },
-    ),
+        : {}),
+    })),
     // Older than the window below. Patterns that took weeks to show up live
     // here and nowhere else.
     сводка_старой_переписки: chat.summary,
@@ -558,6 +589,7 @@ function buildStudyMessages(
       { role: "user", content: JSON.stringify(payload, null, 1) },
     ],
     coveredTo: chat.coveredTo,
+    coveredAt: chat.coveredAt,
     chatCount: chat.messages.length,
     deferred: chat.deferred,
   };
@@ -597,15 +629,23 @@ function loadChatSince(
   messages: Array<{ role: string; text: string }>;
   summary: string | null;
   coveredTo: number;
+  /** When the last message read was sent. Stamps the rows it produces. */
+  coveredAt: number;
   deferred: number;
 } {
-  let rows: Array<{ id: number; role: string; content: string }>;
+  let rows: Array<{ id: number; role: string; content: string; timestamp: number }>;
   let summary: string | null = null;
   try {
     rows = messagesSince(userId, sinceId, MAX_CHAT_ROWS);
     summary = loadSummary(userId);
   } catch {
-    return { messages: [], summary: null, coveredTo: sinceId, deferred: 0 };
+    return {
+      messages: [],
+      summary: null,
+      coveredTo: sinceId,
+      coveredAt: Math.floor(Date.now() / 1000),
+      deferred: 0,
+    };
   }
 
   const all = rows
@@ -613,6 +653,7 @@ function loadChatSince(
     .map((r) => ({
       id: r.id,
       role: r.role,
+      ts: r.timestamp,
       text: truncate(plainText(r.content), MAX_CHAT_CHARS),
     }))
     .filter((r) => r.text.length > 0);
@@ -639,6 +680,8 @@ function loadChatSince(
     messages: kept.map((r) => ({ role: r.role, text: r.text })),
     summary: summary ? keepNewest(summary, MAX_SUMMARY_CHARS) : null,
     coveredTo: kept.length > 0 ? kept[kept.length - 1].id : sinceId,
+    coveredAt:
+      kept.length > 0 ? kept[kept.length - 1].ts : Math.floor(Date.now() / 1000),
     deferred: all.length - kept.length,
   };
 }

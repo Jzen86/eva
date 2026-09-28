@@ -33,6 +33,7 @@ import {
   type EvaConfig,
 } from "./config.js";
 import type { ModelRef, ProviderRegistry } from "./llm/registry.js";
+import { counted, plural } from "./memory/stem-ru.js";
 import { hasReferencePhoto, describeReferencePhoto } from "./reference-photo.js";
 import { voiceBackendAvailable } from "./tools/voice.js";
 
@@ -137,27 +138,6 @@ function humanBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} КБ`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} МБ`;
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} ГБ`;
-}
-
-/**
- * Russian count agreement: 1 копия, 2 копии, 5 копий.
- *
- * Worth the four lines because every number in this report is read by a person
- * deciding whether to trust it, and "2 копий" is the kind of detail that makes
- * a diagnosis feel machine-written.
- */
-function plural(n: number, one: string, few: string, many: string): string {
-  const abs = Math.abs(n) % 100;
-  const last = abs % 10;
-  if (abs > 10 && abs < 20) return many;
-  if (last > 1 && last < 5) return few;
-  if (last === 1) return one;
-  return many;
-}
-
-/** "3 копии" — the number and its noun, agreed. */
-function counted(n: number, one: string, few: string, many: string): string {
-  return `${n} ${plural(n, one, few, many)}`;
 }
 
 // ---------------------------------------------------------------------------

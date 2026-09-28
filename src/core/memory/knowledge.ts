@@ -1,5 +1,5 @@
 import { getDB, readMeta, writeMeta } from "./db.js";
-import { stemsOfFiltered } from "./stem-ru.js";
+import { stemsOfFiltered, counted } from "./stem-ru.js";
 import { searchableText } from "./knowledge-text.js";
 
 export interface KnowledgeRow {
@@ -101,6 +101,16 @@ export interface AddKnowledgeInput {
   context?: string | null;
   /** What he did about it. */
   his_reaction?: string | null;
+  /**
+   * When it happened, in unix seconds.
+   *
+   * Omitted by a writer who is recording the moment it is in — she does, in chat.
+   * Supplied by the study session, which reads a stretch of transcript after the
+   * fact: without it every row recovered from an old conversation would be
+   * stamped today, and "мы говорили об этом неделю назад" would become a lie the
+   * base tells about itself. See loadChatSince.
+   */
+  timestamp?: number;
   /** Pre-computed semantic vector, when an embedding endpoint is configured. */
   embedding?: Buffer | null;
   confidence?: number;
@@ -129,7 +139,7 @@ export function addKnowledge(entry: AddKnowledgeInput, confidence = entry.confid
       entry.insight,
       entry.source,
       confidence,
-      Math.floor(Date.now() / 1000),
+      entry.timestamp ?? Math.floor(Date.now() / 1000),
       searchableText(entry),
       entry.zone ?? "",
       entry.embedding ?? null,
@@ -209,9 +219,34 @@ export function touchKnowledge(ids: number[]): void {
 export const KNOWLEDGE_PROMPT_LIMIT = 12;
 
 /**
+ * How long ago it was, in words.
+ *
+ * Words and not a date, because the answer is spoken: "неделю назад мы про это
+ * говорили" is the sentence this exists to make possible, and a model asked to
+ * subtract 26.09 from 05.10 to get there will sometimes get it wrong. The date
+ * is printed beside it for the times he asks which day.
+ */
+export function relativeAge(timestamp: number, now = Math.floor(Date.now() / 1000)): string {
+  const days = Math.floor((now - timestamp) / 86_400);
+  if (days <= 0) return "сегодня";
+  if (days === 1) return "вчера";
+  if (days < 7) return `${counted(days, "день", "дня", "дней")} назад`;
+  if (days < 14) return "неделю назад";
+  if (days < 28) return `${counted(Math.round(days / 7), "неделю", "недели", "недель")} назад`;
+  return `${counted(Math.round(days / 30), "месяц", "месяца", "месяцев")} назад`;
+}
+
+/** DD.MM in the owner's zone, so it agrees with the "Сейчас:" line in the prompt. */
+function shortDate(timestamp: number, offsetHours: number): string {
+  const d = new Date((timestamp + offsetHours * 3600) * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getUTCDate())}.${pad(d.getUTCMonth() + 1)}`;
+}
+
+/**
  * The knowledge base as the answering model should read it.
  *
- * Two rules live here and nowhere else, because they are about form, and a form
+ * Three rules live here and nowhere else, because they are about form, and a form
  * rule left in a prompt is a rule the next prompt rewrite forgets:
  *
  * 1. A case never appears without its state. "Answered coldly" on its own is a
@@ -222,24 +257,40 @@ export const KNOWLEDGE_PROMPT_LIMIT = 12;
  * 2. Nothing is phrased as an instruction. The rows are what happened, in the
  *    words of whoever wrote them down. Whoever answers draws the conclusion for
  *    the moment in front of them, which is the only place a conclusion belongs.
+ * 3. Every row says when it happened and what it was about. Both were on the row
+ *    from the first version and neither was ever shown, so she had no way to know
+ *    that the planes were last week or that a row was about work and not about
+ *    her. "Мы говорили о самолётах" and "помнишь, ты рассказывал про кошку" are
+ *    the two things a person says when they remember you, and neither is
+ *    answerable from rows that carry no subject and no date.
  *
  * A case with no recorded state says so rather than being hidden: rows written
  * before these fields existed have none, and dropping them quietly would make
  * the base look emptier every time the schema grew.
  */
-export function renderKnowledge(rows: KnowledgeRow[]): string {
+export function renderKnowledge(
+  rows: KnowledgeRow[],
+  opts: { offsetHours?: number; now?: number } = {},
+): string {
   if (rows.length === 0) return "";
 
+  const now = opts.now ?? Math.floor(Date.now() / 1000);
+  const offsetHours = opts.offsetHours ?? 4;
+
   const lines = rows.map((row, i) => {
-    if (!isCase(row)) return `${i + 1}. ${row.insight}`;
+    const when = `${shortDate(row.timestamp, offsetHours)}, ${relativeAge(row.timestamp, now)}`;
+    const head = `[${when}${row.topic ? ` · ${row.topic}` : ""}]`;
+    if (!isCase(row)) return `${i + 1}. ${head} ${row.insight}`;
     const state = row.context.trim() || "не определяется";
-    return `${i + 1}. [случай] состояние: ${state}. она: ${row.her_move}. ты: ${row.his_reaction}`;
+    return `${i + 1}. ${head} состояние: ${state}. она: ${row.her_move}. ты: ${row.his_reaction}`;
   });
 
   lines.push(
     "",
-    "Это примеры из прошлого, а не правила. На один и тот же повод в разных состояниях",
-    "реакция была разной — так и есть, выбирай под то, что происходит сейчас.",
+    "Это записи из прошлого, а не правила. Первая скобка — когда это было и о чём.",
+    "На один и тот же повод в разных состояниях реакция была разной — так и есть,",
+    "выбирай под то, что происходит сейчас. Если он спрашивает «помнишь» или «когда» —",
+    "у тебя есть и тема, и дата, отвечай по ним.",
   );
 
   return lines.join("\n");

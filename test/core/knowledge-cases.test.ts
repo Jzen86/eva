@@ -9,6 +9,7 @@ import {
   searchKnowledge,
   renderKnowledge,
   isCase,
+  relativeAge,
   KNOWLEDGE_PROMPT_LIMIT,
 } from "../../src/core/memory/knowledge";
 import { createMemoryTool } from "../../src/core/tools/memory";
@@ -110,9 +111,65 @@ describe("cases", () => {
     addKnowledge({ topic: "техника", insight: "Женя не любит айфоны", source: "memory_tool" });
 
     const out = renderKnowledge(searchKnowledge("айфон", 5));
-    expect(out).toContain("1. Женя не любит айфоны");
+    expect(out).toContain("Женя не любит айфоны");
     expect(out).not.toContain("состояние:");
   });
+
+/**
+ * What a row says about itself besides its content: when it happened and what it
+ * was about.
+ *
+ * Both were on the row from the first version and neither was ever shown, so she
+ * had no way to know that the planes were last week or that a row was about work
+ * rather than about her. These are also the two things a person says when they
+ * remember you — "мы говорили о самолётах" and "помнишь, неделю назад".
+ */
+describe("dates and subjects", () => {
+  const now = () => Math.floor(Date.now() / 1000);
+
+  it("says how long ago a row happened", () => {
+    addKnowledge({
+      topic: "самолёты",
+      insight: "летал в Саратов, вспоминал посадку в грозу",
+      source: "memory_tool",
+      timestamp: now() - 5 * 86_400,
+    });
+
+    const out = renderKnowledge(searchKnowledge("Саратов", 5));
+    expect(out).toContain("5 дней назад");
+    // The subject, in the same bracket, so the row is findable by it and she can
+    // name what was discussed.
+    expect(out).toContain("· самолёты]");
+  });
+
+  it("calls today today", () => {
+    addKnowledge({ topic: "еда", insight: "сегодня готовил борщ", source: "memory_tool" });
+
+    const out = renderKnowledge(searchKnowledge("борщ", 5));
+    expect(out).toContain("сегодня");
+    expect(out).toContain("· еда]");
+  });
+
+  it("agrees the noun with the number", () => {
+    // "1 дней назад" is the kind of detail that makes the whole block read as
+    // machine output, and it is four lines to avoid.
+    expect(relativeAge(now())).toBe("сегодня");
+    expect(relativeAge(now() - 86_400)).toBe("вчера");
+    expect(relativeAge(now() - 2 * 86_400)).toBe("2 дня назад");
+    expect(relativeAge(now() - 5 * 86_400)).toBe("5 дней назад");
+    expect(relativeAge(now() - 10 * 86_400)).toBe("неделю назад");
+    expect(relativeAge(now() - 20 * 86_400)).toBe("3 недели назад");
+    expect(relativeAge(now() - 70 * 86_400)).toBe("2 месяца назад");
+  });
+
+  it("tells the model it has the date and may use it", () => {
+    addKnowledge({ topic: "самолёты", insight: "летал в Саратов", source: "memory_tool" });
+
+    const out = renderKnowledge(searchKnowledge("Саратов", 5));
+    expect(out).toContain("а не правила");
+    expect(out).toContain("когда");
+  });
+});
 
   it("is found by what she did, not only by the sentence about it", () => {
     // The note is written around the moment, so the words that will come up

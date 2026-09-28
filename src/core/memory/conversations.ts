@@ -304,13 +304,18 @@ export function messagesSince(
   userId: string,
   sinceId: number,
   limit: number,
-): Array<{ id: number; role: string; content: string }> {
+): Array<{ id: number; role: string; content: string; timestamp: number }> {
   return getDB()
     .prepare(
-      `SELECT id, role, content FROM conversations
+      `SELECT id, role, content, timestamp FROM conversations
        WHERE user_id = ? AND id > ?
        ORDER BY id ASC
        LIMIT ?`,
     )
-    .all(userId, sinceId, limit) as Array<{ id: number; role: string; content: string }>;
+    .all(userId, sinceId, limit) as Array<{
+    id: number;
+    role: string;
+    content: string;
+    timestamp: number;
+  }>;
 }

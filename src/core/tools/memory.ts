@@ -199,14 +199,18 @@ export function createMemoryTool(opts: MemoryToolOptions = {}): Tool {
     name: "memory",
     description:
       "Knowledge base: search it, save what just happened, list or delete entries.\n" +
-      "action=save takes what actually happened, not a conclusion drawn from it. A " +
-      "plain fact about him ('не любит айфоны') goes in content alone.\n" +
-      "When he reacted to something you did, save that as a case instead: her_move = " +
-      "what you did, context = the state he was in (busy, cheerful, in an " +
-      "argument, tired), his_reaction = what he did about it. All three are required " +
-      "together. The context is not decoration: without it the note comes back as a " +
-      "rule, and rules are what this base is not for. Save what happened, each time " +
-      "it happens — two cases about the same thing in different states are both true.",
+      "action=save takes what actually happened, not a conclusion drawn from it. Three " +
+      "kinds of entry, and the first is the one you will need most often:\n" +
+      "1) What you talked about: topic = the subject in a word ('самолёты', 'работа'), " +
+      "content = what was said about it. Even a plain chat about nothing in particular " +
+      "has a subject, and this is how you can bring it up yourself a week later.\n" +
+      "2) A fact about him or her: content alone ('не любит айфоны').\n" +
+      "3) A case, when he reacted to something you did: her_move = what you did, " +
+      "context = the state he was in (busy, cheerful, in an argument, tired), " +
+      "his_reaction = what he did about it. All three together — the context is not " +
+      "decoration, without it the note comes back as a rule, and rules are what this " +
+      "base is not for. Two cases about the same thing in different states are both " +
+      "true; save each as it happens. The date is set for you.",
     parameters: [
       { name: "action", type: "string", description: "One of: search, save, delete, list", required: true },
       { name: "query", type: "string", description: "Search query (required for action=search)" },

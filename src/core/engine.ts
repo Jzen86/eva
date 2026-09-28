@@ -500,14 +500,18 @@ export class Engine {
       } catch {}
     }
 
-    let prompt = buildSystemPrompt(this.liveConfig(), userMessage, chatId, connectedServiceNames);
+    const live = this.liveConfig();
+    let prompt = buildSystemPrompt(live, userMessage, chatId, connectedServiceNames);
 
     // What she has seen before, for this exact kind of moment. Rendered by
     // knowledge.ts so a case can never reach the prompt stripped of the state it
-    // happened in — the same shaping is used by the memory tool's own search.
+    // happened in — and never without the date it happened on — the same shaping
+    // is used by the memory tool's own search.
     try {
       const hits = searchKnowledge(userMessage, KNOWLEDGE_PROMPT_LIMIT);
-      const rendered = renderKnowledge(hits);
+      const rendered = renderKnowledge(hits, {
+        offsetHours: live.timezoneOffsetHours ?? 4,
+      });
       if (rendered) {
         prompt += `\n\n## Что было раньше\n\n${rendered}`;
       }
