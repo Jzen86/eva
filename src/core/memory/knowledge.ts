@@ -96,11 +96,11 @@ export interface AddKnowledgeInput {
   source: string;
   zone?: string;
   /** What she did, when this row is a case rather than a statement. */
-  her_move?: string;
+  her_move?: string | null;
   /** The state he was in. See KnowledgeRow.context — a case reads as a rule without it. */
-  context?: string;
+  context?: string | null;
   /** What he did about it. */
-  his_reaction?: string;
+  his_reaction?: string | null;
   /** Pre-computed semantic vector, when an embedding endpoint is configured. */
   embedding?: Buffer | null;
   confidence?: number;

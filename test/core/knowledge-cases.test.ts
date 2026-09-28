@@ -13,6 +13,7 @@ import {
 } from "../../src/core/memory/knowledge";
 import { createMemoryTool } from "../../src/core/tools/memory";
 import { retireKnowledge } from "../../src/core/memory/knowledge";
+import { learnInsight } from "../../src/core/memory/dedup";
 import { SqliteShim } from "../shim/better-sqlite3";
 
 let dir: string;
@@ -340,3 +341,87 @@ interface CaseRow {
   superseded_at: number | null;
   superseded_by: number | null;
 }
+
+/**
+ * What counts as "we already have this" for a case.
+ *
+ * A case is identified by its whole moment and only exactly. Measured like a
+ * fact, two moments with the same trigger and opposite reactions score about
+ * 0.75 against each other and the second is refused — so the base holds one
+ * answer per trigger, which is a rule, and a rule is what this layer was rebuilt
+ * to stop storing.
+ */
+describe("cases and the duplicate check", () => {
+  async function save(input: {
+    topic: string;
+    insight: string;
+    her_move?: string;
+    context?: string;
+    his_reaction?: string;
+  }) {
+    return learnInsight({ source: "study_session", ...input }, {});
+  }
+
+  it("keeps both halves of a pair that contradicts itself", async () => {
+    const a = await save({
+      topic: "шутки",
+      insight: "она пошутила про ангела, он отреагировал холодно",
+      her_move: "пошутила про ангела",
+      context: "был занят",
+      his_reaction: "ответил холодно",
+    });
+    const b = await save({
+      topic: "шутки",
+      insight: "она пошутила про ангела, он подхватил",
+      her_move: "пошутила про ангела",
+      context: "был весёлый",
+      his_reaction: "подхватил, отвечал тепло",
+    });
+
+    expect(a.written).toBe(true);
+    expect(b.written).toBe(true);
+    expect(getAll()).toHaveLength(2);
+  });
+
+  it("still refuses the identical moment twice", async () => {
+    const moment = {
+      topic: "шутки",
+      insight: "она пошутила про ангела, он отреагировал холодно",
+      her_move: "пошутила про ангела",
+      context: "был занят",
+      his_reaction: "ответил холодно",
+    };
+
+    expect((await save(moment)).written).toBe(true);
+    expect((await save(moment)).written).toBe(false);
+    expect(getAll()).toHaveLength(1);
+  });
+
+  it("does not hold a case against a fact", async () => {
+    // A statement about someone and a recorded moment are different kinds of
+    // thing, and neither makes the other a repeat.
+    expect((await save({ topic: "характер", insight: "она пошутила про ангела" })).written).toBe(true);
+    expect(
+      (
+        await save({
+          topic: "шутки",
+          insight: "она пошутила про ангела",
+          her_move: "пошутила про ангела",
+          context: "был весёлый",
+          his_reaction: "подхватил",
+        })
+      ).written,
+    ).toBe(true);
+    expect(getAll()).toHaveLength(2);
+  });
+
+  it("still collapses near-identical facts", async () => {
+    // The fact rule is untouched: five wordings of one fact is one fact.
+    expect(
+      (await save({ topic: "техника", insight: "Женя не любит айфоны и не хочет их видеть" }))
+        .written,
+    ).toBe(true);
+    expect((await save({ topic: "техника", insight: "Женя не любит айфоны" })).written).toBe(false);
+    expect(getAll()).toHaveLength(1);
+  });
+});

@@ -59,30 +59,102 @@ export interface DuplicateHit {
 }
 
 /**
- * Does this insight repeat something already stored?
+ * A row up for the duplicate check, in whatever detail the caller has.
+ *
+ * A bare string is a fact and is compared by what it says. The three case fields,
+ * when present, change what the row is measured against — see identityOf.
+ */
+export interface DedupSubject {
+  insight: string;
+  her_move?: string | null;
+  context?: string | null;
+  his_reaction?: string | null;
+}
+
+/**
+ * What makes this row the row it is.
+ *
+ * A fact is identified by its text, loosely: "Женя не любит айфоны" said five
+ * ways is one fact, and the base should hold one of them.
+ *
+ * A case is identified by its whole moment, and exactly. Two cases with the same
+ * trigger and opposite reactions share almost every word — "был занят → холодно"
+ * and "был весёлый → тепло" — and they are the two halves of the thing cases
+ * exist for. Measured by the fact rule the second scores about 0.75 against the
+ * first and is refused as a repeat, so the base ends up holding one answer per
+ * trigger. That is a rule, arrived at by the back door, out of the exact shape
+ * this whole layer was rebuilt to stop storing.
+ */
+export function identityOf(
+  row: DedupSubject | string,
+): { text: string; exactOnly: boolean } {
+  if (typeof row === "string") return { text: row, exactOnly: false };
+  if (row.her_move?.trim()) {
+    return {
+      text: [row.her_move, row.context ?? "", row.his_reaction ?? ""]
+        .map((part) => part.trim())
+        .join(" | "),
+      exactOnly: true,
+    };
+  }
+  return { text: row.insight, exactOnly: false };
+}
+
+const squash = (text: string): string => text.trim().toLowerCase().replace(/\s+/g, " ");
+
+/**
+ * Does this row repeat something already stored?
+ *
+ * A fact is compared loosely, by how much of it the stored text already covers,
+ * because restating a known fact is how a base fills with noise.
+ *
+ * A case is compared to other cases by exact identity of its three parts and to
+ * nothing else. Similar is not the same here — similar is the informative part.
+ * A case is not held against a fact either, and a fact not against a case: a
+ * statement about someone and a recorded moment are different kinds of thing, and
+ * one does not make the other a repeat.
  *
  * Lexical first: it is free, it needs no endpoint, and on a base this small it
- * catches most repeats. Semantic second, and only when an embedding endpoint is
- * configured — an install without one behaves exactly as it did before.
+ * catches most repeats. Semantic second, and only for facts and only when an
+ * embedding endpoint is configured — an install without one behaves exactly as it
+ * did before.
  */
 export function findLexicalDuplicate(
-  insight: string,
+  subject: DedupSubject | string,
   known: KnowledgeRow[],
   threshold = LEXICAL_DUPLICATE_THRESHOLD,
 ): DuplicateHit | null {
-  const candidate = contentStems(insight);
-  if (candidate.size === 0) return null;
-  const normalized = insight.trim().toLowerCase().replace(/\s+/g, " ");
+  const mine = identityOf(subject);
+  if (mine.text.trim().length === 0) return null;
+
+  const stems: Set<string> | null = mine.exactOnly ? null : contentStems(mine.text);
+  if (stems && stems.size === 0) return null;
+  const normalized = squash(mine.text);
 
   for (const row of known) {
     if (row.superseded_at !== null && row.superseded_at !== undefined) continue;
-    const existing = row.insight ?? "";
-    if (existing.trim().toLowerCase().replace(/\s+/g, " ") === normalized) {
-      return { id: row.id, how: "exact", score: 1, insight: existing };
+
+    const theirs = identityOf({
+      insight: row.insight ?? "",
+      her_move: row.her_move,
+      context: row.context,
+      his_reaction: row.his_reaction,
+    });
+
+    if (mine.exactOnly || theirs.exactOnly) {
+      // Cases answer only to cases, and only when it is the same moment.
+      if (mine.exactOnly && theirs.exactOnly && squash(theirs.text) === normalized) {
+        return { id: row.id, how: "exact", score: 1, insight: row.insight ?? "" };
+      }
+      continue;
     }
-    const score = coverageOf(candidate, contentStems(existing));
+
+    if (squash(theirs.text) === normalized) {
+      return { id: row.id, how: "exact", score: 1, insight: theirs.text };
+    }
+    const score = coverageOf(stems!, contentStems(theirs.text));
     if (score >= threshold) {
-      return { id: row.id, how: "lexical", score, insight: existing };
+      return { id: row.id, how: "lexical", score, insight: theirs.text };
     }
   }
   return null;
@@ -167,31 +239,23 @@ export interface DedupeOptions {
 
 /** Lexical and, when an endpoint is available, semantic. */
 export async function findDuplicate(
-  insight: string,
+  subject: DedupSubject | string,
   opts: DedupeOptions,
 ): Promise<DuplicateHit | null> {
-  const lexical = findLexicalDuplicate(insight, opts.known, opts.lexicalThreshold);
+  const lexical = findLexicalDuplicate(subject, opts.known, opts.lexicalThreshold);
   if (lexical) return lexical;
+  // Cases stop here. Their identity is exact by construction, and an embedding
+  // would only add a second way to collapse the variations they exist to keep.
+  if (identityOf(subject).exactOnly) return null;
   if (!opts.embedding) return null;
-  return findSemanticDuplicate(insight, opts.embedding, opts.semanticThreshold);
+  const text = typeof subject === "string" ? subject : subject.insight;
+  return findSemanticDuplicate(text, opts.embedding, opts.semanticThreshold);
 }
 
-export interface LearnInput {
+export interface LearnInput extends DedupSubject {
   topic: string;
-  insight: string;
   source: string;
   zone?: string;
-  /**
-   * The case fields, carried through untouched by the dedup check.
-   *
-   * The check only compares `insight`, and that is right: two notes describing
-   * the same moment in different words are the same moment, while two notes
-   * about the same joke in different states are not, and those differ in the
-   * sentence just enough to both be worth keeping.
-   */
-  her_move?: string;
-  context?: string;
-  his_reaction?: string;
 }
 
 export type LearnOutcome =
@@ -215,7 +279,9 @@ export async function learnInsight(
   } = {},
 ): Promise<LearnOutcome> {
   const known = opts.known ?? getAllKnowledge();
-  const duplicate = await findDuplicate(input.insight, {
+  // The whole row, not only its sentence: for a case, the moment is the identity
+  // and two moments that read alike are allowed to both be true. See identityOf.
+  const duplicate = await findDuplicate(input, {
     known,
     embedding: opts.embedding ?? null,
   });
@@ -227,7 +293,7 @@ export async function learnInsight(
   if (opts.embedding) {
     try {
       const vec = await generateEmbedding(
-        `${input.topic}. ${input.insight}`,
+        `${input.topic}. ${identityOf(input).text}`,
         opts.embedding,
       );
       vector = embeddingToBuffer(vec);

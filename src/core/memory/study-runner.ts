@@ -336,7 +336,21 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
     const written: Array<{ topic: string; fact: string; c: CaseFields }> = [];
     const refused: string[] = [];
     for (const { f, c } of accepted) {
-      if (findLexicalDuplicate(f.fact, getAllKnowledge())) {
+      // The case fields go into the check, not only the sentence. Without them a
+      // case is measured like a fact, and two moments with the same trigger and
+      // opposite reactions collapse into one — which is the rule this base is
+      // built not to store. See identityOf.
+      if (
+        findLexicalDuplicate(
+          {
+            insight: f.fact,
+            her_move: c.kind === "full" ? c.her_move : null,
+            context: c.kind === "full" ? c.context : null,
+            his_reaction: c.kind === "full" ? c.his_reaction : null,
+          },
+          getAllKnowledge(),
+        )
+      ) {
         refused.push(`«${truncate(f.fact, 60)}» — уже есть в базе`);
         continue;
       }
