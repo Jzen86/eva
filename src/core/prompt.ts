@@ -40,11 +40,66 @@ export interface PromptConfig {
   personalitySliders?: Record<string, number>;
   /** Hours to add to UTC for the date she is given. The box is not in the owner's timezone. */
   timezoneOffsetHours?: number;
+  /**
+   * Minutes of silence that count as a pause. Absent means `GAP_THRESHOLD_MIN`
+   * — the engine decides with this number, the prompt only words the result.
+   */
+  gapThresholdMinutes?: number;
   owner?: {
     name?: string;
     addressAs?: string;
     facts?: string[];
   };
+}
+
+/**
+ * One silence, as the engine measured it.
+ *
+ * Facts, not text: the engine counts, this file speaks. Keeping it that way is
+ * what lets the threshold be moved and the wording be rewritten without the two
+ * ever disagreeing about how long "долго" is.
+ */
+export interface GapNotice {
+  seconds: number;
+  /** The distance in words: "полчаса", "часа два", "почти сутки". */
+  label: string;
+  /** Whether the local calendar date changed while they were silent. */
+  crossedDay: boolean;
+  /** Whether any of the pause fell at night — the difference between "пропал" and "спал". */
+  touchedNight: boolean;
+  /** DD.MM of the previous message, in his zone. */
+  fromDate: string;
+  /** И то же мгновение словами: вечер, ночь, утро, день. */
+  fromDayPart: string;
+  /** Who spoke last: "assistant" — она, "user" — он. */
+  prevRole: string;
+}
+
+/**
+ * The pause, said out loud, and what to do with it.
+ *
+ * The facts go in first because they are the part she cannot know, and the rule
+ * goes in second because the facts alone invite the worst version of this
+ * feature: a stopwatch that reports, "ты писал 21 час назад", at every turn.
+ * The distinction the rule draws is older than this code — a person who has
+ * been away for a night is not information you announce, he is information you
+ * answer from. Hence: the pause is a reason to ask, and silence it can be a
+ * reason to be tender, but never a report.
+ */
+function buildGapNotice(gap: GapNotice): string {
+  const who = gap.prevRole === "assistant" ? "последней писала ты" : "последним писал он";
+  let facts = `Его новое сообщение пришло через ${gap.label} после предыдущего — ${who}, это было ${gap.fromDate}, ${gap.fromDayPart}.`;
+
+  const shifts: string[] = [];
+  if (gap.crossedDay) shifts.push("сменились сутки");
+  if (gap.touchedNight) shifts.push("в паузу попала ночь");
+  if (shifts.length === 1) facts += ` За это время ${shifts[0]}.`;
+  if (shifts.length === 2) facts += ` За это время ${shifts[0]} и ${shifts[1]}.`;
+
+  return `## Время между сообщениями
+
+${facts}
+Время — это расстояние, а не доклад: его не нужно объявлять, но по нему видно, как заговорить. Чем длиннее пауза, тем вернее, что прежнее — чем он занимался, в каком был настроении — уже устарело: не продолжай сцену как ни в чём не бывало, а спроси, чем он жил это время. Длительность называй по-человечески («часа два», а не «2 часа 14 минут»).`;
 }
 
 function buildGenderBlock(gender: "female" | "male" | "neutral"): string {
@@ -79,6 +134,7 @@ export function buildSystemPrompt(
   userMessage?: string,
   chatId?: string,
   connectedServices?: string[],
+  gap?: GapNotice,
 ): string {
   const name = config.name || "Eva";
   const gender = config.gender ?? "female";
@@ -117,6 +173,14 @@ ${genderBlock}
   // a date and one that quietly guesses.
   const now = new Date();
   prompt += `\nСейчас: ${formatMoment(now, config.timezoneOffsetHours ?? 4)}. Если спрашивают про «последнее», «новое», «актуальное» — считай ответ устаревшим, если в нём нет даты или версии новее этого года. Про цифры, версии, даты и цены всегда сверяйся через web и говори, когда сверила.`;
+
+  // How long the chat was silent before this message. Absent on the ordinary
+  // turn — a pause narrower than the threshold is not a gap, and the next
+  // message after a long one arrives seconds later, so this can only ever be
+  // said once per silence. See `Engine.gapFor` for the measuring half.
+  if (gap) {
+    prompt += `\n\n${buildGapNotice(gap)}`;
+  }
 
   // Personality
   const personalityParts: string[] = [];

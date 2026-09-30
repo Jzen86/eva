@@ -1,6 +1,15 @@
 import { getDB, readMeta, writeMeta } from "./db.js";
-import { stemsOfFiltered, counted } from "./stem-ru.js";
+import { stemsOfFiltered } from "./stem-ru.js";
 import { searchableText } from "./knowledge-text.js";
+import { relativeAge, shortDate } from "./time-words.js";
+
+/**
+ * The wording of "how long ago" lives in `time-words.ts`, with the same
+ * vocabulary the dialog gap uses — an age and a silence are the same quantity
+ * and must not be phrased in two different voices. Re-exported here because
+ * every caller that has a row in hand reaches for it from this module.
+ */
+export { relativeAge };
 
 export interface KnowledgeRow {
   id: number;
@@ -241,31 +250,6 @@ export function touchKnowledge(ids: number[]): void {
  * pattern, they can only show five examples and let the model guess.
  */
 export const KNOWLEDGE_PROMPT_LIMIT = 12;
-
-/**
- * How long ago it was, in words.
- *
- * Words and not a date, because the answer is spoken: "неделю назад мы про это
- * говорили" is the sentence this exists to make possible, and a model asked to
- * subtract 26.09 from 05.10 to get there will sometimes get it wrong. The date
- * is printed beside it for the times he asks which day.
- */
-export function relativeAge(timestamp: number, now = Math.floor(Date.now() / 1000)): string {
-  const days = Math.floor((now - timestamp) / 86_400);
-  if (days <= 0) return "сегодня";
-  if (days === 1) return "вчера";
-  if (days < 7) return `${counted(days, "день", "дня", "дней")} назад`;
-  if (days < 14) return "неделю назад";
-  if (days < 28) return `${counted(Math.round(days / 7), "неделю", "недели", "недель")} назад`;
-  return `${counted(Math.round(days / 30), "месяц", "месяца", "месяцев")} назад`;
-}
-
-/** DD.MM in the owner's zone, so it agrees with the "Сейчас:" line in the prompt. */
-function shortDate(timestamp: number, offsetHours: number): string {
-  const d = new Date((timestamp + offsetHours * 3600) * 1000);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(d.getUTCDate())}.${pad(d.getUTCMonth() + 1)}`;
-}
 
 /**
  * The knowledge base as the answering model should read it.

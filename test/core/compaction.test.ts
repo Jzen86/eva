@@ -134,7 +134,9 @@ describe("Compaction", () => {
     const result = await compactHistory("u1", second, WINDOW);
     expect(second.chat).not.toHaveBeenCalled();
     expect(result).toBeNull();
-    expect(loadSummary("u1")).toBe("Первые восемь.");
+    // Rendered with the day its rows were written, so the folded stretch keeps
+    // a place in time instead of turning into an undated "как-то раз".
+    expect(loadSummary("u1")).toMatch(/^\[\d{2}\.\d{2}\] Первые восемь\.$/);
   });
 
   it("adds a new chunk instead of rewriting the old one", async () => {
@@ -154,7 +156,11 @@ describe("Compaction", () => {
     const chunks = loadSummaryChunks("u1");
     expect(chunks.map((c) => c.summary)).toEqual(["Первые восемь.", "Следующие четыре."]);
     expect(chunks[0].toId).toBeLessThan(chunks[1].fromId);
-    expect(loadSummary("u1")).toBe("Первые восемь.\n\nСледующие четыре.");
+    // The chunks stay undated in the table; the dates are added when the digest
+    // is rendered, so a stored summary has no second, ageing copy of its range.
+    expect(loadSummary("u1")).toMatch(
+      /^\[\d{2}\.\d{2}\] Первые восемь\.\n\n\[\d{2}\.\d{2}\] Следующие четыре\.$/,
+    );
   });
 
   it("retires an old install's summary into the first real fold", async () => {

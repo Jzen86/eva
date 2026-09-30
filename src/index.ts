@@ -10,6 +10,7 @@ import { Engine } from "./core/engine.js";
 import { SchedulerService } from "./core/tools/scheduler.js";
 import { SchedulerStore } from "./core/tools/scheduler-store.js";
 import { getDB } from "./core/memory/db.js";
+import { SCHEDULED_TURN_PREFIX } from "./core/memory/conversations.js";
 import { runStudyIfDue } from "./core/memory/study-runner.js";
 import type { LLMClient } from "./core/llm/types.js";
 import type { Channel } from "./channels/types.js";
@@ -348,7 +349,7 @@ async function main() {
       }
 
       const prompt = [
-        `Сработало запланированное задание "${task.name}".`,
+        `${SCHEDULED_TURN_PREFIX} "${task.name}".`,
         `Задача: ${task.command}`,
         task.context ? `\nКонтекст разговора при создании задачи:\n${task.context}` : "",
         `\nНапиши владельцу сообщение в связи с этой задачей.`,

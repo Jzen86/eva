@@ -1,6 +1,26 @@
 import { getDB, readMeta, writeMeta } from "./db.js";
 import { alignHistory } from "../llm/history.js";
+import { shortDate } from "./time-words.js";
 import type { LLMMessage, ContentPart, ToolUseRequest } from "../llm/types.js";
+
+/**
+ * How a scheduled turn announces itself, and therefore how it is recognised.
+ *
+ * The scheduler's message is not the two of them talking: it is a report the
+ * bot decided to send itself. In the conversation table it looks like any other
+ * `user` row, so silence measured from it would be wrong in both directions —
+ * it would mask a real day-long pause (he answers a report two minutes after it
+ * arrived, and the pause "disappears") or invent one where nothing happened.
+ * `index.ts` builds its prompt from this same constant, so the mark cannot
+ * drift away from the sentences it marks.
+ */
+export const SCHEDULED_TURN_PREFIX = "Сработало запланированное задание";
+
+export interface LiveMessage {
+  id: number;
+  role: string;
+  timestamp: number;
+}
 
 /**
  * Extracts plain text from a string or ContentPart array.
@@ -62,6 +82,7 @@ interface ConversationRow {
 export function loadHistory(
   userId: string,
   limit = 40,
+  offsetHours = 4,
 ): { messages: LLMMessage[]; summary: string | null } {
   const db = getDB();
 
@@ -112,8 +133,52 @@ export function loadHistory(
 
   return {
     messages: result,
-    summary: loadSummary(userId),
+    summary: loadSummary(userId, offsetHours),
   };
+}
+
+/**
+ * The last thing either of them actually said to the other.
+ *
+ * Not the last row in the table: a turn made of tool calls puts several rows
+ * there, and a scheduled report puts two more that nobody said. What the pause
+ * between two messages means depends on it being the distance to the previous
+ * *sentence*, so the tool results and the scheduler's self-talk are walked past
+ * rather than counted.
+ *
+ * Service turns are skipped as a block, not row by row. A report is a `user`
+ * row marked with the prefix followed by her `assistant` answer, and taking
+ * that answer for a real reply would be the same error in a smaller size: she
+ * would read her own report as a thing she said to him.
+ */
+export function previousLiveMessage(userId: string, limit = 80): LiveMessage | null {
+  const rows = getDB()
+    .prepare(
+      `SELECT id, role, timestamp, substr(content, 1, 64) AS head FROM (
+         SELECT id, role, timestamp, content FROM conversations
+         WHERE user_id = ? ORDER BY id DESC LIMIT ?
+       ) ORDER BY id ASC`,
+    )
+    .all(userId, limit) as Array<{ id: number; role: string; timestamp: number; head: string }>;
+
+  let last: LiveMessage | null = null;
+  let insideScheduledTurn = false;
+
+  for (const row of rows) {
+    if (row.role === "tool") continue;
+
+    if (row.role === "user") {
+      // He wrote — whatever the scheduler had been saying is over.
+      insideScheduledTurn = row.head.startsWith(SCHEDULED_TURN_PREFIX);
+      if (insideScheduledTurn) continue;
+    } else if (insideScheduledTurn) {
+      continue;
+    }
+
+    last = { id: row.id, role: row.role, timestamp: row.timestamp };
+  }
+
+  return last;
 }
 
 interface SummaryRow {
@@ -209,13 +274,46 @@ export function dropSummaryChunks(userId: string, toId: number): void {
  * The digest the prompt gets: every chunk, oldest first, in the order they
  * happened. The model reads it as one account of the conversation that came
  * before the raw window.
+ *
+ * Each chunk is dated with the stretch of rows it covers, because a summary has
+ * no clock of its own. Without the date, everything folded away becomes one
+ * undated "как-то раз", and the model that can tell that the planes were last
+ * week — see renderKnowledge — loses that ability the moment the conversation
+ * about them scrolls out of the live window. The range is a rendering, not
+ * stored text: the rows are still in the table, so a chunk can be re-rendered
+ * with a different zone, and nothing has to be re-summarised to gain a date.
  */
-export function loadSummary(userId: string): string | null {
+export function loadSummary(userId: string, offsetHours = 4): string | null {
   const text = loadSummaryChunks(userId)
-    .map((chunk) => chunk.summary)
+    .map((chunk) => `${chunkRange(chunk, offsetHours)}${chunk.summary}`)
     .filter((s) => s.trim().length > 0)
     .join("\n\n");
   return text.length > 0 ? text : null;
+}
+
+/**
+ * `[23.09–26.09] ` for a chunk, or nothing when it has no range to show.
+ *
+ * The carry left by an older install ends at `toId = 0` and covers rows that are
+ * already gone, so it has no date to print and is left as it is. A missing row
+ * (a chunk pointing at an id that is no longer there) is the same case: the
+ * dating is a nicety, and a summary is better printed undated than not at all.
+ */
+function chunkRange(chunk: SummaryChunk, offsetHours: number): string {
+  if (chunk.toId <= 0) return "";
+
+  const row = getDB()
+    .prepare(
+      `SELECT (SELECT timestamp FROM conversations WHERE id = ?) AS a,
+              (SELECT timestamp FROM conversations WHERE id = ?) AS b`,
+    )
+    .get(chunk.fromId, chunk.toId) as { a: number | null; b: number | null } | undefined;
+
+  if (row?.a == null || row?.b == null) return "";
+
+  const from = shortDate(row.a, offsetHours);
+  const to = shortDate(row.b, offsetHours);
+  return `[${from === to ? from : `${from}–${to}`}] `;
 }
 
 /**

@@ -12,7 +12,8 @@ import {
   type EvaConfig,
 } from "./config.js";
 import { searchKnowledge, renderKnowledge, KNOWLEDGE_PROMPT_LIMIT } from "./memory/knowledge.js";
-import { saveMessage, loadHistory, extractText } from "./memory/conversations.js";
+import { saveMessage, loadHistory, extractText, previousLiveMessage } from "./memory/conversations.js";
+import { gapFacts, GAP_THRESHOLD_MIN, type GapFacts } from "./memory/time-words.js";
 import { compactHistory } from "./memory/compaction.js";
 import { alignHistory } from "./llm/history.js";
 import { LLMUnavailableError } from "./llm/router.js";
@@ -115,6 +116,7 @@ export class Engine {
         },
         personalitySliders: getPersonalitySliders(config),
         timezoneOffsetHours: config.agent?.timezone_offset_hours,
+        gapThresholdMinutes: config.agent?.gap_threshold_min,
         owner: config.owner,
       };
     } catch (err) {
@@ -127,7 +129,7 @@ export class Engine {
 
   private hydrateUser(userId: string): void {
     if (this.histories.has(userId)) return;
-    const { messages, summary } = loadHistory(userId);
+    const { messages, summary } = loadHistory(userId, MAX_HISTORY, this.deps.config.timezoneOffsetHours ?? 4);
     this.histories.set(userId, messages);
     if (summary) this.summaries.set(userId, summary);
   }
@@ -235,7 +237,12 @@ export class Engine {
     };
 
     // Build system prompt with memory context
-    const systemPrompt = this.buildPromptWithMemory(msg.text, userId);
+    const systemPrompt = this.buildPromptWithMemory(
+      msg.text,
+      userId,
+      msg.timestamp,
+      msg.metadata?.scheduledTask === true,
+    );
 
     // Add user message (with reply context and/or images if present)
     const replyTo = msg.metadata?.replyToText as string | undefined;
@@ -486,8 +493,70 @@ export class Engine {
     }
   }
 
+  /**
+   * How long the chat has been silent, in the terms the prompt can use.
+   *
+   * The window she is handed is a feed with no seams: role and text, forty
+   * messages deep. So "лучше поиграю" at eight in the evening and "привет" at
+   * five the next afternoon read as two neighbouring sentences, and she answers
+   * the second as if it continued the first — asking about the game he finished
+   * a night and a sleep ago. Nothing about that is her being careless: the
+   * information was never in the request.
+   *
+   * Two decisions worth keeping when this is tuned. First, the measure is the
+   * distance to the previous *sentence*, not to the previous row — tool results
+   * and the scheduler's own reports are not things either of them said.
+   * Second, it is emitted only when the threshold is crossed, and only on the
+   * turn right after the pause, which is what stops a silence from being
+   * mentioned twice: on the next message the gap is seconds wide and there is
+   * nothing to say about it.
+   */
+  private gapFor(
+    userId: string,
+    incomingAt: number,
+    live: PromptConfig,
+  ): (GapFacts & { prevRole: string }) | null {
+    const thresholdMin = live.gapThresholdMinutes ?? GAP_THRESHOLD_MIN;
+    const offsetHours = live.timezoneOffsetHours ?? 4;
+
+    try {
+      const previous = previousLiveMessage(userId);
+      if (!previous) return null;
+
+      const facts = gapFacts(previous.timestamp, Math.floor(incomingAt / 1000), offsetHours);
+      const emitted = facts.seconds >= thresholdMin * 60;
+
+      // Logged either way, and this is the point of the line rather than a
+      // detail of it: with only the emitted case recorded, "she said something
+      // odd about the pause" and "the measure never arrived" look the same in
+      // the log, and the difference between them is a threshold and a prompt.
+      console.log(JSON.stringify({
+        tag: "engine:time_gap",
+        userId,
+        emitted,
+        gapSec: facts.seconds,
+        label: facts.label,
+        prevRole: previous.role,
+        crossedDay: facts.crossedDay,
+        touchedNight: facts.touchedNight,
+        thresholdMin,
+      }));
+
+      return emitted ? { ...facts, prevRole: previous.role } : null;
+    } catch {
+      // Memory not initialized yet — the same quiet failure the knowledge
+      // lookup below is allowed to have.
+      return null;
+    }
+  }
+
   /** Build system prompt and inject relevant memory context. */
-  private buildPromptWithMemory(userMessage: string, chatId: string): string {
+  private buildPromptWithMemory(
+    userMessage: string,
+    chatId: string,
+    incomingAt: number,
+    scheduledTurn: boolean,
+  ): string {
     let connectedServiceNames: string[] = [];
     if (this.deps.encryptionKey) {
       try {
@@ -501,7 +570,8 @@ export class Engine {
     }
 
     const live = this.liveConfig();
-    let prompt = buildSystemPrompt(live, userMessage, chatId, connectedServiceNames);
+    const gap = scheduledTurn ? null : this.gapFor(chatId, incomingAt, live);
+    let prompt = buildSystemPrompt(live, userMessage, chatId, connectedServiceNames, gap ?? undefined);
 
     // What she has seen before, for this exact kind of moment. Rendered by
     // knowledge.ts so a case can never reach the prompt stripped of the state it

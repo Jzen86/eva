@@ -128,6 +128,18 @@ const configSchema = z.object({
      * travels, and the date she quotes should follow him.
      */
     timezone_offset_hours: z.number().int().min(-12).max(14).default(4),
+    /**
+     * Minutes of silence before a pause is worth telling her about.
+     *
+     * Ten minutes is not nothing to a person — "ты где был?" is a real thing to
+     * say — but that is tenderness, not measurement, and she has never needed
+     * help to be tender. What she cannot see is that the conversation went
+     * stale, and ten minutes never stales anything. So the line sits where the
+     * facts change rather than where the feeling does, and it is a field
+     * because that line is a matter of taste: on the next message the gap is
+     * measured again, so lowering it simply makes her notice more silences.
+     */
+    gap_threshold_min: z.number().int().min(1).max(1440).default(30),
     personality: personalitySchema,
   }).default({ name: "Eva" }),
 
