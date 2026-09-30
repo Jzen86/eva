@@ -27,11 +27,17 @@ function detectMode(context: string): "mirror" | "direct" {
 const IDENTITY =
   "IMPORTANT: keep the EXACT same person as in the reference image — same face, facial features, hair color and hairstyle. Do NOT invent a new face. Only change pose, clothes, background, lighting and expression.";
 
-function buildPrompt(context: string, mode: "mirror" | "direct"): string {
+function buildPrompt(context: string, mode: "mirror" | "direct", appearance = ""): string {
+  // Two ways to say "her": keep the face in the attached photo, or describe it.
+  // The photo is the better likeness and the one the provider will not draw, so
+  // when the canon is set the prompt opens with it and no image travels.
+  const opener = appearance
+    ? `${appearance}. Photorealistic.`
+    : `${IDENTITY} Using the reference image of this exact woman:`;
   if (mode === "mirror") {
-    return `${IDENTITY} Using the reference image of this exact woman: she is taking a mirror selfie, ${context}. Full body visible in the mirror, realistic photo.`;
+    return `${opener} She is taking a mirror selfie, ${context}. Full body visible in the mirror, realistic photo.`;
   }
-  return `${IDENTITY} Using the reference image of this exact woman: a close-up selfie taken by herself, ${context}, direct eye contact with the camera, looking straight into the lens, phone held at arm's length, face fully visible, natural and casual, realistic photo.`;
+  return `${opener} A close-up selfie taken by herself, ${context}, direct eye contact with the camera, looking straight into the lens, phone held at arm's length, face fully visible, natural and casual, realistic photo.`;
 }
 
 export interface SelfieToolConfig {
@@ -58,6 +64,15 @@ export interface SelfieToolConfig {
    * the default, because the file is what exists.
    */
   referencePath?: string;
+  /**
+   * A written description of how she looks, used instead of the photo.
+   *
+   * Same reasoning as in `image_gen`: a photo of a person is what the provider
+   * refuses to draw, and it refuses hardest exactly where a companion wants it
+   * most. Text carries the identity without the picture, so the selfie keeps
+   * working on the scenes the photo made impossible.
+   */
+  appearance?: string;
 }
 
 /** Same sentence the dedicated image models use to name the endpoint they want. */
@@ -74,7 +89,9 @@ function defaultReferenceFile(): string {
 export class SelfieTool implements Tool {
   name = "selfie";
   description =
-    "Сгенерировать и отправить селфи. Используй когда просят фото/селфи, или когда уместно показать как выглядишь.";
+    "Сгенерировать и отправить селфи. Используй когда просят фото/селфи, или когда уместно показать как выглядишь. " +
+    "Внешность (лицо, кожа, глаза, фигура) задана каноном и одинакова во всех кадрах — в context описывай ТОЛЬКО сцену: где ты, что делаешь, что на тебе, какая причёска (распущены, хвост, косичка), свет и настроение. " +
+    "Каждый раз делай кадр непохожим на предыдущий: меняй причёску, одежду, место и ракурс, иначе все селфи выйдут одинаковыми.";
   parameters = [
     { name: "context", type: "string", description: "Описание ситуации (в кафе, в новом платье, на пляже)", required: true },
     { name: "mode", type: "string", description: "Режим: mirror (зеркальное, full-body) или direct (close-up). Если не указан — определяется автоматически.", required: false },
@@ -186,12 +203,13 @@ export class SelfieTool implements Tool {
       };
     }
 
-    if (!hasReference) {
-      console.log("📸 Selfie: референс не задан, лицо не будет сохранено");
+    const appearance = this.config.appearance?.trim() ?? "";
+    if (!hasReference && !appearance) {
+      console.log("📸 Selfie: ни референса, ни канона — лицо не будет сохранено");
     }
 
     const mode = this.resolveMode(params, context);
-    const prompt = buildPrompt(context, mode);
+    const prompt = buildPrompt(context, mode, appearance);
 
     if (provider === "openrouter") {
       return this.generateOpenRouter(prompt, mode);
@@ -317,8 +335,11 @@ export class SelfieTool implements Tool {
         console.error("📸 Selfie: blocked by content filter");
         return { filter: true, error: "content_filter" };
       }
+      // Refusal that does not name itself: words instead of a picture, with a
+      // `stop` that reads like success. Counted as a block, so the owner is told
+      // what happened instead of the caller hunting for an API bug.
       console.error("📸 Selfie: no image in openrouter response", JSON.stringify(data).slice(0, 200));
-      return { error: "no image" };
+      return { filter: true, error: "модель вернула текст вместо картинки" };
     } catch (err) {
       console.error(`📸 Selfie openrouter exception: ${err instanceof Error ? err.message : err}`);
       return { error: err instanceof Error ? err.message : String(err) };
@@ -366,11 +387,14 @@ export class SelfieTool implements Tool {
 
   private async generateOpenRouter(prompt: string, mode: "mirror" | "direct"): Promise<ToolResult> {
     const primary = this.config.openrouterModel ?? OPENROUTER_DEFAULT_MODEL;
-    const refUrl = this.referenceDataUri() ?? "";
+    // With the canon set the photo stays home, on purpose: it is the thing the
+    // provider refuses to draw, and the canon says the same without it.
+    const refUrl = this.config.appearance?.trim() ? "" : (this.referenceDataUri() ?? "");
 
     const first = await this.callOpenRouterModel(primary, refUrl, prompt, mode);
     if (first.image) {
-      const noFace = refUrl ? "" : " (референс не найден — лицо не сохранено)";
+      const known = refUrl || this.config.appearance?.trim();
+      const noFace = known ? "" : " (референс не найден — лицо не сохранено)";
       return { success: true, output: `Селфи сгенерировано${noFace}`, mediaUrl: first.image };
     }
     if (first.filter) {

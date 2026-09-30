@@ -101,6 +101,58 @@ describe("SelfieTool", () => {
     vi.unstubAllGlobals();
   });
 
+  it("drops the photo and opens the prompt with the written canon", async () => {
+    const file = path.join(os.tmpdir(), `eva-ref-${Date.now()}.jpg`);
+    fs.writeFileSync(file, Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]));
+
+    const tool = new SelfieTool({
+      provider: "openrouter",
+      openrouterApiKey: "or-key",
+      openrouterModel: "google/gemini-3.1-flash-lite-image",
+      referencePath: file,
+      appearance: "A 25-year-old woman, warm olive skin",
+    });
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        choices: [{ message: { content: "![x](data:image/png;base64,BBBB)" }, finish_reason: "stop" }],
+      }),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const result = await tool.execute({ context: "в кафе с кофе" });
+    expect(result.success).toBe(true);
+    expect(result.output).not.toContain("лицо не сохранено");
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    // A string body, not the parts array: no photo goes with it.
+    expect(typeof body.messages[0].content).toBe("string");
+    expect(body.messages[0].content).toContain("A 25-year-old woman, warm olive skin");
+    expect(body.messages[0].content).toContain("close-up selfie");
+
+    fs.unlinkSync(file);
+    vi.unstubAllGlobals();
+  });
+
+  it("calls an image-less answer a block, so the owner hears about the moderation", async () => {
+    const tool = new SelfieTool({
+      provider: "openrouter",
+      openrouterApiKey: "or-key",
+      openrouterModel: "vendor/image",
+      appearance: "A woman",
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ choices: [{ message: { content: "no" }, finish_reason: "stop" }] }),
+    }));
+
+    const result = await tool.execute({ context: "в кафе" });
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("модерация");
+
+    vi.unstubAllGlobals();
+  });
+
   it("goes ahead on OpenRouter without a reference, and says the face is not preserved", async () => {
     // The free picture models take a prompt and cannot take a photo. A tool that
     // insists on a reference can therefore never call one, and the install keeps

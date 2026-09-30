@@ -218,6 +218,18 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
   const selfies = (config.selfies as Record<string, unknown> | undefined) ?? {};
   const video = (config.video as Record<string, unknown> | undefined) ?? {};
 
+  /**
+   * How she looks, in words, for both picture tools.
+   *
+   * Lives in `selfies` — the block that already owns her appearance (provider,
+   * model, reference photo) — and is the single source of truth for it. When it
+   * is set neither tool attaches the photo, because the photo is the thing the
+   * image providers refuse to draw: measured, a lingerie reference failed even
+   * a sweater scene 7 times out of 8, and an intimate one never passed at all.
+   * Text has nothing for that filter to catch.
+   */
+  const appearance = str(selfies.appearance) || str(imageCfg.appearance);
+
   const providerSpecs = registry?.toConfig().providers ?? {};
   const imageRoleRef = registry?.role("image");
   const chatRef = registry?.role("fast");
@@ -252,7 +264,15 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
 
   const genKey = keyFor(genSource);
   if (genKey) {
-    add(new ImageGenTool({ apiKey: genKey, baseUrl: baseFor(genSource), model: genSource.model }), "keyed");
+    add(
+      new ImageGenTool({
+        apiKey: genKey,
+        baseUrl: baseFor(genSource),
+        model: genSource.model,
+        ...(appearance ? { appearance } : {}),
+      }),
+      "keyed",
+    );
   } else {
     decisions.push({ name: "image_gen", tier: "keyed", registered: false, reason: "нет ключа провайдера изображений" });
   }
@@ -269,7 +289,9 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
   const referenceFile = referencePhotoPath();
   const hasReference = hasReferencePhoto() || Boolean(str(selfies.reference_photo_url));
   const selfieKey = keyFor(selfieSource);
-  if (falKey || (hasReference && selfieKey)) {
+  // A canon is as good as a photo for getting the tool registered: with it the
+  // selfie works with no reference file at all, which is the whole point.
+  if (falKey || ((hasReference || appearance) && selfieKey)) {
     add(
       new SelfieTool({
         falApiKey: falKey,
@@ -279,11 +301,17 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
         openrouterApiKey: selfieKey,
         openrouterModel: selfieSource.model,
         imageBaseUrl: baseFor(selfieSource) || undefined,
+        ...(appearance ? { appearance } : {}),
       }),
       "keyed",
     );
   } else {
-    decisions.push({ name: "selfie", tier: "keyed", registered: false, reason: "нет selfies.fal_api_key и референс-фото" });
+    decisions.push({
+      name: "selfie",
+      tier: "keyed",
+      registered: false,
+      reason: "нет selfies.fal_api_key, selfies.appearance и референс-фото",
+    });
   }
 
   // Voice: sending herself a voice note needs a TTS backend that can actually

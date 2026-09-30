@@ -164,6 +164,17 @@ describe("buildTools", () => {
     expect(build(cfg).registered).toContain("selfie");
   });
 
+  it("turns selfies on from a written canon alone, with no photo anywhere", () => {
+    // The canon replaced the photo and works without the file, so gating the
+    // tool on the photo would take the feature away exactly when it started
+    // working: the photo is what the image providers refuse to draw.
+    const cfg = {
+      ...MINIMAL,
+      selfies: { appearance: "A 25-year-old woman, warm olive skin" },
+    } as unknown as EvaConfig;
+    expect(build(cfg).registered).toContain("selfie");
+  });
+
   it("turns voice on when the configured TTS backend can answer", () => {
     // A fal key used to be the whole test. It is not: the synthesizer reaches
     // fal only through minimax, so a fal key with the default
