@@ -12,6 +12,22 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toMatch(/последнее|новое|актуальное/);
   });
 
+  it("says what to do when he leaves — on most turns, not all of them", () => {
+    // The same instruction lived at items 26-32 of 33 rules, and the live chat
+    // went straight back to the leash those items were written to retire
+    // ("опять твои железяки на первом месте", "а то придумаю, как тебя наказать"),
+    // offering a reason to stay not once. The tail of a long list is not read.
+    // And it must not be in every prompt either: constant, it stops being advice
+    // and she works a hook into every reply, including an answer about weather.
+    const withBlock = buildSystemPrompt({ name: "Eva", gender: "female" }, undefined, undefined, undefined, undefined, true);
+    expect(withBlock).toContain("## Когда он уходит");
+    expect(withBlock).toContain("дай причину остаться");
+    expect(withBlock).toContain("без этой зацепки не считается");
+
+    const without = buildSystemPrompt({ name: "Eva", gender: "female" }, undefined, undefined, undefined, undefined, false);
+    expect(without).not.toContain("## Когда он уходит");
+  });
+
   it("formats the moment with a weekday, a time and the zone", () => {
     // The time half matters too: a human would know a thing from an hour ago, and
     // she should not be confidently behind on gossip. Built from UTC so the

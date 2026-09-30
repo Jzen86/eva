@@ -236,12 +236,14 @@ export class Engine {
       this.histories.set(userId, history);
     };
 
-    // Build system prompt with memory context
+    // Build system prompt with memory context. The rotation on the conversation
+    // length is what makes the leave-taking block frequent but not constant.
     const systemPrompt = this.buildPromptWithMemory(
       msg.text,
       userId,
       msg.timestamp,
       msg.metadata?.scheduledTask === true,
+      history.length % 3 !== 0,
     );
 
     // Add user message (with reply context and/or images if present)
@@ -556,6 +558,15 @@ export class Engine {
     chatId: string,
     incomingAt: number,
     scheduledTurn: boolean,
+    /**
+     * Include the leave-taking block on this turn.
+     *
+     * Most turns, not all. Always present and it stops reading as advice: she
+     * would work a "stay" hook into every reply, trailing one behind an answer
+     * about the weather. The rotation comes from the conversation length, so a
+     * silence does not reset it to the same value every time.
+     */
+    engage: boolean,
   ): string {
     let connectedServiceNames: string[] = [];
     if (this.deps.encryptionKey) {
@@ -571,7 +582,7 @@ export class Engine {
 
     const live = this.liveConfig();
     const gap = scheduledTurn ? null : this.gapFor(chatId, incomingAt, live);
-    let prompt = buildSystemPrompt(live, userMessage, chatId, connectedServiceNames, gap ?? undefined);
+    let prompt = buildSystemPrompt(live, userMessage, chatId, connectedServiceNames, gap ?? undefined, engage);
 
     // What she has seen before, for this exact kind of moment. Rendered by
     // knowledge.ts so a case can never reach the prompt stripped of the state it
