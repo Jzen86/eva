@@ -9,6 +9,7 @@ import {
 } from "../../src/core/memory/conversations.js";
 import { gapFacts, humanGap, dayPart, relativeAge } from "../../src/core/memory/time-words.js";
 import { buildSystemPrompt, type GapNotice } from "../../src/core/prompt.js";
+import { saveConfig } from "../../src/core/config.js";
 import { Engine } from "../../src/core/engine.js";
 import { ToolRegistry } from "../../src/core/tools/registry.js";
 import path from "path";
@@ -210,10 +211,21 @@ describe("the pause in the prompt", () => {
 
 describe("Engine time gap", () => {
   let dbPath: string;
+  let dir: string;
+  const savedConfigPath = process.env.EVA_CONFIG_PATH;
 
   beforeEach(() => {
     dbPath = path.join(os.tmpdir(), `betsy-gap-eng-${crypto.randomUUID()}.db`);
     getDB(dbPath);
+
+    // The engine rereads her identity from the config file on every request, so
+    // a test about a config value has to own that file. Without this it reads
+    // whatever install the machine happens to have — which is invisible on a
+    // box with no `~/.eva/config.yaml` and very visible on the server, where the
+    // live config lives exactly there.
+    dir = path.join(os.tmpdir(), `betsy-gap-cfg-${crypto.randomUUID()}`);
+    fs.mkdirSync(dir, { recursive: true });
+    process.env.EVA_CONFIG_PATH = path.join(dir, "config.yaml");
   });
 
   afterEach(() => {
@@ -221,12 +233,20 @@ describe("Engine time gap", () => {
     for (const suffix of ["", "-wal", "-shm"]) {
       try { fs.unlinkSync(dbPath + suffix); } catch {}
     }
+    fs.rmSync(dir, { recursive: true, force: true });
+    if (savedConfigPath === undefined) delete process.env.EVA_CONFIG_PATH;
+    else process.env.EVA_CONFIG_PATH = savedConfigPath;
   });
 
-  function engineWith(chat: ReturnType<typeof vi.fn>, config: Record<string, unknown> = {}) {
+  /** An engine whose config file carries exactly these `agent` values. */
+  function engineWith(chat: ReturnType<typeof vi.fn>, agent: Record<string, unknown> = {}) {
+    saveConfig(
+      { agent: { name: "Ева", gender: "neutral", personality: {}, ...agent } } as never,
+      process.env.EVA_CONFIG_PATH!,
+    );
     return new Engine({
       llm: { fast: () => ({ chat }), strong: () => ({ chat }) },
-      config: { name: "Ева", ...config },
+      config: { name: "Ева" },
       tools: new ToolRegistry(),
     });
   }
@@ -269,7 +289,7 @@ describe("Engine time gap", () => {
     expect(request[0].content as string).not.toContain("Время между сообщениями");
   });
 
-  it("honours a raised threshold from the config", async () => {
+  it("honours a threshold raised in the config, with no restart", async () => {
     const insert = getDB().prepare(
       "INSERT INTO conversations (user_id, channel, role, content, timestamp) VALUES (?, ?, ?, ?, ?)",
     );
@@ -278,7 +298,7 @@ describe("Engine time gap", () => {
     insert.run("u1", "telegram", "assistant", "спокойной ночи", now - 3 * 3600);
 
     const chat = vi.fn().mockResolvedValue({ text: "доброе утро", stopReason: "end_turn" });
-    const engine = engineWith(chat, { gapThresholdMinutes: 600 });
+    const engine = engineWith(chat, { gap_threshold_min: 600 });
     await engine.process({ channelName: "telegram", userId: "u1", text: "доброе", timestamp: now * 1000 });
 
     const [request] = chat.mock.calls[0];
