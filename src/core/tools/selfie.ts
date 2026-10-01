@@ -310,7 +310,7 @@ export class SelfieTool implements Tool {
 
       if (!response.ok) {
         const errText = await response.text();
-        if (WRONG_DOOR.test(errText)) {
+        if (WRONG_DOOR.test(errText) || response.status === 404) {
           // A dedicated image model, saying so. Same reasoning as in image_gen:
           // match the provider's own sentence rather than a list of ids, because
           // every one of these names has changed during a single afternoon.

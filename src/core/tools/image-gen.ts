@@ -81,8 +81,16 @@ function extractImage(message: ORMessage | undefined): string | null {
  * one that moves from the premium set to the cheap set, keeps working without
  * anyone editing this file. Every id in this area has turned over at least once
  * today.
+ *
+ * The fourth phrasing is the one an images-only model returns when the request
+ * carries `modalities: ["image","text"]`, which is what this tool always sends:
+ * "No endpoints found that support the requested output modalities". Recraft
+ * answers in those words and nothing else, so the switch never fired and the
+ * caller was told `OpenRouter error: 404` — a wrong door reported as a broken
+ * model. A plain 404 counts as well, for the same reason: on this path a 404 is
+ * the door, not the model.
  */
-const WRONG_DOOR = /cannot be used with the chat\/completions endpoint|image generation model|use the \/api\/v1\/images/i;
+const WRONG_DOOR = /cannot be used with the chat\/completions endpoint|image generation model|use the \/api\/v1\/images|support the requested output modalities/i;
 
 export class ImageGenTool implements Tool {
   name = "image_gen";
@@ -205,7 +213,7 @@ export class ImageGenTool implements Tool {
 
       if (!response.ok) {
         const errText = await response.text();
-        if (WRONG_DOOR.test(errText)) {
+        if (WRONG_DOOR.test(errText) || response.status === 404) {
           // The provider named the other endpoint. Take it, remember it, and say
           // so in the log rather than reporting a 404 to the model as a failure.
           this.dedicatedEndpoint = true;
