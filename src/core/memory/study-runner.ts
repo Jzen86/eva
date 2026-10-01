@@ -12,6 +12,17 @@
  * парную похвалу" — which a model then obeys instead of weighing. It asks for
  * facts and cases now, and two checks in code drop what the prompt failed to.
  *
+ * The second thing it may not write is the apparatus, and the live base had two
+ * classes of it. The planned server check reported itself into `conversations` as
+ * a `user` row, and the session wrote down what the report said — "плановая
+ * проверка server_watch", load average and free memory included; that one is
+ * filtered structurally, because a scheduled turn is not the two of them talking
+ * (see conversations.ts). The other is the work of fixing her: bugs, model
+ * choices, measurements, commits, "задеплоил", "проверил синтезатор речи". That
+ * one cannot be filtered — no list of dev words ends — so it is asked for in the
+ * prompt, and the ask is about the aspect rather than the whole session: what he
+ * said while the code was being fixed is still worth keeping.
+ *
  * Hardening added 2026-09-25 after the first live runs:
  *  - zone rotation (the first prompt mandated "insight must be about the owner",
  *    so the base became 100% owner-facts; the model never picks, the code does)
@@ -43,6 +54,7 @@ import {
   messagesSince,
   studyStart,
   setStudyCursor,
+  SCHEDULED_TURN_PREFIX,
 } from "./conversations.js";
 import type { LLMClient, LLMMessage } from "../llm/types.js";
 
@@ -196,6 +208,10 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
     for (const f of facts) {
       if (looksLikePrescription(f.fact)) {
         dropped.push(`«${truncate(f.fact, 60)}» — это правило, а не факт`);
+        continue;
+      }
+      if (looksLikeApparatus(f.topic, f.fact)) {
+        dropped.push(`«${truncate(f.fact, 60)}» — это отчёт о работе, а не событие`);
         continue;
       }
       accepted.push({ f, c: caseFieldsOf(f) });
@@ -405,6 +421,13 @@ function buildStudyMessages(
     "Нечем назвать случай — пиши, что было сказано, а не чего он ждёт.",
     "Не можешь назвать, что именно произошло — не пиши ничего.",
     "",
+    "Не пиши, как меня чинили или проверяли: баги, тесты, замеры, выбор моделей",
+    "и провайдеров, коммиты, «задеплоил», «проверил синтезатор», «зафиксировал баг».",
+    "Это устройство, а не жизнь: такое потом читается как свежая новость и путает",
+    "себя же. Автопроверки сервера и плановые отчёты — туда же. Но если в такой",
+    "сессии было человеческое — что он сказал, как отреагировал, чем закончилось —",
+    "пиши человека, а не то, что он починил.",
+    "",
     "Не повторяй то, что уже есть в уже_известно. Противоречит старому — это разные",
     "моменты, пиши новое, старое не трогай и не переписывай. Где было хорошо — тоже",
     "пиши, не только промахи. Ничего не выдумывай. По-русски, как заметку для себя.",
@@ -476,6 +499,10 @@ function buildStudyMessages(
  * The overflow is then deferred, not dropped — the next session reads it — and
  * reported, so a chat that produces more than one budget an hour shows up as a
  * backlog instead of quietly falling behind.
+ *
+ * Scheduled turns come back out of the batch before it is returned. A report the
+ * bot sent itself is not something either of them said, and read as biography it
+ * produced rows about the server's load average.
  */
 function loadChatSince(
   userId: string,
@@ -531,8 +558,35 @@ function loadChatSince(
   }
   const kept = all.slice(0, last + 1);
 
+  /**
+   * What the model is shown: the batch minus the turns nobody said.
+   *
+   * A scheduled turn is a `user` row whose head is SCHEDULED_TURN_PREFIX followed
+   * by her answer, and the study model read both as conversation — the live base
+   * has three rows of what the server check reported, load average and all. It is
+   * skipped as a block for the same reason `previousLiveMessage` skips it that
+   * way: taking her report for a reply is the same error in a smaller size.
+   *
+   * Coverage stays with `kept`, not with this list. The cursor is a high-water
+   * mark of what was read, and a report that sits at the end of the batch was
+   * read and deliberately dropped — leaving the cursor behind it would make every
+   * later session re-read the same report, and on a quiet install it would never
+   * move at all.
+   */
+  const live: typeof kept = [];
+  let insideScheduledTurn = false;
+  for (const r of kept) {
+    if (r.role === "user") {
+      insideScheduledTurn = r.text.startsWith(SCHEDULED_TURN_PREFIX);
+      if (insideScheduledTurn) continue;
+    } else if (insideScheduledTurn) {
+      continue;
+    }
+    live.push(r);
+  }
+
   return {
-    messages: kept.map((r) => ({ role: r.role, text: r.text })),
+    messages: live.map((r) => ({ role: r.role, text: r.text })),
     summary: summary ? keepNewest(summary, MAX_SUMMARY_CHARS) : null,
     coveredTo: kept.length > 0 ? kept[kept.length - 1].id : sinceId,
     coveredAt:
@@ -611,6 +665,31 @@ const PRESCRIPTION_MARKERS = [
 function looksLikePrescription(fact: string): boolean {
   const lower = fact.toLowerCase();
   return PRESCRIPTION_MARKERS.some((m) => lower.includes(m));
+}
+
+/**
+ * The other shape the base filled with, and the only part of it a check can catch.
+ *
+ * A scheduled turn is filtered out of the transcript before the model sees it (see
+ * loadChatSince), but the digest of older stretches is text like any other, and a
+ * report that has scrolled into it can be distilled back into a row — three live
+ * ones read "плановая проверка server_watch" with the load average in them.
+ *
+ * This is deliberately the narrow half: only the scheduled-report class, which is
+ * machine-made and therefore nameable. The wider half — sessions in which he was
+ * fixing her — is asked for in the prompt instead, because any word list for it
+ * would be a guess about vocabulary, and a guess here drops real memories.
+ */
+const APPARATUS_MARKERS = [
+  "server_watch",
+  "плановая проверка",
+  "плановая диагностика",
+  "запланированное задание",
+];
+
+function looksLikeApparatus(topic: string, fact: string): boolean {
+  const lower = `${topic} ${fact}`.toLowerCase();
+  return APPARATUS_MARKERS.some((m) => lower.includes(m));
 }
 
 /**

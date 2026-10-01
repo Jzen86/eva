@@ -5,6 +5,11 @@ import fs from "fs";
 import crypto from "crypto";
 import { getDB, closeDB } from "../../src/core/memory/db.js";
 import { runStudy } from "../../src/core/memory/study-runner.js";
+import {
+  saveMessage,
+  studyCursor,
+  SCHEDULED_TURN_PREFIX,
+} from "../../src/core/memory/conversations.js";
 import type { LLMMessage } from "../../src/core/llm/types.js";
 
 /**
@@ -203,6 +208,85 @@ describe("study: what a session may leave in the base", () => {
     expect(result.wrote).toBe(true);
     expect(rows()).toHaveLength(1);
   });
+
+  it("drops a row that is a word-for-word report of the server check", async () => {
+    // The digest of older stretches is text like any other, so a scheduled report
+    // that has scrolled into it can be distilled back out into a row — three live
+    // ones read "плановая проверка server_watch" with the load average in them.
+    const { result } = await session(JSON.stringify({
+      facts: [{
+        topic: "плановая проверка server_watch",
+        fact: "нагрузка 0.11, диск 15%, доступно 1.1 ГБ RAM, рестартов нет",
+        her_move: null,
+        context: null,
+        his_reaction: null,
+      }],
+    }));
+
+    expect(result.wrote).toBe(false);
+    expect(rows()).toHaveLength(0);
+    expect(result.report).toContain("отчёт о работе");
+  });
+});
+
+describe("study: what it is not allowed to read", () => {
+  let dbPath: string;
+
+  beforeEach(() => {
+    dbPath = path.join(os.tmpdir(), `eva-skip-${crypto.randomUUID()}.db`);
+    getDB(dbPath);
+  });
+
+  afterEach(() => {
+    closeDB();
+    for (const suffix of ["", "-wal", "-shm"]) {
+      try { fs.unlinkSync(dbPath + suffix); } catch {}
+    }
+  });
+
+  async function session(answer = "{}") {
+    let prompt = "";
+    const chat = vi.fn().mockImplementation(async (messages: LLMMessage[]) => {
+      prompt = messages.map((m) => (typeof m.content === "string" ? m.content : "")).join("\n");
+      return { text: answer, stopReason: "end_turn" };
+    });
+    const result = await runStudy({
+      clients: [{ chat } as never],
+      agentName: "Ева",
+      userId: "u1",
+      learning: { learningEnabled: true, studyIntervalMs: 0, specialties: [] },
+      maxKnowledge: 50,
+    });
+    return { result, prompt };
+  }
+
+  it("skips a scheduled turn instead of reading it as something they said", async () => {
+    // Where the server-check rows came from. In the table it looks like any other
+    // `user` row: the scheduler's own message, followed by her report of it.
+    saveMessage("u1", "telegram", "user", `${SCHEDULED_TURN_PREFIX} "server_watch". Задача: проверь сервер за 12 часов`);
+    saveMessage("u1", "telegram", "assistant", "Жень, нагрузка 0.11, диск 15%, доступно 1.1 ГБ RAM, всё под контролем");
+    saveMessage("u1", "telegram", "user", "Я вернулся. Расскажи, что у тебя новенького");
+    saveMessage("u1", "telegram", "assistant", "Скучала, зай 🖤");
+
+    const { prompt } = await session();
+
+    expect(prompt).toContain("Я вернулся");
+    expect(prompt).toContain("Скучала");
+    expect(prompt).not.toContain("нагрузка 0.11");
+    expect(prompt).not.toContain("server_watch");
+  });
+
+  it("still moves past them, so a quiet install is not stuck re-reading a report", async () => {
+    // The cursor is what was read, not what was kept. A report left above it would
+    // be re-read by every session and, on an install where nothing else arrives,
+    // the pointer would never move at all.
+    const report = saveMessage("u1", "telegram", "user", `${SCHEDULED_TURN_PREFIX} "server_watch". Задача: проверь сервер`);
+    saveMessage("u1", "telegram", "assistant", "Всё в норме");
+
+    await session();
+
+    expect(studyCursor("u1")).toBe(report + 1);
+  });
 });
 
 describe("study: the prompt it is asked with", () => {
@@ -275,12 +359,22 @@ describe("study: the prompt it is asked with", () => {
     expect(text).toContain("одно-два предложения");
   });
 
-  it("says a contradiction is a second moment, and not only mistakes are worth it", async () => {
-    const text = await prompt();
+  it("says a contradiction is a second moment, and not only mistakes are worth it", async () => {    const text = await prompt();
     expect(text).toContain("Противоречит старому — это разные");
     // The sampling bias: a window of chat is mostly his corrections, so a base fed
     // on that alone teaches one thing — to agree.
     expect(text).toContain("Где было хорошо — тоже");
+  });
+
+  it("asks it not to keep the apparatus, and keeps the human part of such a session", async () => {
+    // The live base had a dozen rows of the work itself: a FileNotFoundError in a
+    // crosspost script, a model choice, an image test, "проверка восстановления
+    // голоса". None of it is a thing that happened to them, and the rows read as
+    // fresh news months later. The prompt cannot simply ban the session: what he
+    // said while the code was being fixed is worth keeping.
+    const text = await prompt();
+    expect(text).toContain("как меня чинили или проверяли");
+    expect(text).toContain("пиши человека, а не то, что он починил");
   });
 
   it("treats the zone as where to look first, not as a prohibition — and there is no zone any more", async () => {
