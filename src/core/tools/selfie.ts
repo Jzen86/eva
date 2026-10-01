@@ -426,7 +426,7 @@ export class SelfieTool implements Tool {
     if (first.filter) {
       return {
         success: false,
-        output: "Не вышло: модерация Google заблокировала картинку. Попробуй другой ракурс/описание помягче — или пришли менее откровенный референс.",
+        output: "Не вышло: провайдер отклонил сцену. Попробуй другой ракурс или другую сцену.",
       };
     }
 
@@ -439,7 +439,7 @@ export class SelfieTool implements Tool {
     if (second.filter) {
       return {
         success: false,
-        output: "Не вышло: модерация Google заблокировала картинку. Попробуй другой ракурс/описание помягче — или пришли менее откровенный референс.",
+        output: "Не вышло: провайдер отклонил сцену. Попробуй другой ракурс или другую сцену.",
       };
     }
     return { success: false, output: `OpenRouter не вернул изображение (${second.error ?? first.error ?? "unknown"})` };

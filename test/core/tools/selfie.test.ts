@@ -134,7 +134,16 @@ describe("SelfieTool", () => {
     vi.unstubAllGlobals();
   });
 
-  it("calls an image-less answer a block, so the owner hears about the moderation", async () => {
+  it("calls an image-less answer a block, not a missing image", async () => {
+    // The model answering with words and `stop` reads like success. Counted as a
+    // block, the fallback runs and the owner is told the provider refused; counted
+    // as a missing image, the message points at the API and the retry never happens.
+    //
+    // The message used to name Google's moderation. It is model-agnostic now: the
+    // install runs recraft, which has no moderation, and a tool that blames Google
+    // for a refusal tells the owner something untrue about why the picture is not
+    // there. What has to stay true is the distinction this test is about — a block
+    // is not a missing image. See BOT.md item 16 for the way back to Google.
     const tool = new SelfieTool({
       provider: "openrouter",
       openrouterApiKey: "or-key",
@@ -148,7 +157,8 @@ describe("SelfieTool", () => {
 
     const result = await tool.execute({ context: "в кафе" });
     expect(result.success).toBe(false);
-    expect(result.output).toContain("модерация");
+    expect(result.output).toContain("отклонил сцену");
+    expect(result.output).not.toContain("не вернул изображение");
 
     vi.unstubAllGlobals();
   });
