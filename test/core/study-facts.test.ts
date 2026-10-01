@@ -253,6 +253,18 @@ describe("study: the prompt it is asked with", () => {
     expect(text).toContain("Не пиши выводы и правила");
   });
 
+  it("asks for the occasion, not for a standing wish", async () => {
+    // The rule above was not enough. A live row read "перевёл общение в пошаговый
+    // режим … и ждёт детальных последовательных шагов вирт-интима": not shaped as
+    // an instruction, so it passed the rule — and then travelled into every prompt
+    // as a fact about him, where the model executed it as one. She spent the day
+    // narrating her own actions in ordinary conversation because her own note said
+    // he was waiting for step-by-step detail.
+    const text = await prompt();
+    expect(text).toContain("желание пиши только вместе со случаем");
+    expect(text).toContain("а не чего он ждёт");
+  });
+
   it("still asks for something concrete and still asks for it briefly", async () => {
     // Both complaints from live rows, both kept through the simplification.
     // "рассказывал про кошку" is a row that takes space and gives nothing to
