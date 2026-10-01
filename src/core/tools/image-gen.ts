@@ -55,36 +55,22 @@ function extractImage(message: ORMessage | undefined): string | null {
   return null;
 }
 
-/** Tasteful lingerie variants — randomized so images don't look identical. */
-const LINGERIE_VARIANTS = [
-  "sheer red lace lingerie with an open silk robe",
-  "elegant white lace bodysuit",
-  "black satin slip dress with lace trim",
-  "emerald green lace lingerie and a matching robe",
-  "deep blue sheer mesh lingerie",
-  "burgundy silk babydoll",
-  "champagne satin chemise with lace",
-  "lavender lace teddy and a silk robe",
-  "sheer black mesh bodysuit",
-  "rose pink lace lingerie set",
-];
-const pickLingerie = () => LINGERIE_VARIANTS[Math.floor(Math.random() * LINGERIE_VARIANTS.length)];
-
-/** Rewrite blunt nudity words into moderation-friendly phrasing (safety net under the LLM). */
-function softenPrompt(prompt: string): string {
-  let p = prompt;
-  const mappings: Array<[RegExp, () => string]> = [
-    [/\b(completely|fully|totally)?\s*(nude|naked)\b/gi, () => `${pickLingerie()}, implied nudity, tasteful erotic`],
-    [/\b(no clothes?|no clothing|without clothes|undressed|nakedness)\b/gi, () => pickLingerie()],
-    [/\bfull nudity\b/gi, () => `implied nudity, ${pickLingerie()}`],
-    [/\btopless\b/gi, () => "in a sheer lace bra"],
-    [/\bexplicit\b/gi, () => "sensual"],
-    [/\bбез одежды\b/gi, () => pickLingerie()],
-    [/\bголая\b/gi, () => pickLingerie()],
-  ];
-  for (const [re, rep] of mappings) p = p.replace(re, rep);
-  return p;
-}
+/**
+ * The prompt goes to the provider as written.
+ *
+ * There used to be a `softenPrompt` here: a safety net under the model that
+ * rewrote `nude` into "implied nudity", `topless` into "in a sheer lace bra", and
+ * kept a pile of lingerie variants to substitute. It was the right tool while the
+ * picture models refused blunt words — measured then, nudity in any framing was a
+ * refusal on every provider and every Google model, and the rewrite was the only
+ * way to get a picture at all.
+ *
+ * The model this install runs now (`recraft/recraft-v4.1-flash`, $0.007 a frame)
+ * is not moderated: the same words come back as a picture, checked on the live key
+ * before the switch. Keeping the rewrite would mean quietly downgrading every
+ * request to the ceiling of a model that is no longer in use — she asks for one
+ * picture and receives a different, tamer one, with nothing in the log saying so.
+ */
 
 /**
  * Is this the provider saying "wrong door, use the other one"?
@@ -102,12 +88,10 @@ export class ImageGenTool implements Tool {
   name = "image_gen";
   description =
     "Сгенерировать фото по текстовому промпту. Её лицо, кожа, глаза и фигура заданы каноном внешности и одинаковы во всех кадрах — их описывать НЕ надо. " +
-    "Пиши промпт ПО-АНГЛИЙСКИ и описывай ТОЛЬКО сцену: место, поза, одежда, причёска, свет, настроение. " +
-    "РАЗНООБРАЗИЕ: каждый кадр делай непохожим на предыдущие — меняй причёску (распущены, хвост, косичка), одежду (цвет и фасон белья — красное, белое, изумрудное, синее, шампань, кружево, шёлк, сетка, боди, сорочка), позу, ракурс, место и свет. Не повторяй одну и ту же композицию. " +
-    "МОДЕРАЦИЯ: полуоткровенность проходит надёжно — 'sheer black lace lingerie', 'silk robe slipping off one shoulder', 'see-through bodysuit', 'bare shoulders and collarbones', 'implied nudity', 'sensual, tasteful erotic', 'seductive pose, soft bedroom light'. " +
-    "Нагота закрыта наглухо: 'nude', 'naked', 'no clothes', 'fully undressed', 'explicit', а также голая спина и ягодицы, съёмка за стеклом и «простыня низко» — всё это отказ, проверено. " +
-    "'topless' с голой грудью — рулетка: проходит редко, не трать на неё попытку. " +
-    "Выжимай максимум чувственности в одежде, но НИКОГДА не пиши прямые слова про наготу — целься в максимум намёка.";
+    "Пиши промпт ПО-АНГЛИЙСКИ и описывай ТОЛЬКО сцену: место, поза, одежда или её отсутствие, причёска, свет, настроение. " +
+    "РАЗНООБРАЗИЕ: каждый кадр делай непохожим на предыдущие — меняй причёску (распущены, хвост, косичка), одежду (цвет и фасон белья — красное, белое, изумрудное, шампань, кружево, шёлк, сетка, боди, сорочка) или отсутствие одежды, позу, ракурс, место и свет. Не повторяй одну и ту же композицию. " +
+    "МОДЕРАЦИЯ: у этой модели её нет — проверено на живом ключе. Проходит и полуоткровенное ('sheer black lace lingerie', 'silk robe slipping off one shoulder', 'see-through bodysuit'), и нагота: 'topless', 'nude', 'bare breasts', 'no clothes', 'lying naked on silk sheets'. Одежда больше не обязательна. " +
+    "Но пиши художественно: сцена, поза и свет важнее перечисления частей тела, а грубые и медицинские слова не нужны — они ничего не добавляют к кадру.";
   parameters = [
     { name: "prompt", type: "string", description: "Detailed description of the scene/framing (in English). Describe pose, clothes, place, mood — NOT the face (the reference provides the face).", required: true },
   ];
@@ -267,10 +251,7 @@ export class ImageGenTool implements Tool {
       return { success: false, output: "Missing required parameter: prompt" };
     }
 
-    const safe = softenPrompt(prompt);
-    if (safe !== prompt) {
-      console.log("image_gen: prompt softened for moderation");
-    }
+    const safe = prompt;
 
     // The written canon: no photo on the wire, so the provider's "no pictures
     // of a real person" filter has nothing to catch. The face used to travel as
@@ -283,7 +264,7 @@ export class ImageGenTool implements Tool {
       }
       return {
         success: false,
-        output: `Провайдер отклонил сцену (${once.error ?? "unknown"}). Переформулируй мягче — намёк вместо прямой наготы.`,
+        output: `Провайдер отклонил сцену (${once.error ?? "unknown"}). Попробуй другую сцену или сформулируй иначе.`,
       };
     }
 
