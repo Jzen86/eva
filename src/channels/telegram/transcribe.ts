@@ -18,7 +18,7 @@
 
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 
-const DEFAULT_MODELS = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash-lite"];
+const DEFAULT_MODELS = ["gemini-3.5-transcribe"];
 
 const PROMPT =
   "Распознай речь дословно. Верни только текст, без пояснений, без кавычек и без перевода.";
@@ -37,9 +37,31 @@ export function sttModels(voiceConfig: Record<string, unknown>): string[] {
 
 interface GeminiResponse {
   candidates?: Array<{
-    content?: { parts?: Array<{ text?: string; thought?: boolean }> };
+    content?: {
+      parts?: Array<{
+        text?: string;
+        thought?: boolean;
+        /** Where the dedicated transcribe models put the transcript. */
+        audioTranscription?: { text?: string };
+      }>;
+    };
   }>;
   error?: { message?: string };
+}
+
+/** The transcript out of one reply, whichever shape the model used. */
+function readTranscript(json: GeminiResponse): string {
+  const parts = json.candidates?.[0]?.content?.parts ?? [];
+  const lines: string[] = [];
+  for (const part of parts) {
+    if (part.thought) continue;
+    // A general model answers in `text`; a transcribe model answers in
+    // `audioTranscription`, and reading only `text` returns an empty string with
+    // a 200 — which looks exactly like silence.
+    const piece = (part.audioTranscription?.text ?? part.text ?? "").trim();
+    if (piece) lines.push(piece);
+  }
+  return lines.join("\n").trim();
 }
 
 /**
@@ -90,12 +112,7 @@ export async function transcribeVoice(
 
       // The reasoning part comes back alongside the answer on some models; only
       // the answer is the transcript.
-      const parts = json.candidates?.[0]?.content?.parts ?? [];
-      const text = parts
-        .filter((p) => !p.thought)
-        .map((p) => p.text ?? "")
-        .join("\n")
-        .trim();
+      const text = readTranscript(json);
       if (text) return text;
     } catch (err) {
       console.error(`STT ${model}: ${err instanceof Error ? err.message : String(err)}`);

@@ -13,7 +13,7 @@ describe("sttModels", () => {
   it("prefers the configured list, then a single name, then the defaults", () => {
     expect(sttModels({ stt_models: ["a", "b"] })).toEqual(["a", "b"]);
     expect(sttModels({ stt_model: "c" })).toEqual(["c"]);
-    expect(sttModels({})).toContain("gemini-3.5-flash-lite");
+    expect(sttModels({})).toContain("gemini-3.5-transcribe");
   });
 });
 
@@ -55,6 +55,20 @@ describe("transcribeVoice", () => {
     const text = await transcribeVoice(ogg, { gemini_api_key: "k", stt_models: ["gone", "alive"] });
     expect(text).toBe("Второй раз получилось");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads a transcribe model's answer out of audioTranscription", async () => {
+    // The dedicated transcribe models do not answer in `text`: they put the
+    // transcript in `audioTranscription.text`. Reading only `text` gets an empty
+    // string with a 200 — the same shape as a note nobody spoke into.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      reply({ candidates: [{ content: { parts: [
+        { audioTranscription: { text: "Давай, ковыряйся в своём коде." } },
+      ] } }] }),
+    ));
+
+    expect(await transcribeVoice(ogg, { gemini_api_key: "k", stt_models: ["gemini-3.5-transcribe"] }))
+      .toBe("Давай, ковыряйся в своём коде.");
   });
 
   it("says nothing when there is no key", async () => {
