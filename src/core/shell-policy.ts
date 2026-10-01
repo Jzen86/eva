@@ -89,6 +89,13 @@ interface BinaryRule {
   subcommands?: string[];
   /** Flags that turn this call into a write. Matched against the raw command. */
   writeFlags?: RegExp;
+  /**
+   * Flags that make the *bare* form a read, for binaries whose sub-verb is
+   * optional. `systemctl --failed` is `list-units --failed` with the verb left
+   * out; the sub-verb reader finds no verb there and used to park it, which is
+   * how the server check came back asking the owner for a `/yes` over a listing.
+   */
+  bareReadFlags?: RegExp;
 }
 
 const RULES: Record<string, BinaryRule> = {
@@ -97,6 +104,26 @@ const RULES: Record<string, BinaryRule> = {
       "status", "is-active", "is-enabled", "is-failed", "show", "cat",
       "list-units", "list-unit-files", "list-timers", "list-sockets",
       "list-jobs", "get-default",
+    ],
+    // The listings that take a flag instead of a verb. `--failed` is the one the
+    // server check actually runs; `-a`/`--all` and the version banners are the
+    // same shape. Everything else with no verb stays parked.
+    bareReadFlags: /(^|\s)(--failed|-a|--all|--version|-h|--help)(\s|$|=)/,
+  },
+  timedatectl: {
+    // No sub-verb at all: the bare call prints the clock and the sync state,
+    // which is why the server check asks for it. The four `set-*` forms are the
+    // only things it writes.
+    writeFlags: /(^|\s)(set-time|set-timezone|set-local-rtc|set-ntp)(\s|$|=)/,
+  },
+  apt: {
+    // `apt` writes with a short, well-known set of verbs (`install`, `remove`,
+    // `update`, `upgrade`, `autoremove`, `edit-sources`, `download`), so unlike
+    // `git` or `docker` a table of its read verbs is not a fiction. `list
+    // --upgradable` is the pending-updates line of the server check.
+    subcommands: [
+      "list", "show", "policy", "search", "madison", "depends", "rdepends",
+      "version", "help",
     ],
   },
   journalctl: {
@@ -153,6 +180,9 @@ export function shapeOf(command: string): ShellShape | null {
   let sawSubstitution = false;
   let sawRedirect = false;
   let background = false;
+  // Where each redirect points, read here rather than by a regex over the raw
+  // command: the same `>` inside quotes is text, and only this loop knows that.
+  const redirectTargets: string[] = [];
 
   const push = (): void => {
     const trimmed = current.trim();
@@ -205,6 +235,15 @@ export function shapeOf(command: string): ShellShape | null {
       continue;
     }
     if (ch === ">" || ch === "<") {
+      let j = i + 1;
+      if (command[j] === ch) j += 1; // >> or <<
+      while (command[j] === " " || command[j] === "\t") j += 1;
+      let target = "";
+      while (j < command.length && !/[\s;|]/.test(command[j])) {
+        target += command[j];
+        j += 1;
+      }
+      redirectTargets.push(target);
       sawRedirect = true;
       current += ch;
       continue;
@@ -228,6 +267,14 @@ export function shapeOf(command: string): ShellShape | null {
         i += 1;
         continue;
       }
+      // `2>&1` duplicates a descriptor, it does not background anything: the `&`
+      // sits right after the redirect operator. Read as a job it flagged every
+      // `2>&1` as "запуск в фоне", which is the other half of why a plain check
+      // line was parked.
+      if (command[i - 1] === ">" || command[i - 1] === "<") {
+        current += ch;
+        continue;
+      }
       background = true;
       push();
       continue;
@@ -239,7 +286,16 @@ export function shapeOf(command: string): ShellShape | null {
   push();
 
   if (sawSubstitution) unsafe.push("подстановка команды");
-  if (sawRedirect) unsafe.push("перенаправление вывода");
+  // A redirect is a write only if it writes somewhere. `/dev/null` is not a file
+  // and `>&1` names another descriptor, and both are what every check command
+  // ends up with: `apt list --upgradable 2>/dev/null | head -20` was parked over
+  // it. Anything with a real target still counts, and the binary rule is not
+  // touched — `rm x > /dev/null` is still parked, because `rm` is.
+  const writesSomewhere =
+    sawRedirect &&
+    (redirectTargets.length === 0 ||
+      !redirectTargets.every((t) => t === "/dev/null" || /^&\d+$/.test(t)));
+  if (writesSomewhere) unsafe.push("перенаправление вывода");
   if (background) unsafe.push("запуск в фоне");
 
   return { segments, unsafe };
@@ -328,9 +384,13 @@ export function classify(command: string, trusted: string[] = []): ShellVerdict 
       if (rule.subcommands) {
         const verb = subcommandOf(segment);
         if (!verb) {
-          return { kind: "gate", why: `«${bin}» без подкоманды — не знаю, читает она или пишет` };
-        }
-        if (!rule.subcommands.includes(verb)) {
+          // No verb at all. A binary whose verb is optional may still be reading
+          // (`systemctl --failed`); one that always takes a verb is unreadable
+          // without it, and that is a gate, not a guess.
+          if (!rule.bareReadFlags?.test(segment)) {
+            return { kind: "gate", why: `«${bin}» без подкоманды — не знаю, читает она или пишет` };
+          }
+        } else if (!rule.subcommands.includes(verb)) {
           const sample = rule.subcommands.slice(0, 4).join(", ");
           return { kind: "gate", why: `«${bin} ${verb}» пишет; читать можно: ${sample}` };
         }
