@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { Tool, ToolResult } from "./types.js";
 import { referencePhotoPath } from "../reference-photo.js";
+import { checkImagePrompt } from "./prompt-check.js";
 
 /** Working OpenRouter image model (gemini-2.0-flash-exp:free no longer exists). */
 const MODEL = "google/gemini-2.5-flash-image";
@@ -117,6 +118,16 @@ export class ImageGenTool implements Tool {
   private dedicatedEndpoint = false;
   /** True when a reference was asked for but this path cannot carry one. */
   private referenceDropped = false;
+  /**
+   * The last prompt this tool refused to send, verbatim.
+   *
+   * The check below exists to catch a mistake before it costs a picture, not to
+   * stand in the way of one. A prompt that comes back unchanged a second time is
+   * drawn as written: a check that can never be satisfied would trap her in a loop
+   * of rewrites, and a bad picture is better than no picture. Cleared on every
+   * success, so the guard covers the retry rather than the rest of the evening.
+   */
+  private rejectedOnce = "";
 
   constructor(config: ImageGenToolConfig) {
     this.apiKey = config.apiKey;
@@ -261,6 +272,18 @@ export class ImageGenTool implements Tool {
 
     const safe = prompt;
 
+    const objection = checkImagePrompt(safe);
+    if (objection) {
+      if (this.rejectedOnce === safe) {
+        console.log("image_gen: тот же промпт отклонён во второй раз — рисую как есть");
+        this.rejectedOnce = "";
+      } else {
+        this.rejectedOnce = safe;
+        console.log(`image_gen: промпт отклонён — ${objection.slice(0, 70)}`);
+        return { success: false, output: objection };
+      }
+    }
+
     // The written canon: no photo on the wire, so the provider's "no pictures
     // of a real person" filter has nothing to catch. The face used to travel as
     // an image, and that image is what closed the intimate half of the range.
@@ -311,6 +334,6 @@ export class ImageGenTool implements Tool {
       return { success: false, output: `Заблокировано модерацией и без референса: ${second.error ?? "content_filter"}` };
     }
 
-    return { success: false, output: `Не удалось сгенерировать (${first.error ?? "unknown"}). Переформулируй мягче — полуголое/намек вместо полной наготы.` };
+    return { success: false, output: `Не удалось сгенерировать (${first.error ?? "unknown"}). Попробуй другую сцену.` };
   }
 }

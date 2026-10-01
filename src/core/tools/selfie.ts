@@ -3,6 +3,7 @@ import path from "node:path";
 import type { Tool, ToolResult } from "./types.js";
 import { uploadToFal } from "../fal-upload.js";
 import { referencePhotoPath } from "../reference-photo.js";
+import { checkSelfieContext } from "./prompt-check.js";
 
 const FAL_ENDPOINT = "https://fal.run/xai/grok-imagine-image/edit";
 /** Default image backend. The `modalities:["image"]` chat extension is an
@@ -98,6 +99,15 @@ export class SelfieTool implements Tool {
   ];
 
   readonly config: SelfieToolConfig;
+
+  /**
+   * The last scene this tool refused to send, as `mode|context`.
+   *
+   * Same guard as in image_gen, for the same reason: the check is there to save a
+   * wasted picture, not to argue. A scene that comes back identical a second time is
+   * drawn as written, because a check that can never be satisfied would trap her.
+   */
+  private rejectedOnce = "";
 
   constructor(config: SelfieToolConfig) {
     this.config = config;
@@ -209,6 +219,22 @@ export class SelfieTool implements Tool {
     }
 
     const mode = this.resolveMode(params, context);
+
+    // The finished prompt opens with the canon and closes with the framing the mode
+    // demands, so the check runs on the scene she wrote — see prompt-check.ts.
+    const objection = checkSelfieContext(context, mode);
+    if (objection) {
+      const key = `${mode}|${context}`;
+      if (this.rejectedOnce === key) {
+        console.log("📸 Selfie: тот же контекст отклонён во второй раз — рисую как есть");
+        this.rejectedOnce = "";
+      } else {
+        this.rejectedOnce = key;
+        console.log(`📸 Selfie: контекст отклонён — ${objection.slice(0, 70)}`);
+        return { success: false, output: objection };
+      }
+    }
+
     const prompt = buildPrompt(context, mode, appearance);
 
     if (provider === "openrouter") {
