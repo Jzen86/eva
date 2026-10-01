@@ -14,6 +14,15 @@ export interface OutgoingMessage {
   mediaUrl?: string
   /** Path to a local file to send to the user (video, audio, document). */
   mediaPath?: string
+  /**
+   * Everything the turn produced, in the order it made it.
+   *
+   * `mediaUrl` and `mediaPath` are the last of these and stay for the channels
+   * that read them. A turn can make more than one thing — two voice notes when
+   * she is asked for two, or a voice and a picture together — and a single slot
+   * kept only the last, dropping the rest without a word.
+   */
+  media?: Array<{ url?: string; path?: string }>
 }
 
 export interface LLMMessage {

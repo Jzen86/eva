@@ -218,18 +218,31 @@ export interface AudioOptions {
   avatarPath?: string;
 }
 
-/** Deliver an OutgoingMessage through the appropriate Telegram media type. */
-export async function deliver(ctx: Context, response: OutgoingMessage, audio?: AudioOptions): Promise<void> {
-  const mode = response.mode ?? "text";
+/** What this turn produced, oldest first. Falls back to the single slot. */
+function turnMedia(response: OutgoingMessage): Array<{ url?: string; path?: string }> {
+  if (response.media?.length) return response.media;
+  if (response.mediaPath || response.mediaUrl) {
+    return [{
+      ...(response.mediaPath ? { path: response.mediaPath } : {}),
+      ...(response.mediaUrl ? { url: response.mediaUrl } : {}),
+    }];
+  }
+  return [];
+}
 
-  // If response has a local file to send
-  if (response.mediaPath && fs.existsSync(response.mediaPath)) {
+/** Send one piece of media. False when it could not go out. */
+async function sendMedia(
+  ctx: Context,
+  item: { url?: string; path?: string },
+  text: string,
+): Promise<boolean> {
+  if (item.path && fs.existsSync(item.path)) {
     try {
       const { InputFile } = await import("grammy");
-      const ext = path.extname(response.mediaPath).toLowerCase();
-      const caption = response.text ? markdownToTelegramHtml(response.text).slice(0, 1024) : undefined;
+      const ext = path.extname(item.path).toLowerCase();
+      const caption = text ? markdownToTelegramHtml(text).slice(0, 1024) : undefined;
       const parseMode = caption ? ("HTML" as const) : undefined;
-      const file = new InputFile(response.mediaPath);
+      const file = new InputFile(item.path);
 
       if (VIDEO_EXTS.has(ext)) {
         await ctx.replyWithVideo(file, { caption, parse_mode: parseMode });
@@ -246,34 +259,65 @@ export async function deliver(ctx: Context, response: OutgoingMessage, audio?: A
       } else {
         await ctx.replyWithDocument(file, { caption, parse_mode: parseMode });
       }
-      return;
+      return true;
     } catch (err) {
       console.error("Failed to send file:", err instanceof Error ? err.message : err);
-      // Fall through to text delivery
+      return false;
     }
   }
 
-  // If response has a media URL (e.g. from selfie/image_gen tool), send as photo
-  if (response.mediaUrl) {
+  // A media URL (selfie/image_gen) arrives as bytes, not as a file on disk.
+  if (item.url) {
     try {
       let buffer: Buffer;
-      if (response.mediaUrl.startsWith("data:")) {
-        const base64 = response.mediaUrl.replace(/^data:image\/[^;]+;base64,/, "");
+      if (item.url.startsWith("data:")) {
+        const base64 = item.url.replace(/^data:image\/[^;]+;base64,/, "");
         buffer = Buffer.from(base64, "base64");
       } else {
-        const imgRes = await fetch(response.mediaUrl);
+        const imgRes = await fetch(item.url);
         buffer = Buffer.from(await imgRes.arrayBuffer());
       }
       const { InputFile } = await import("grammy");
-      const caption = response.text ? markdownToTelegramHtml(response.text) : undefined;
+      const caption = text ? markdownToTelegramHtml(text).slice(0, 1024) : undefined;
       await ctx.replyWithPhoto(new InputFile(buffer, "selfie.jpg"), {
         caption,
         parse_mode: caption ? "HTML" : undefined,
       });
-      return;
+      return true;
     } catch {
-      // Fall through to text delivery
+      return false;
     }
+  }
+
+  return false;
+}
+
+/** Deliver an OutgoingMessage through the appropriate Telegram media type. */
+export async function deliver(ctx: Context, response: OutgoingMessage, audio?: AudioOptions): Promise<void> {
+  const mode = response.mode ?? "text";
+
+  // Everything the turn made, in order. A turn can make two — two voice notes
+  // when she is asked for two, or a voice and a picture together — and one slot
+  // used to keep only the last of them, dropping the rest without a word.
+  const items = turnMedia(response);
+  if (items.length > 0) {
+    // Her words ride the last piece: she writes the reply after the tools, so
+    // the scene lands with the voice it belongs to and not before it.
+    let sent = 0;
+    for (let i = 0; i < items.length; i++) {
+      const text = i === items.length - 1 ? response.text : "";
+      if (await sendMedia(ctx, items[i], text)) sent++;
+    }
+    if (sent === items.length) return;
+    if (sent > 0) {
+      // Half delivered. Her words already went out as a caption, so repeating
+      // them would say the same thing twice; name what did not make it instead
+      // of letting it disappear.
+      const missing = items.length - sent;
+      await replyHtml(ctx, missing === 1 ? "(одно вложение не доехало)" : `(${missing} вложения не доехали)`).catch(() => {});
+      return;
+    }
+    // Nothing went out — fall through and at least say it as text.
   }
 
   if (mode === "voice") {

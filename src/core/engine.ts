@@ -273,6 +273,16 @@ export class Engine {
     try {
       let lastMediaUrl: string | undefined;
       let lastMediaPath: string | undefined;
+      /**
+       * Everything this turn made, in the order it was made.
+       *
+       * `lastMediaUrl` and `lastMediaPath` are one slot each, so the second
+       * picture or the second voice note overwrote the first and vanished — while
+       * the tool told her "готово и отправлено", which is why she never noticed
+       * and never repeated it. A turn can legitimately make two: two voice notes
+       * when she is asked for two, or a voice and a picture together.
+       */
+      const media: Array<{ url?: string; path?: string }> = [];
       const toolCallCounts = new Map<string, number>();
       const processStart = Date.now();
 
@@ -290,7 +300,7 @@ export class Engine {
           const text = finalResponse.text || "Не удалось завершить задачу полностью, но вот что получилось.";
           history.push({ role: "assistant", content: text });
           saveMessage(userId, msg.channelName, "assistant", text);
-          return { text, mediaUrl: lastMediaUrl, mediaPath: lastMediaPath };
+          return { text, mediaUrl: lastMediaUrl, mediaPath: lastMediaPath, ...(media.length ? { media } : {}) };
         }
 
         onProgress?.({ type: "thinking" });
@@ -347,7 +357,7 @@ export class Engine {
             reason: "token_budget",
             promptTokens: response.usage.promptTokens,
           }));
-          return { text, mediaUrl: lastMediaUrl, mediaPath: lastMediaPath };
+          return { text, mediaUrl: lastMediaUrl, mediaPath: lastMediaPath, ...(media.length ? { media } : {}) };
         }
 
         // If LLM didn't request tools, return the text response
@@ -356,7 +366,7 @@ export class Engine {
           history.push({ role: "assistant", content: text });
           saveMessage(userId, msg.channelName, "assistant", text);
 
-          return { text, mediaUrl: lastMediaUrl, mediaPath: lastMediaPath };
+          return { text, mediaUrl: lastMediaUrl, mediaPath: lastMediaPath, ...(media.length ? { media } : {}) };
         }
 
         // From here the turn is work: tools are involved, so the heavier model
@@ -404,6 +414,12 @@ export class Engine {
           if (result.mediaPath) {
             lastMediaPath = result.mediaPath;
           }
+          if (result.mediaUrl || result.mediaPath) {
+            media.push({
+              ...(result.mediaUrl ? { url: result.mediaUrl } : {}),
+              ...(result.mediaPath ? { path: result.mediaPath } : {}),
+            });
+          }
 
           history.push({
             role: "tool",
@@ -439,7 +455,7 @@ export class Engine {
           const text = finalResponse.text || `Инструмент "${overused[0]}" использован ${overused[1]} раз, но не удалось сформировать ответ.`;
           history.push({ role: "assistant", content: text });
           saveMessage(userId, msg.channelName, "assistant", text);
-          return { text, mediaUrl: lastMediaUrl, mediaPath: lastMediaPath };
+          return { text, mediaUrl: lastMediaUrl, mediaPath: lastMediaPath, ...(media.length ? { media } : {}) };
         }
 
         onProgress?.({ type: "turn_complete", turn: turn + 1, totalTurns: MAX_TURNS });
@@ -456,7 +472,7 @@ export class Engine {
       const text = wrapResponse.text || "Вот что удалось сделать.";
       history.push({ role: "assistant", content: text });
       saveMessage(userId, msg.channelName, "assistant", text);
-      return { text, mediaUrl: lastMediaUrl, mediaPath: lastMediaPath };
+      return { text, mediaUrl: lastMediaUrl, mediaPath: lastMediaPath, ...(media.length ? { media } : {}) };
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.error("Engine error:", errorMsg);
