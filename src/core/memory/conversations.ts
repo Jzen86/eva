@@ -1,6 +1,6 @@
 import { getDB, readMeta, writeMeta } from "./db.js";
 import { alignHistory } from "../llm/history.js";
-import { shortDate, GAP_THRESHOLD_MIN } from "./time-words.js";
+import { humanGap, stampMoment, GAP_THRESHOLD_MIN } from "./time-words.js";
 import type { LLMMessage, ContentPart, ToolUseRequest } from "../llm/types.js";
 
 /**
@@ -355,11 +355,40 @@ export function dropSummaryChunks(userId: string, toId: number): void {
  * with a different zone, and nothing has to be re-summarised to gain a date.
  */
 export function loadSummary(userId: string, offsetHours = 4): string | null {
-  const text = loadSummaryChunks(userId)
+  const chunks = loadSummaryChunks(userId);
+  const text = chunks
     .map((chunk) => `${chunkRange(chunk, offsetHours)}${chunk.summary}`)
     .filter((s) => s.trim().length > 0)
     .join("\n\n");
-  return text.length > 0 ? text : null;
+  if (text.trim().length === 0) return null;
+  return text + summaryAgeNote(chunks[chunks.length - 1], offsetHours);
+}
+
+/**
+ * How long ago the folded stretch ended, in words.
+ *
+ * The range prefix says which day, and a day is not a distance: the newest fold
+ * on the live install runs 02:04-02:46 and the one before it 21:16-02:01, and
+ * both print with the same date. So the game he finished before dawn and the code
+ * he fixed twenty minutes ago read as the same age — heard live at 05:27, she
+ * merged them: "пока ты там воевал со своими багами" about a session from 02:36,
+ * taken out of the digest and answered as if it were happening now.
+ *
+ * Silence under an hour is left alone: a fold that happened while he was still in
+ * the room is not the past, and saying so every turn would be noise.
+ */
+function summaryAgeNote(chunk: SummaryChunk | undefined, offsetHours: number): string {
+  if (!chunk || chunk.toId <= 0) return "";
+
+  const row = getDB()
+    .prepare("SELECT timestamp FROM conversations WHERE id = ?")
+    .get(chunk.toId) as { timestamp: number } | undefined;
+  if (!row) return "";
+
+  const seconds = Math.floor(Date.now() / 1000) - row.timestamp;
+  if (seconds < 3600) return "";
+
+  return `\n\nПоследнее в этой сводке — ${humanGap(seconds)} назад (${stampMoment(row.timestamp, offsetHours)}). Это прошлое: не продолжай его как то, что происходит сейчас.`;
 }
 
 /**
@@ -382,8 +411,8 @@ function chunkRange(chunk: SummaryChunk, offsetHours: number): string {
 
   if (row?.a == null || row?.b == null) return "";
 
-  const from = shortDate(row.a, offsetHours);
-  const to = shortDate(row.b, offsetHours);
+  const from = stampMoment(row.a, offsetHours);
+  const to = stampMoment(row.b, offsetHours);
   return `[${from === to ? from : `${from}–${to}`}] `;
 }
 

@@ -58,6 +58,20 @@ export function dayPart(timestamp: number, offsetHours: number): "ночь" | "�
  * subtract 26.09 from 05.10 to get there will sometimes get it wrong. The date
  * is printed beside it for the times he asks which day.
  */
+/**
+ * `DD.MM HH:MM` in his zone — a moment, not just a day.
+ *
+ * A day is not a distance. Two stretches on the same date both print as one
+ * date, so "he was in the game" at 02:36 and "he was in the code" at 04:38 look
+ * the same age, and she merged them into one continuous present. The clock is
+ * what separates them.
+ */
+export function stampMoment(timestamp: number, offsetHours: number): string {
+  const d = new Date((timestamp + offsetHours * 3600) * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getUTCDate())}.${pad(d.getUTCMonth() + 1)} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+}
+
 export function relativeAge(timestamp: number, now = Math.floor(Date.now() / 1000)): string {
   const days = Math.floor((now - timestamp) / 86_400);
   if (days <= 0) return "сегодня";

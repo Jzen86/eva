@@ -136,7 +136,7 @@ describe("Compaction", () => {
     expect(result).toBeNull();
     // Rendered with the day its rows were written, so the folded stretch keeps
     // a place in time instead of turning into an undated "как-то раз".
-    expect(loadSummary("u1")).toMatch(/^\[\d{2}\.\d{2}\] Первые восемь\.$/);
+    expect(loadSummary("u1")).toMatch(/^\[\d{2}\.\d{2} \d{2}:\d{2}\] Первые восемь\.$/);
   });
 
   it("adds a new chunk instead of rewriting the old one", async () => {
@@ -159,7 +159,7 @@ describe("Compaction", () => {
     // The chunks stay undated in the table; the dates are added when the digest
     // is rendered, so a stored summary has no second, ageing copy of its range.
     expect(loadSummary("u1")).toMatch(
-      /^\[\d{2}\.\d{2}\] Первые восемь\.\n\n\[\d{2}\.\d{2}\] Следующие четыре\.$/,
+      /^\[\d{2}\.\d{2} \d{2}:\d{2}\] Первые восемь\.\n\n\[\d{2}\.\d{2} \d{2}:\d{2}\] Следующие четыре\.$/,
     );
   });
 

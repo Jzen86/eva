@@ -1,5 +1,5 @@
 import { buildPersonalityPrompt } from "./personality.js";
-import { humanGap } from "./memory/time-words.js";
+import { humanGap, stampMoment } from "./memory/time-words.js";
 import type { TimeSeam } from "./memory/conversations.js";
 
 /**
@@ -106,9 +106,7 @@ ${facts}
 
 /** DD.MM HH:MM in his zone, for naming a moment inside the window. */
 function clockStamp(timestamp: number, offsetHours: number): string {
-  const d = new Date((timestamp + offsetHours * 3600) * 1000);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(d.getUTCDate())}.${pad(d.getUTCMonth() + 1)} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+  return stampMoment(timestamp, offsetHours);
 }
 
 /**

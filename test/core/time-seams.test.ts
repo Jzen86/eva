@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { getDB, closeDB } from "../../src/core/memory/db.js";
-import { recentSeams, SCHEDULED_TURN_PREFIX } from "../../src/core/memory/conversations.js";
+import { recentSeams, saveSummaryChunk, loadSummary, SCHEDULED_TURN_PREFIX } from "../../src/core/memory/conversations.js";
 import { buildTimeSeams } from "../../src/core/prompt.js";
 import path from "path";
 import os from "os";
@@ -80,5 +80,39 @@ describe("buildTimeSeams", () => {
 
   it("says nothing at all when the window has no pauses", () => {
     expect(buildTimeSeams([], OFFSET)).toBe("");
+  });
+});
+
+describe("loadSummary", () => {
+  let dbPath: string;
+
+  beforeEach(() => {
+    dbPath = path.join(os.tmpdir(), `eva-summary-${crypto.randomUUID()}.db`);
+    getDB(dbPath);
+  });
+
+  afterEach(() => {
+    closeDB();
+    for (const suffix of ["", "-wal", "-shm"]) {
+      try { fs.unlinkSync(dbPath + suffix); } catch { /* not there */ }
+    }
+  });
+
+  it("dates a fold with a clock and says how long ago it ended", () => {
+    // The live case: the newest fold on the install ran 02:04-02:46 and printed
+    // as "[01.10]" — the same date as the code session twenty minutes old. So the
+    // game talk read as current, and she answered it as such.
+    const endedAt = Math.floor(Date.now() / 1000) - 3 * 3600;
+    insert("u3", "user", "Поиграл", endedAt - 60);
+    insert("u3", "assistant", "Ну наконец-то", endedAt);
+    const rows = getDB().prepare("SELECT id FROM conversations ORDER BY id").all() as Array<{ id: number }>;
+    saveSummaryChunk("u3", { fromId: rows[0].id, toId: rows[1].id, summary: "Он вернулся из игры.", tokenEstimate: 40 });
+
+    const summary = loadSummary("u3", OFFSET);
+    // The range carries a clock now, not only a date.
+    expect(summary).toMatch(/\[\d{2}\.\d{2} \d{2}:\d{2}/);
+    expect(summary).toContain("Он вернулся из игры.");
+    expect(summary).toContain("назад");
+    expect(summary).toContain("Это прошлое");
   });
 });

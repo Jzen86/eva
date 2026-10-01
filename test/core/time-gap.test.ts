@@ -159,7 +159,12 @@ describe("loadSummary", () => {
     insert.run(150, "u1", "telegram", "assistant", "ага", DeviceDate(2026, 8, 26, 10));
 
     saveSummaryChunk("u1", { fromId: 101, toId: 150, summary: "говорили про самолёты", tokenEstimate: 10 });
-    expect(loadSummary("u1", 4)).toBe("[23.09–26.09] говорили про самолёты");
+    const summary = loadSummary("u1", 4) ?? "";
+    // The range carries a clock now, and the fold admits how old it is: a date
+    // alone made a stretch from before dawn the same age as one from ten minutes
+    // ago, which is how she merged a game with a code session.
+    expect(summary).toContain("[23.09 14:00–26.09 14:00] говорили про самолёты");
+    expect(summary).toContain("Это прошлое");
   });
 
   it("leaves a carried-over summary undated rather than guessing its date", () => {
