@@ -86,6 +86,33 @@ const MAX_CHAT_TOTAL_CHARS = 12000;
  */
 const MAX_SUMMARY_CHARS = 4000;
 
+/**
+ * How long a row may be before it is a retelling instead of a fact.
+ *
+ * The prompt asks for "одно-два предложения" and the live base averaged 486
+ * characters, the longest row 760 — the session summarising the conversation it
+ * had just read, which is the one thing a model can always do. A fact worth
+ * keeping fits in a sentence: "закрыл боевой пропуск в Battlefield" is 35
+ * characters. Length is the symptom the owner named first ("воды 99%"), and a
+ * request for brevity is the same class of promise as the rules were: the live
+ * prompt contained it while the rows grew.
+ *
+ * Fails towards not writing, like every check here: a lost fact costs one cheap
+ * session, an accepted retelling costs a paragraph in every prompt after it.
+ */
+const MAX_ROW_CHARS = 260;
+
+/** Everything a row will say, in characters. */
+function rowLength(f: StudyFact): number {
+  return (
+    f.fact.length +
+    (f.her_move?.length ?? 0) +
+    (f.context?.length ?? 0) +
+    (f.his_reaction?.length ?? 0) +
+    (f.conclusion?.length ?? 0)
+  );
+}
+
 /** Source tag written by the study loop itself. */
 const STUDY_SOURCE = "study_session";
 
@@ -212,6 +239,12 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
       }
       if (looksLikeApparatus(f.topic, f.fact)) {
         dropped.push(`«${truncate(f.fact, 60)}» — это отчёт о работе, а не событие`);
+        continue;
+      }
+      if (rowLength(f) > MAX_ROW_CHARS) {
+        dropped.push(
+          `«${truncate(f.fact, 60)}» — ${rowLength(f)} знаков: пересказ, а не факт`,
+        );
         continue;
       }
       accepted.push({ f, c: caseFieldsOf(f) });
@@ -412,6 +445,13 @@ function buildStudyMessages(
     "Если был обмен: что она сделала, в каком он был состоянии, как он ответил — можно",
     "добавить полями her_move, context, his_reaction. Не обязательно, пиши как удобно.",
     "Дату система проставит сама.",
+    "",
+    "Запись нужна для одного: чтобы в следующий раз по ней можно было что-то вспомнить и",
+    "сказать — спросить, продолжить, повести себя иначе. Не можешь представить, как ты её",
+    "используешь, — не пиши её. Пересказ того, что вы только что делали в этой переписке,",
+    "(кто что проверил, кто извинился, чем закончился тест) — не запись: это эхо разговора,",
+    "по нему нечего вспомнить. И помни: слишком длинно — значит, это тоже не факт.",
+    "Пиши коротко: одну фразу, не абзац.",
     "",
     "Не пиши выводы и правила, как себя вести: ни «не надо», ни «вывод:», ни «следует».",
     "Такое она потом выполняет как приказ вместо того, чтобы смотреть на момент.",

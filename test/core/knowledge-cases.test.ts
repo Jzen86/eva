@@ -73,6 +73,25 @@ describe("cases", () => {
     expect(out).toContain("ты: подхватил, тепло");
   });
 
+  it("keeps what the case was about, not only the scene", () => {
+    // A case used to render as состояние/она/ты with the subject dropped, and on
+    // the live base that was 25 rows of 35 arriving like that: something happened,
+    // somebody reacted, and she could not say what it had been about — the one
+    // thing a person says when they remember you.
+    addKnowledge({
+      topic: "шутки",
+      insight: "жгут про облако",
+      source: "memory_tool",
+      her_move: "назвала его ангелом",
+      context: "был весёлый",
+      his_reaction: "подхватил, тепло",
+    });
+
+    const out = renderKnowledge(searchKnowledge("облако", 5));
+    expect(out).toContain("жгут про облако");
+    expect(out).toContain("состояние: был весёлый");
+  });
+
   it("says so when a case has no recorded state instead of dropping it", () => {
     // The danger is the silent one: rendering the reaction alone turns a
     // moment into a rule. Marking it unknown keeps the case usable and keeps

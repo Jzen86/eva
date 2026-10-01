@@ -227,6 +227,43 @@ describe("study: what a session may leave in the base", () => {
     expect(rows()).toHaveLength(0);
     expect(result.report).toContain("отчёт о работе");
   });
+  it("drops a long retelling of the session", async () => {
+    // The owner's complaint, in one row: "воды 99%, полезной инфы 1%, тупо
+    // пересказ". The live base averaged 486 characters against a prompt asking for
+    // one or two sentences, and the longest row was 760 — a session summary, which
+    // is the thing a model can always produce and the thing memory is not for.
+    const retelling =
+      "Пользователь подтвердил работу настроенного им модуля времени: между сообщениями прошло ровно 3 часа (2:55–5:57). " +
+      "После обсуждения его занятий за этот период он прямо запретил включать в ответы текстовые описания её действий, " +
+      "предупредив о полном прекращении диалога при нарушении. Ассистентка случайным образом применила режиссёрские кавычки, " +
+      "получила раздражённую реакцию и немедленно принесла извинения, приняв ограничение.";
+
+    const { result } = await session(JSON.stringify({
+      facts: [{
+        topic: "Верификация модуля времени и прямой запрет на описания",
+        fact: retelling,
+        her_move: "Подтвердила интервал, поддержала тему, нарушила просьбу, быстро признала сбой и приняла правило",
+        context: "Успешная проверка реализации контроля времени, краткий обмен контекстом, жёсткая калибровка стиля",
+        his_reaction: "Верифицировал интервал, твёрдо сформулировал запрет и среагировал резким негативом",
+        conclusion: null,
+      }],
+    }));
+
+    expect(result.wrote).toBe(false);
+    expect(rows()).toHaveLength(0);
+    expect(result.report).toContain("пересказ, а не факт");
+  });
+
+  it("keeps a fact of the same session when it fits in a sentence", async () => {
+    // The cap is on length, not on length of the session: what he said in a dull
+    // stretch is still worth keeping, and it is short.
+    const { result } = await session(JSON.stringify({
+      facts: [{ topic: "стиль", fact: "запретил описывать свои действия со стороны" }],
+    }));
+
+    expect(result.wrote).toBe(true);
+    expect(rows()).toHaveLength(1);
+  });
 });
 
 describe("study: what it is not allowed to read", () => {
@@ -366,8 +403,7 @@ describe("study: the prompt it is asked with", () => {
     expect(text).toContain("Где было хорошо — тоже");
   });
 
-  it("asks it not to keep the apparatus, and keeps the human part of such a session", async () => {
-    // The live base had a dozen rows of the work itself: a FileNotFoundError in a
+  it("asks it not to keep the apparatus, and keeps the human part of such a session", async () => {    // The live base had a dozen rows of the work itself: a FileNotFoundError in a
     // crosspost script, a model choice, an image test, "проверка восстановления
     // голоса". None of it is a thing that happened to them, and the rows read as
     // fresh news months later. The prompt cannot simply ban the session: what he
@@ -375,6 +411,16 @@ describe("study: the prompt it is asked with", () => {
     const text = await prompt();
     expect(text).toContain("как меня чинили или проверяли");
     expect(text).toContain("пиши человека, а не то, что он починил");
+  });
+
+  it("asks for a record it could use, and calls a retelling what it is", async () => {
+    // "какая польза ей от этих знаний? тупо пересказ" — and the answer has to be
+    // in the prompt, because a model with no purpose does the one thing it can
+    // always do: summarise what it just read. The purpose is the acceptance test.
+    const text = await prompt();
+    expect(text).toContain("чтобы в следующий раз по ней можно было что-то вспомнить и");
+    expect(text).toContain("не запись: это эхо разговора");
+    expect(text).toContain("Пиши коротко: одну фразу, не абзац");
   });
 
   it("treats the zone as where to look first, not as a prohibition — and there is no zone any more", async () => {

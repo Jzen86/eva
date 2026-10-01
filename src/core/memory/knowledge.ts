@@ -262,6 +262,12 @@ export const KNOWLEDGE_PROMPT_LIMIT = 12;
  *    is the choice made in the moment, not a precedent obeyed. "He was busy, so
  *    he answered coldly" is one Tuesday, and a second case about the same joke
  *    in a different state is free to contradict it.
+ *
+ *    The state is *added*, not substituted. A case used to render as the scene
+ *    alone — состояние, она, ты — with `insight` dropped entirely, and on the live
+ *    base that was 25 rows of 35 arriving as a scene with no subject: something
+ *    happened, somebody reacted, and she could not say what it had been about.
+ *    The one thing a person says when they remember you is what it was about.
  * 2. Nothing is phrased as an instruction. The rows are what happened, in the
  *    words of whoever wrote them down. Whoever answers draws the conclusion for
  *    the moment in front of them, which is the only place a conclusion belongs.
@@ -298,7 +304,8 @@ export function renderKnowledge(
     const outcome = row.conclusion.trim() ? ` итог: ${row.conclusion.trim()}` : "";
     if (!isCase(row)) return `${i + 1}. ${head} ${row.insight}${outcome}`;
     const state = row.context.trim() || "не определяется";
-    return `${i + 1}. ${head} состояние: ${state}. она: ${row.her_move}. ты: ${row.his_reaction}${outcome}`;
+    const about = row.insight.trim() ? `${row.insight.trim()} ` : "";
+    return `${i + 1}. ${head} ${about}состояние: ${state}. она: ${row.her_move}. ты: ${row.his_reaction}${outcome}`;
   });
 
   lines.push(
