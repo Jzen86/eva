@@ -66,4 +66,38 @@ describe("deliver", () => {
     fs.unlinkSync(first);
     fs.unlinkSync(second);
   });
+
+  it("does not caption a voice note with the words it is already saying", async () => {
+    // She wrote the same line twice: once into the voice tool, once as her
+    // answer. The caption then read as a transcript of the note — the words out
+    // of the speaker, and the same words underneath it.
+    const file = tempOgg("dup");
+    const ctx = fakeCtx();
+    const line =
+      "Ого, хакер наш объявился 😈 Давай, чини, а я пока тут посижу и посмотрю, что у тебя получится";
+
+    await deliver(ctx as never, { text: line, media: [{ path: file, text: line }] });
+
+    expect(ctx.replyWithVoice).toHaveBeenCalledTimes(1);
+    const options = ctx.replyWithVoice.mock.calls[0][1] as { caption?: string } | undefined;
+    expect(options?.caption).toBeUndefined();
+
+    fs.unlinkSync(file);
+  });
+
+  it("keeps a caption that adds something the voice does not say", async () => {
+    const file = tempOgg("add");
+    const ctx = fakeCtx();
+
+    await deliver(ctx as never, {
+      text: "Проверяй, как звучит, и скажи, дошло ли нормально",
+      media: [{ path: file, text: "Слушаю тебя, любимый 🖤😘" }],
+    });
+
+    expect(ctx.replyWithVoice).toHaveBeenCalledTimes(1);
+    const options = ctx.replyWithVoice.mock.calls[0][1] as { caption?: string } | undefined;
+    expect(options?.caption).toContain("Проверяй, как звучит");
+
+    fs.unlinkSync(file);
+  });
 });

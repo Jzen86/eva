@@ -88,6 +88,6 @@ export class VoiceTool implements Tool {
 
     const file = path.join(os.tmpdir(), `eva-voice-${Date.now()}.ogg`);
     fs.writeFileSync(file, ogg);
-    return { success: true, output: "Голосовое готово и отправлено.", mediaPath: file };
+    return { success: true, output: "Голосовое готово и отправлено.", mediaPath: file, mediaText: text };
   }
 }

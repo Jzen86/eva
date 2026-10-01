@@ -282,7 +282,7 @@ export class Engine {
        * and never repeated it. A turn can legitimately make two: two voice notes
        * when she is asked for two, or a voice and a picture together.
        */
-      const media: Array<{ url?: string; path?: string }> = [];
+      const media: Array<{ url?: string; path?: string; text?: string }> = [];
       const toolCallCounts = new Map<string, number>();
       const processStart = Date.now();
 
@@ -418,6 +418,7 @@ export class Engine {
             media.push({
               ...(result.mediaUrl ? { url: result.mediaUrl } : {}),
               ...(result.mediaPath ? { path: result.mediaPath } : {}),
+              ...(result.mediaText ? { text: result.mediaText } : {}),
             });
           }
 

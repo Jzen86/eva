@@ -219,7 +219,7 @@ export interface AudioOptions {
 }
 
 /** What this turn produced, oldest first. Falls back to the single slot. */
-function turnMedia(response: OutgoingMessage): Array<{ url?: string; path?: string }> {
+function turnMedia(response: OutgoingMessage): Array<{ url?: string; path?: string; text?: string }> {
   if (response.media?.length) return response.media;
   if (response.mediaPath || response.mediaUrl) {
     return [{
@@ -230,17 +230,38 @@ function turnMedia(response: OutgoingMessage): Array<{ url?: string; path?: stri
   return [];
 }
 
+function normalise(s?: string): string {
+  return (s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Her reply, unless it only repeats what the media already says.
+ *
+ * She wrote the same line twice: once into the voice tool, once as her answer.
+ * The caption then read as a transcript of the note — the words coming out of
+ * the speaker and the same words underneath it. A caption has to add something
+ * ("проверяй, как звучит" does); a copy of the note is not an addition, and a
+ * retelling wrapped around it ("Отправила голосовое: «…»") is worse.
+ */
+function captionFor(text: string, mediaText?: string): string | undefined {
+  if (!text) return undefined;
+  const said = normalise(mediaText);
+  const wrote = normalise(text);
+  if (said.length >= 20 && (wrote === said || wrote.includes(said))) return undefined;
+  return markdownToTelegramHtml(text).slice(0, 1024);
+}
+
 /** Send one piece of media. False when it could not go out. */
 async function sendMedia(
   ctx: Context,
-  item: { url?: string; path?: string },
+  item: { url?: string; path?: string; text?: string },
   text: string,
 ): Promise<boolean> {
   if (item.path && fs.existsSync(item.path)) {
     try {
       const { InputFile } = await import("grammy");
       const ext = path.extname(item.path).toLowerCase();
-      const caption = text ? markdownToTelegramHtml(text).slice(0, 1024) : undefined;
+      const caption = captionFor(text, item.text);
       const parseMode = caption ? ("HTML" as const) : undefined;
       const file = new InputFile(item.path);
 
@@ -278,7 +299,7 @@ async function sendMedia(
         buffer = Buffer.from(await imgRes.arrayBuffer());
       }
       const { InputFile } = await import("grammy");
-      const caption = text ? markdownToTelegramHtml(text).slice(0, 1024) : undefined;
+      const caption = captionFor(text, item.text);
       await ctx.replyWithPhoto(new InputFile(buffer, "selfie.jpg"), {
         caption,
         parse_mode: caption ? "HTML" : undefined,

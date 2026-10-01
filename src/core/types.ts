@@ -22,7 +22,7 @@ export interface OutgoingMessage {
    * she is asked for two, or a voice and a picture together — and a single slot
    * kept only the last, dropping the rest without a word.
    */
-  media?: Array<{ url?: string; path?: string }>
+  media?: Array<{ url?: string; path?: string; text?: string }>
 }
 
 export interface LLMMessage {
