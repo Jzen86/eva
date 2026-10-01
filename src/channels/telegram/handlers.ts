@@ -245,6 +245,9 @@ function normalise(s?: string): string {
  */
 function captionFor(text: string, mediaText?: string): string | undefined {
   if (!text) return undefined;
+  // "…", a bare emoji, spaces: she has no way to end a turn with no reply at all,
+  // so when she has nothing to add she writes dots — and dots are not a caption.
+  if (!/[a-zа-яё0-9]/i.test(text)) return undefined;
   const said = normalise(mediaText);
   const wrote = normalise(text);
   if (said.length >= 20 && (wrote === said || wrote.includes(said))) return undefined;

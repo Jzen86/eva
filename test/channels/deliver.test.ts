@@ -100,4 +100,22 @@ describe("deliver", () => {
 
     fs.unlinkSync(file);
   });
+
+  it("treats dots as no caption at all", async () => {
+    // She has no way to end a turn without a reply, so when there is nothing to
+    // add she writes "…" — and three dots under a voice note are not a caption.
+    const file = tempOgg("dots");
+    const ctx = fakeCtx();
+
+    await deliver(ctx as never, {
+      text: "...",
+      media: [{ path: file, text: "Слушаю тебя, любимый 🖤😘" }],
+    });
+
+    expect(ctx.replyWithVoice).toHaveBeenCalledTimes(1);
+    const options = ctx.replyWithVoice.mock.calls[0][1] as { caption?: string } | undefined;
+    expect(options?.caption).toBeUndefined();
+
+    fs.unlinkSync(file);
+  });
 });
