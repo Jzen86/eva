@@ -2,6 +2,7 @@ import type { Bot, Context } from "grammy";
 import type { IncomingMessage, OutgoingMessage, ProgressCallback } from "../../core/types.js";
 import type { MessageHandler } from "../types.js";
 import { sendVoiceResponse } from "./voice.js";
+import { transcribeVoice } from "./transcribe.js";
 import { sendVideoNote } from "./video.js";
 import { applyPending, discard, peek, describe } from "../../core/pending.js";
 import { loadConfig, patchConfig } from "../../core/config.js";
@@ -382,6 +383,18 @@ async function downloadPhotoBase64(ctx: Context, photo: { file_id: string }[], b
     const res = await fetch(fileUrl);
     const buffer = Buffer.from(await res.arrayBuffer());
     return buffer.toString("base64");
+  } catch {
+    return null;
+  }
+}
+
+/** Download a Telegram file (voice note, audio) as bytes. */
+async function downloadFile(ctx: Context, fileId: string, botToken: string): Promise<Buffer | null> {
+  try {
+    const file = await ctx.api.getFile(fileId);
+    if (!file.file_path) return null;
+    const res = await fetch(`https://api.telegram.org/file/bot${botToken}/${file.file_path}`);
+    return Buffer.from(await res.arrayBuffer());
   } catch {
     return null;
   }
@@ -876,6 +889,31 @@ export function registerHandlers(
     }
 
     await handleWithTyping(ctx, userText);
+  });
+
+  // Voice notes from the owner: transcribe, then treat as an ordinary message.
+  //
+  // There was no handler here at all, so a voice note arrived and went nowhere —
+  // no transcription, no answer, not even a "did not catch that". The owner had
+  // no way to tell a deaf bot from a busy one, and the only clue was the silence.
+  bot.on("message:voice", async (ctx) => {
+    const stopTyping = startTyping(ctx);
+    const ogg = await downloadFile(ctx, ctx.message.voice.file_id, bot.token);
+    if (!ogg) {
+      stopTyping();
+      await ctx.reply("Не смогла скачать голосовое — попробуй ещё раз или напиши текстом.");
+      return;
+    }
+
+    const transcript = await transcribeVoice(ogg, audio?.voiceConfig);
+    stopTyping();
+
+    if (!transcript) {
+      await ctx.reply("Не разобрала голосовое — напиши текстом или переговори, я послушаю.");
+      return;
+    }
+
+    await handleWithTyping(ctx, transcript);
   });
 }
 

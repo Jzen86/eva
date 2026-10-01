@@ -147,6 +147,9 @@ memory:
 #   gemini_api_key: YOUR_GEMINI_KEY
 #   gemini_api_keys:                             # необязательно: второй ключ = ещё лимит
 #     - YOUR_GEMINI_KEY
+#   stt_models:                                  # распознавание её голосовых на вход (тот же ключ)
+#     - gemini-3.5-flash-lite
+#     - gemini-3.5-flash
 # selfies:    { fal_api_key: "...", reference_photo_url: "https://..." }
 # google:     { api_key: "...", cx: "..." }
 # plugins:    ["voice", "selfies"]
