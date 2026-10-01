@@ -1,4 +1,6 @@
 import { buildPersonalityPrompt } from "./personality.js";
+import { humanGap } from "./memory/time-words.js";
+import type { TimeSeam } from "./memory/conversations.js";
 
 /**
  * The moment, in words a model can use.
@@ -100,6 +102,39 @@ function buildGapNotice(gap: GapNotice): string {
 
 ${facts}
 Время — это расстояние, а не доклад: его не нужно объявлять, но по нему видно, как заговорить. Чем длиннее пауза, тем вернее, что прежнее — чем он занимался, в каком был настроении — уже устарело: не продолжай сцену как ни в чём не бывало, а спроси, чем он жил это время. Длительность называй по-человечески («часа два», а не «2 часа 14 минут»).`;
+}
+
+/** DD.MM HH:MM in his zone, for naming a moment inside the window. */
+function clockStamp(timestamp: number, offsetHours: number): string {
+  const d = new Date((timestamp + offsetHours * 3600) * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getUTCDate())}.${pad(d.getUTCMonth() + 1)} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+}
+
+/**
+ * The pauses inside the window, said out loud.
+ *
+ * The gap notice above covers the silence immediately before this message and
+ * only for this turn. That leaves everything older flat: the forty messages she
+ * is handed arrive as one feed with no seams, so a topic from three hours ago
+ * and one from five minutes ago read the same. This block is the standing
+ * version — it names the pauses that are already somewhere in the window, so the
+ * age of an older subject is visible instead of everything being "just now".
+ */
+export function buildTimeSeams(seams: TimeSeam[], offsetHours: number): string {
+  if (seams.length === 0) return "";
+
+  const lines = seams.map((s) => {
+    const who = s.role === "assistant" ? "ты" : "он";
+    const head = s.head.length > 48 ? `${s.head.slice(0, 48)}…` : s.head;
+    return `- ${clockStamp(s.timestamp, offsetHours)}, ${who}: «${head}» — после этого ${humanGap(s.gapSeconds)} тишины`;
+  });
+
+  return `## Швы во времени
+
+Между репликами ниже были паузы: сказанное в строке было **тогда**, а не только что. Не смешивай давнее с сиюминутным — то, что было до паузы, уже устарело.
+
+${lines.join("\n")}`;
 }
 
 function buildGenderBlock(gender: "female" | "male" | "neutral"): string {

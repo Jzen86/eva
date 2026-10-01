@@ -2,7 +2,7 @@ import type { IncomingMessage, OutgoingMessage, ProgressCallback } from "./types
 import type { LLMClient, LLMMessage, ContentPart, ToolDefinition } from "./llm/types.js";
 import type { ToolRegistry } from "./tools/registry.js";
 import type { ToolResult } from "./tools/types.js";
-import { buildSystemPrompt, type PromptConfig } from "./prompt.js";
+import { buildSystemPrompt, buildTimeSeams, type PromptConfig } from "./prompt.js";
 import {
   getConfigPath,
   getAgentName,
@@ -12,7 +12,7 @@ import {
   type EvaConfig,
 } from "./config.js";
 import { searchKnowledge, renderKnowledge, KNOWLEDGE_PROMPT_LIMIT } from "./memory/knowledge.js";
-import { saveMessage, loadHistory, extractText, previousLiveMessage } from "./memory/conversations.js";
+import { saveMessage, loadHistory, extractText, previousLiveMessage, recentSeams } from "./memory/conversations.js";
 import { gapFacts, GAP_THRESHOLD_MIN, type GapFacts } from "./memory/time-words.js";
 import { compactHistory } from "./memory/compaction.js";
 import { alignHistory } from "./llm/history.js";
@@ -612,6 +612,22 @@ export class Engine {
       });
       if (rendered) {
         prompt += `\n\n## Что было раньше\n\n${rendered}`;
+      }
+    } catch {
+      // Memory not initialized yet — skip
+    }
+
+    // The seams of the window: where the pauses inside it were, so a subject from
+    // three hours ago does not read as this minute's. Nothing new is stored — the
+    // times come from the timestamps every row already carries.
+    try {
+      const offsetHours = live.timezoneOffsetHours ?? 4;
+      const seams = buildTimeSeams(
+        recentSeams(chatId, 80, live.gapThresholdMinutes ?? GAP_THRESHOLD_MIN, 3),
+        offsetHours,
+      );
+      if (seams) {
+        prompt += `\n\n${seams}`;
       }
     } catch {
       // Memory not initialized yet — skip

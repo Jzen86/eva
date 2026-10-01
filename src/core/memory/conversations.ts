@@ -1,6 +1,6 @@
 import { getDB, readMeta, writeMeta } from "./db.js";
 import { alignHistory } from "../llm/history.js";
-import { shortDate } from "./time-words.js";
+import { shortDate, GAP_THRESHOLD_MIN } from "./time-words.js";
 import type { LLMMessage, ContentPart, ToolUseRequest } from "../llm/types.js";
 
 /**
@@ -179,6 +179,77 @@ export function previousLiveMessage(userId: string, limit = 80): LiveMessage | n
   }
 
   return last;
+}
+
+export interface TimeSeam {
+  id: number;
+  role: string;
+  timestamp: number;
+  /** The first words of what was said, so the seam can be named. */
+  head: string;
+  /** The silence that followed this message, in seconds. */
+  gapSeconds: number;
+}
+
+/**
+ * The pauses inside the window, not only the one right before this message.
+ *
+ * `Engine.gapFor` measures a single silence and says so for a single turn, which
+ * is what stops a pause from being mentioned twice. What that cannot do is make
+ * the *age* of anything older visible: the forty messages she is handed are a
+ * feed with no seams, so a game he finished three hours ago and a file he fixed
+ * five minutes ago sit in adjacent lines and read as one continuous now. Heard
+ * live, at 05:27: she merged a 02:36 "Поиграл" with an 04:38 coding session into
+ * "пока ты там воевал со своими багами" and "как ты рубился в батлу".
+ *
+ * So the seams are read back out of the timestamps every row already carries —
+ * nothing new is stored — and the newest few are handed to the prompt as a list.
+ * Service rows are walked past exactly as in `previousLiveMessage`, or a
+ * scheduled report would look like something one of them said.
+ */
+export function recentSeams(
+  userId: string,
+  limit = 80,
+  thresholdMin = GAP_THRESHOLD_MIN,
+  keep = 3,
+): TimeSeam[] {
+  const rows = getDB()
+    .prepare(
+      `SELECT id, role, timestamp, substr(content, 1, 60) AS head FROM (
+         SELECT id, role, timestamp, content FROM conversations
+         WHERE user_id = ? ORDER BY id DESC LIMIT ?
+       ) ORDER BY id ASC`,
+    )
+    .all(userId, limit) as Array<{ id: number; role: string; timestamp: number; head: string }>;
+
+  const live: typeof rows = [];
+  let insideScheduledTurn = false;
+  for (const row of rows) {
+    if (row.role === "tool") continue;
+    if (row.role === "user") {
+      insideScheduledTurn = row.head.startsWith(SCHEDULED_TURN_PREFIX);
+      if (insideScheduledTurn) continue;
+    } else if (insideScheduledTurn) {
+      continue;
+    }
+    live.push(row);
+  }
+
+  const seams: TimeSeam[] = [];
+  for (let i = 1; i < live.length; i++) {
+    const gapSeconds = live[i].timestamp - live[i - 1].timestamp;
+    if (gapSeconds < thresholdMin * 60) continue;
+    const before = live[i - 1];
+    seams.push({
+      id: before.id,
+      role: before.role,
+      timestamp: before.timestamp,
+      head: (before.head ?? "").replace(/\s+/g, " ").trim(),
+      gapSeconds,
+    });
+  }
+
+  return seams.slice(-keep);
 }
 
 interface SummaryRow {
