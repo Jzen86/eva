@@ -219,7 +219,7 @@ export interface AudioOptions {
 }
 
 /** Deliver an OutgoingMessage through the appropriate Telegram media type. */
-async function deliver(ctx: Context, response: OutgoingMessage, audio?: AudioOptions): Promise<void> {
+export async function deliver(ctx: Context, response: OutgoingMessage, audio?: AudioOptions): Promise<void> {
   const mode = response.mode ?? "text";
 
   // If response has a local file to send
@@ -234,7 +234,13 @@ async function deliver(ctx: Context, response: OutgoingMessage, audio?: AudioOpt
       if (VIDEO_EXTS.has(ext)) {
         await ctx.replyWithVideo(file, { caption, parse_mode: parseMode });
       } else if (ext === ".ogg" || ext === ".opus") {
-        await ctx.replyWithVoice(file);
+        // The caption is her written half, not a transcript of the voice note.
+        // A turn with the voice tool makes two things: the line she speaks, and
+        // the reply she writes after the tool returns. Dropping the caption threw
+        // the second one away silently — the tool answers "готово и отправлено",
+        // so she had no way to know, and the owner, seeing only the teasing half,
+        // concluded she was stalling when she was being cut off.
+        await ctx.replyWithVoice(file, { caption, parse_mode: parseMode });
       } else if (AUDIO_EXTS.has(ext)) {
         await ctx.replyWithAudio(file, { caption, parse_mode: parseMode });
       } else {
