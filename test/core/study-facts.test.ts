@@ -413,8 +413,18 @@ describe("study: the prompt it is asked with", () => {
     expect(text).toContain("пиши человека, а не то, что он починил");
   });
 
-  it("asks for a record it could use, and calls a retelling what it is", async () => {
-    // "какая польза ей от этих знаний? тупо пересказ" — and the answer has to be
+  it("asks first for what he taught her, because that is what memory is for", async () => {
+    // The owner's own words: "эта память как раз и должна быть такой — чему я учу
+    // её". The live row that made the point is #108, and it is the shape of the
+    // whole idea: his "моя девочка" is pride, like "моя школа", not ownership.
+    // The prompt named facts, events and subjects, and never said that a thing he
+    // taught her is the most valuable row there is.
+    const text = await prompt();
+    expect(text).toContain("Дороже всего — то, чему он тебя научил");
+    expect(text).toContain("Одна такая запись стоит десяти пересказов");
+  });
+
+  it("asks for a record it could use, and calls a retelling what it is", async () => {    // "какая польза ей от этих знаний? тупо пересказ" — and the answer has to be
     // in the prompt, because a model with no purpose does the one thing it can
     // always do: summarise what it just read. The purpose is the acceptance test.
     const text = await prompt();
