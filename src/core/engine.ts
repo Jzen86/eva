@@ -17,6 +17,7 @@ import { gapFacts, GAP_THRESHOLD_MIN, type GapFacts } from "./memory/time-words.
 import { compactHistory } from "./memory/compaction.js";
 import { alignHistory } from "./llm/history.js";
 import { LLMUnavailableError } from "./llm/router.js";
+import { isHeavyToolCall } from "./tool-tiers.js";
 import { TokenStore } from "../services/tokens.js";
 import { getService } from "../services/catalog.js";
 import { SkillsStore } from "../services/skills-store.js";
@@ -369,10 +370,15 @@ export class Engine {
           return { text, mediaUrl: lastMediaUrl, mediaPath: lastMediaPath, ...(media.length ? { media } : {}) };
         }
 
-        // From here the turn is work: tools are involved, so the heavier model
-        // takes over for the rest of the task. A plain reply never reaches this
-        // line, so chat stays on the fast model.
-        if (strongAvailable) llm = this.deps.llm.strong();
+        // Tools are involved from here on, and only some of them are work worth
+        // the strong model. A light tool — a search, a memory lookup, a voice
+        // note — leaves the rest of the turn on the chat model; a heavy one
+        // lifts it. `llm` is never put back down, so once a heavy step has
+        // raised the turn it stays raised to its end. See tool-tiers.ts.
+        const needsStrong = response.toolCalls.some((tc) =>
+          isHeavyToolCall(tc.name, tc.arguments),
+        );
+        if (needsStrong && strongAvailable) llm = this.deps.llm.strong();
 
         // Add assistant message with tool calls to history (MOVED from before compaction check)
         history.push({

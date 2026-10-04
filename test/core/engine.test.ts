@@ -54,18 +54,18 @@ describe("Engine", () => {
     expect(chat).toHaveBeenCalledTimes(2);
   });
 
-  it("moves to the strong role once tools are involved", async () => {
+  it("moves a heavy tool turn to the strong role", async () => {
     const tools = new ToolRegistry();
     tools.register({
-      name: "t",
-      description: "t",
+      name: "shell",
+      description: "shell",
       parameters: [],
       async execute() { return { success: true, output: "ok" }; },
     });
     const fastChat = vi.fn().mockResolvedValueOnce({
       text: "",
       stopReason: "tool_use",
-      toolCalls: [{ id: "c1", name: "t", arguments: {} }],
+      toolCalls: [{ id: "c1", name: "shell", arguments: { command: "uptime" } }],
     });
     const strongChat = vi.fn().mockResolvedValue({ text: "готово", stopReason: "end_turn" });
     const llm = {
@@ -77,12 +77,47 @@ describe("Engine", () => {
     const res = await engine.process({
       channelName: "test",
       userId: "strong-user",
-      text: "сделай",
+      text: "проверь сервер",
       timestamp: Date.now(),
     });
     expect(res.text).toBe("готово");
     expect(fastChat).toHaveBeenCalledTimes(1);
     expect(strongChat).toHaveBeenCalled();
+  });
+
+  it("keeps a light tool turn on the fast role", async () => {
+    // A plain search must not drag the whole turn onto the strong model: `fast`
+    // already wrote the query, and reading the results back is conversation.
+    const tools = new ToolRegistry();
+    tools.register({
+      name: "web",
+      description: "web",
+      parameters: [],
+      async execute() { return { success: true, output: "результаты" }; },
+    });
+    const fastChat = vi.fn()
+      .mockResolvedValueOnce({
+        text: "",
+        stopReason: "tool_use",
+        toolCalls: [{ id: "c1", name: "web", arguments: { action: "search", query: "мышь" } }],
+      })
+      .mockResolvedValueOnce({ text: "нашла", stopReason: "end_turn" });
+    const strongChat = vi.fn();
+    const llm = {
+      fast: () => ({ chat: fastChat }),
+      strong: () => ({ chat: strongChat }),
+      hasRole: (n: string) => n === "strong",
+    };
+    const engine = new Engine({ llm, config: testConfig, tools });
+    const res = await engine.process({
+      channelName: "test",
+      userId: "light-user",
+      text: "найди мышь",
+      timestamp: Date.now(),
+    });
+    expect(res.text).toBe("нашла");
+    expect(fastChat).toHaveBeenCalledTimes(2);
+    expect(strongChat).not.toHaveBeenCalled();
   });
 
   it("handles LLM errors gracefully", async () => {
