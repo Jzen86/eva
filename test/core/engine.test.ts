@@ -120,6 +120,45 @@ describe("Engine", () => {
     expect(strongChat).not.toHaveBeenCalled();
   });
 
+  it("writes the answering tier into each turn log", async () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const tiersFor = async (toolName: string, args: Record<string, unknown>) => {
+      const tools = new ToolRegistry();
+      tools.register({
+        name: toolName,
+        description: toolName,
+        parameters: [],
+        async execute() { return { success: true, output: "r" }; },
+      });
+      const fastChat = vi.fn()
+        .mockResolvedValueOnce({
+          text: "",
+          stopReason: "tool_use",
+          toolCalls: [{ id: "c1", name: toolName, arguments: args }],
+        })
+        .mockResolvedValueOnce({ text: "ок", stopReason: "end_turn" });
+      const strongChat = vi.fn().mockResolvedValue({ text: "ок", stopReason: "end_turn" });
+      const llm = {
+        fast: () => ({ chat: fastChat }),
+        strong: () => ({ chat: strongChat }),
+        hasRole: (n: string) => n === "strong",
+      };
+      const engine = new Engine({ llm, config: testConfig, tools });
+      spy.mockClear();
+      await engine.process({ channelName: "test", userId: `tier-${toolName}`, text: "x", timestamp: Date.now() });
+      return spy.mock.calls
+        .map((c) => { try { return JSON.parse(String(c[0])); } catch { return null; } })
+        .filter((o): o is { tag: string; tier: string } => Boolean(o) && o.tag === "engine")
+        .map((o) => o.tier);
+    };
+    try {
+      expect(await tiersFor("web", { action: "search" })).toEqual(["fast", "fast"]);
+      expect(await tiersFor("shell", { command: "uptime" })).toEqual(["fast", "strong"]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("handles LLM errors gracefully", async () => {
     const llm = {
       fast: () => ({

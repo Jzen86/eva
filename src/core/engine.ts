@@ -209,6 +209,15 @@ export class Engine {
 
   private async processLocked(msg: IncomingMessage, onProgress?: ProgressCallback): Promise<OutgoingMessage> {
     let llm = this.deps.llm.fast();
+    /**
+     * Which role answers right now, for the turn log.
+     *
+     * The log used to record only that tools were involved, never the model, so
+     * "did this turn lift to strong?" could not be answered from a live journal —
+     * only guessed at. The tier is what the routing decision actually is, so it
+     * is written down where the decision is made.
+     */
+    let tier: "fast" | "strong" = "fast";
     // Only upgrade to the strong role when it is configured. A tool turn would
     // otherwise ask a role that resolves to nothing and fail.
     const strongAvailable = this.deps.llm.hasRole?.("strong") ?? false;
@@ -335,6 +344,7 @@ export class Engine {
         console.log(JSON.stringify({
           tag: "engine",
           turn: turn + 1,
+          tier,
           llmMs,
           promptTokens: response.usage?.promptTokens,
           completionTokens: response.usage?.completionTokens,
@@ -378,7 +388,10 @@ export class Engine {
         const needsStrong = response.toolCalls.some((tc) =>
           isHeavyToolCall(tc.name, tc.arguments),
         );
-        if (needsStrong && strongAvailable) llm = this.deps.llm.strong();
+        if (needsStrong && strongAvailable) {
+          llm = this.deps.llm.strong();
+          tier = "strong";
+        }
 
         // Add assistant message with tool calls to history (MOVED from before compaction check)
         history.push({
