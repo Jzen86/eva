@@ -289,7 +289,7 @@ export const KNOWLEDGE_PROMPT_LIMIT = 12;
  */
 export function renderKnowledge(
   rows: KnowledgeRow[],
-  opts: { offsetHours?: number; now?: number } = {},
+  opts: { offsetHours?: number; now?: number; includeIds?: boolean } = {},
 ): string {
   if (rows.length === 0) return "";
 
@@ -298,7 +298,8 @@ export function renderKnowledge(
 
   const lines = rows.map((row, i) => {
     const when = `${shortDate(row.timestamp, offsetHours)}, ${relativeAge(row.timestamp, now)}`;
-    const head = `[${when}${row.topic ? ` · ${row.topic}` : ""}]`;
+    const id = opts.includeIds ? `#${row.id} ` : "";
+    const head = `${id}[${when}${row.topic ? ` · ${row.topic}` : ""}]`;
     // "итог", not "вывод": a вывод is what one draws and generalises, and this is
     // only ever how that one conversation ended.
     const outcome = row.conclusion.trim() ? ` итог: ${row.conclusion.trim()}` : "";

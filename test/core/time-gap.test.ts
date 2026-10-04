@@ -7,7 +7,7 @@ import {
   loadSummary,
   SCHEDULED_TURN_PREFIX,
 } from "../../src/core/memory/conversations.js";
-import { gapFacts, humanGap, dayPart, relativeAge } from "../../src/core/memory/time-words.js";
+import { gapFacts, gapPassage, humanGap, dayPart, relativeAge } from "../../src/core/memory/time-words.js";
 import { buildSystemPrompt, type GapNotice } from "../../src/core/prompt.js";
 import { saveConfig } from "../../src/core/config.js";
 import { Engine } from "../../src/core/engine.js";
@@ -20,6 +20,9 @@ import crypto from "crypto";
 /** The real silence from the live log: 29.09 20:16 → 30.09 17:42, UTC+4. */
 const LIVE_FROM = Date.UTC(2026, 8, 29, 16, 16) / 1000;
 const LIVE_TO = Date.UTC(2026, 8, 30, 13, 42) / 1000;
+/** Previous exchange at 20:30 and a new message at 14:27, Saratov time (UTC+4). */
+const SARATOV_FROM = Date.UTC(2026, 9, 3, 16, 30) / 1000;
+const SARATOV_TO = Date.UTC(2026, 9, 4, 10, 27) / 1000;
 
 describe("humanGap", () => {
   it("says a distance the way a person would, not the way a stopwatch does", () => {
@@ -45,6 +48,26 @@ describe("humanGap", () => {
     // "ты пропал почти на сутки" — that is the sentence the feature is for.
     expect(humanGap(LIVE_TO - LIVE_FROM)).toBe("почти сутки");
     expect(humanGap(LIVE_TO - LIVE_FROM)).not.toMatch(/\d+:\d+|21/);
+  });
+});
+
+describe("gapPassage", () => {
+  const saratov = (day: number, hour: number, minute = 0) =>
+    Date.UTC(2026, 9, day, hour - 4, minute) / 1000;
+
+  it("distinguishes a half-day from most of the light day", () => {
+    expect(gapPassage(saratov(3, 10, 30), saratov(3, 19), 4)).toBe("прошло полдня");
+    expect(gapPassage(saratov(3, 9), saratov(3, 20), 4)).toBe("прошёл весь день");
+  });
+
+  it("distinguishes part of the night from the whole night", () => {
+    expect(gapPassage(saratov(3, 23), saratov(4, 2), 4)).toBe("прошло полночи");
+    expect(gapPassage(saratov(3, 23), saratov(4, 5), 4)).toBe("прошла вся ночь");
+  });
+
+  it("names the night and the part of the next day that have passed", () => {
+    expect(gapPassage(saratov(3, 20, 30), saratov(4, 14, 27), 4))
+      .toBe("прошла вся ночь и уже полдня");
   });
 });
 
@@ -84,6 +107,8 @@ describe("gapFacts", () => {
     const evening = Date.UTC(2026, 8, 30, 16, 30) / 1000; // 20:30 at UTC+4
     expect(dayPart(evening, 4)).toBe("вечер");
     expect(dayPart(evening, 0)).toBe("день");
+    const nightStart = Date.UTC(2026, 8, 30, 18, 0) / 1000; // 22:00 at UTC+4
+    expect(dayPart(nightStart, 4)).toBe("ночь");
   });
 });
 
@@ -183,18 +208,27 @@ describe("the pause in the prompt", () => {
     touchedNight: true,
     fromDate: "29.09",
     fromDayPart: "вечер",
+    toDate: "30.09",
+    toDayPart: "день",
+    passage: "прошла вся ночь и уже полдня",
     prevRole: "assistant",
+    previousExchange: [
+      { id: 1, role: "user", timestamp: LIVE_FROM, text: "скоро вернусь" },
+      { id: 2, role: "assistant", timestamp: LIVE_FROM, text: "жду" },
+    ],
   };
 
-  it("tells her how long he was gone and that the scene is stale", () => {
-    const prompt = buildSystemPrompt({ name: "Ева" }, undefined, undefined, undefined, notice);
+  it("anchors the pause in the previous exchange and updates the current scene", () => {
+    const prompt = buildSystemPrompt({ name: "Ева" }, "Привет", undefined, undefined, notice);
     expect(prompt).toContain("## Время между сообщениями");
-    expect(prompt).toContain("почти сутки");
-    expect(prompt).toContain("последней писала ты");
-    expect(prompt).toContain("29.09, вечер");
-    expect(prompt).toContain("сменились сутки");
-    expect(prompt).toContain("в паузу попала ночь");
-    expect(prompt).toContain("расстояние, а не доклад");
+    expect(prompt).toContain("он: «скоро вернусь»");
+    expect(prompt).toContain("ты: «жду»");
+    expect(prompt).toContain("Сейчас 30.09, день");
+    expect(prompt).toContain("прошла вся ночь и уже полдня");
+    expect(prompt).toContain("не говори так, будто он всё ещё в прежнем занятии");
+    expect(prompt).toContain("спроси, как спалось и что он уже поделал сегодня");
+    expect(prompt.indexOf("## Время между сообщениями"))
+      .toBeLessThan(prompt.indexOf("## Текущий запрос"));
   });
 
   it("says nothing at all when there was no pause", () => {
@@ -205,12 +239,13 @@ describe("the pause in the prompt", () => {
     expect(prompt).not.toContain("Время между сообщениями");
   });
 
-  it("says who went quiet", () => {
+  it("renders the last exchange rather than reducing it to a speaker label", () => {
     const prompt = buildSystemPrompt({ name: "Ева" }, undefined, undefined, undefined, {
       ...notice,
       prevRole: "user",
     });
-    expect(prompt).toContain("последним писал он");
+    expect(prompt).toContain("он: «скоро вернусь»");
+    expect(prompt).toContain("ты: «жду»");
   });
 });
 
@@ -260,8 +295,8 @@ describe("Engine time gap", () => {
     const insert = getDB().prepare(
       "INSERT INTO conversations (user_id, channel, role, content, timestamp) VALUES (?, ?, ?, ?, ?)",
     );
-    insert.run("u1", "telegram", "user", "Да, лучше поиграю", LIVE_FROM);
-    insert.run("u1", "telegram", "assistant", "Одобряю, спасай мир", LIVE_FROM);
+    insert.run("u1", "telegram", "user", "😘скоро вернусь", SARATOV_FROM);
+    insert.run("u1", "telegram", "assistant", "Жду, кот, возвращайся быстрее", SARATOV_FROM + 1);
 
     const chat = vi.fn().mockResolvedValue({ text: "о, привет", stopReason: "end_turn" });
     const engine = engineWith(chat);
@@ -269,13 +304,19 @@ describe("Engine time gap", () => {
       channelName: "telegram",
       userId: "u1",
       text: "Привет",
-      timestamp: LIVE_TO * 1000,
+      timestamp: SARATOV_TO * 1000,
     });
 
     const [request] = chat.mock.calls[0];
     const system = request[0].content as string;
     expect(system).toContain("Время между сообщениями");
-    expect(system).toContain("почти сутки");
+    expect(system).toContain("он: «😘скоро вернусь»");
+    expect(system).toContain("ты: «Жду, кот, возвращайся быстрее»");
+    expect(system).toContain("Сейчас 04.10, день");
+    expect(system).toContain("прошла вся ночь и уже полдня");
+    expect(system).toContain("не говори так, будто он всё ещё в прежнем занятии");
+    expect(system.lastIndexOf("## Время между сообщениями"))
+      .toBeLessThan(system.lastIndexOf("## Текущий запрос"));
   });
 
   it("keeps an ordinary exchange seamless", async () => {
@@ -328,7 +369,7 @@ describe("Engine time gap", () => {
     const system = request[0].content as string;
     // Measured from the report it would be "минуту" — the real silence is a day.
     expect(system).toContain("Время между сообщениями");
-    expect(system).toContain("почти сутки");
+    expect(system).toContain("прошла вся ночь и уже полдня");
   });
 
   it("stays quiet on a scheduled turn of her own", async () => {

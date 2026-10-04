@@ -1,6 +1,6 @@
 import { getDB, readMeta, writeMeta } from "./db.js";
 import { alignHistory } from "../llm/history.js";
-import { humanGap, stampMoment, GAP_THRESHOLD_MIN } from "./time-words.js";
+import { gapPassage, stampMoment, GAP_THRESHOLD_MIN } from "./time-words.js";
 import type { LLMMessage, ContentPart, ToolUseRequest } from "../llm/types.js";
 
 /**
@@ -20,6 +20,8 @@ export interface LiveMessage {
   id: number;
   role: string;
   timestamp: number;
+  /** Plain-text preview; media payloads and tool-only assistant rows are omitted. */
+  text: string;
 }
 
 /**
@@ -151,17 +153,24 @@ export function loadHistory(
  * that answer for a real reply would be the same error in a smaller size: she
  * would read her own report as a thing she said to him.
  */
-export function previousLiveMessage(userId: string, limit = 80): LiveMessage | null {
+export function previousLiveExchange(userId: string, limit = 80): LiveMessage[] {
   const rows = getDB()
     .prepare(
-      `SELECT id, role, timestamp, substr(content, 1, 64) AS head FROM (
+      `SELECT id, role, timestamp, substr(content, 1, 64) AS head,
+              substr(content, 1, 1000) AS content FROM (
          SELECT id, role, timestamp, content FROM conversations
          WHERE user_id = ? ORDER BY id DESC LIMIT ?
        ) ORDER BY id ASC`,
     )
-    .all(userId, limit) as Array<{ id: number; role: string; timestamp: number; head: string }>;
+    .all(userId, limit) as Array<{
+      id: number;
+      role: string;
+      timestamp: number;
+      head: string;
+      content: string;
+    }>;
 
-  let last: LiveMessage | null = null;
+  const live: LiveMessage[] = [];
   let insideScheduledTurn = false;
 
   for (const row of rows) {
@@ -175,16 +184,42 @@ export function previousLiveMessage(userId: string, limit = 80): LiveMessage | n
       continue;
     }
 
-    last = { id: row.id, role: row.role, timestamp: row.timestamp };
+    const text = conversationText(row.content).replace(/\s+/g, " ").trim();
+    // Assistant tool-call messages are persisted with empty content. They are
+    // part of the protocol, not something either person said to the other.
+    if (!text) continue;
+    live.push({ id: row.id, role: row.role, timestamp: row.timestamp, text: text.slice(0, 300) });
   }
 
-  return last;
+  return live.slice(-2);
+}
+
+/** The last live message, kept as the measuring point for the pause. */
+export function previousLiveMessage(userId: string, limit = 80): LiveMessage | null {
+  return previousLiveExchange(userId, limit).at(-1) ?? null;
+}
+
+/** Decode stored text parts without surfacing serialized image payloads. */
+function conversationText(content: string): string {
+  try {
+    const parsed: unknown = JSON.parse(content);
+    if (typeof parsed === "string") return parsed;
+    if (Array.isArray(parsed)) return extractText(parsed as ContentPart[]);
+  } catch {
+    // A truncated serialized content-parts array can contain a partial media
+    // payload. Never feed that fragment back as conversational context.
+    if (/^\s*\[\s*\{/.test(content)) return "";
+    // Ordinary text is stored without JSON encoding.
+  }
+  return content;
 }
 
 export interface TimeSeam {
   id: number;
   role: string;
   timestamp: number;
+  /** The next live message, so the pause can be described by its day/night parts. */
+  toTimestamp: number;
   /** The first words of what was said, so the seam can be named. */
   head: string;
   /** The silence that followed this message, in seconds. */
@@ -244,6 +279,7 @@ export function recentSeams(
       id: before.id,
       role: before.role,
       timestamp: before.timestamp,
+      toTimestamp: live[i].timestamp,
       head: (before.head ?? "").replace(/\s+/g, " ").trim(),
       gapSeconds,
     });
@@ -388,7 +424,7 @@ function summaryAgeNote(chunk: SummaryChunk | undefined, offsetHours: number): s
   const seconds = Math.floor(Date.now() / 1000) - row.timestamp;
   if (seconds < 3600) return "";
 
-  return `\n\nПоследнее в этой сводке — ${humanGap(seconds)} назад (${stampMoment(row.timestamp, offsetHours)}). Это прошлое: не продолжай его как то, что происходит сейчас.`;
+  return `\n\nПоследнее в этой сводке было ${stampMoment(row.timestamp, offsetHours)} — с тех пор ${gapPassage(row.timestamp, Math.floor(Date.now() / 1000), offsetHours)}. Это прошлое: не продолжай его как то, что происходит сейчас.`;
 }
 
 /**

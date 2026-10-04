@@ -147,6 +147,7 @@ export function findLexicalDuplicate(
       her_move: row.her_move,
       context: row.context,
       his_reaction: row.his_reaction,
+      conclusion: row.conclusion,
     });
 
     if (mine.exactOnly || theirs.exactOnly) {
@@ -285,6 +286,8 @@ export async function learnInsight(
     known?: KnowledgeRow[];
     embedding?: EmbeddingEndpoint | null;
     confidence?: number;
+    /** Run synchronously inside the insert transaction (e.g. retire a corrected row). */
+    afterWrite?: (id: number) => void;
   } = {},
 ): Promise<LearnOutcome> {
   const known = opts.known ?? getAllKnowledge();
@@ -313,6 +316,11 @@ export async function learnInsight(
     }
   }
 
-  const id = addKnowledge({ ...input, embedding: vector }, opts.confidence ?? 0.6);
+  const insert = () => {
+    const id = addKnowledge({ ...input, embedding: vector }, opts.confidence ?? 0.6);
+    opts.afterWrite?.(id);
+    return id;
+  };
+  const id = opts.afterWrite ? getDB().transaction(insert)() : insert();
   return { written: true, id, reason: "записано" };
 }

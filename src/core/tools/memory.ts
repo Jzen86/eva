@@ -45,7 +45,7 @@ function handleSearch(params: Record<string, unknown>): ToolResult {
   // Same rendering the answer prompt uses, so a search made mid-chat hands back
   // evidence framed as evidence. A different shape in each place would mean the
   // framing has to be remembered twice and survives in one of them.
-  const rendered = renderKnowledge(hits);
+  const rendered = renderKnowledge(hits, { includeIds: true });
   if (!rendered) {
     return { success: true, output: "No relevant memories found." };
   }
@@ -75,6 +75,33 @@ async function handleSave(
   // that happen do not end in a decision.
   const conclusion = optionalString(params, "conclusion");
 
+  // Validate the target before doing any asynchronous dedup/embedding work or
+  // writing the replacement. A failed supersedes request must have no side
+  // effects: the previous implementation could insert a row and only then say
+  // "invalid_id", leaving the agent's retry to create a duplicate.
+  const supersedes = optionalString(params, "supersedes");
+  let oldId: number | null = null;
+  if (supersedes) {
+    oldId = Number(supersedes);
+    if (!Number.isSafeInteger(oldId) || oldId <= 0) {
+      return {
+        success: false,
+        output: `Not saved: supersedes must be a live entry ID, got ${supersedes}. Use memory action=search/list to find its #ID.`,
+        error: "invalid_id",
+      };
+    }
+    const oldEntry = getDB()
+      .prepare("SELECT 1 AS found FROM knowledge WHERE id = ? AND superseded_at IS NULL")
+      .get(oldId) as { found: number } | undefined;
+    if (!oldEntry) {
+      return {
+        success: false,
+        output: `Not saved: live memory entry #${oldId} was not found. Use memory action=search/list to find its #ID.`,
+        error: "invalid_id",
+      };
+    }
+  }
+
   if (herMove && (!context || !hisReaction)) {
     return {
       success: false,
@@ -91,18 +118,42 @@ async function handleSave(
   // the same dedup check as one a study session produces. Without this, Eva
   // could answer "не люблю грибы", store it, and then store "люблю грибы"
   // right after it — both passing straight to the table.
-  const outcome = await learnInsight(
-    {
-      topic,
-      insight,
-      source: "memory_tool",
-      her_move: herMove ?? undefined,
-      context: context ?? undefined,
-      his_reaction: hisReaction ?? undefined,
-      conclusion: conclusion ?? undefined,
-    },
-    { embedding },
-  );
+  const correctionId = oldId;
+  const targetChanged = new Error("supersedes target changed before commit");
+  let targetChangedDuringCommit = false;
+  let outcome: Awaited<ReturnType<typeof learnInsight>>;
+  try {
+    outcome = await learnInsight(
+      {
+        topic,
+        insight,
+        source: "memory_tool",
+        her_move: herMove ?? undefined,
+        context: context ?? undefined,
+        his_reaction: hisReaction ?? undefined,
+        conclusion: conclusion ?? undefined,
+      },
+      {
+        embedding,
+        afterWrite:
+          correctionId === null
+            ? undefined
+            : (newId) => {
+                if (!retireKnowledge(correctionId, newId)) {
+                  targetChangedDuringCommit = true;
+                  throw targetChanged;
+                }
+              },
+      },
+    );
+  } catch (err) {
+    if (!targetChangedDuringCommit) throw err;
+    return {
+      success: false,
+      output: `Not saved: live memory entry #${correctionId} changed before the correction could commit. Search again and retry with its current #ID.`,
+      error: "invalid_id",
+    };
+  }
 
   if (!outcome.written) {
     return {
@@ -120,25 +171,7 @@ async function handleSave(
   // After the write, never before. Retiring on a refused write would leave the
   // old fact gone and nothing in its place — the exact amnesia this pair of
   // columns exists to prevent.
-  const supersedes = optionalString(params, "supersedes");
-  if (supersedes) {
-    const oldId = Number(supersedes);
-    if (!Number.isInteger(oldId) || oldId <= 0) {
-      return {
-        success: false,
-        output: `Saved as #${outcome.id}, but supersedes is not an entry id: ${supersedes}`,
-        error: "invalid_id",
-      };
-    }
-    const retired = retireKnowledge(oldId, outcome.id);
-    if (!retired) {
-      return {
-        success: true,
-        output:
-          `Saved as #${outcome.id}, but entry #${oldId} is not a live entry — ` +
-          `nothing to retire. Use action=list with include_retired=1 to see retired ones.`,
-      };
-    }
+  if (oldId !== null) {
     return {
       success: true,
       output: `Saved knowledge entry #${outcome.id}. Entry #${oldId} is now retired as corrected by it.`,
@@ -225,7 +258,7 @@ export function createMemoryTool(opts: MemoryToolOptions = {}): Tool {
       "so write it with the argument it came from, never as advice for later.",
     parameters: [
       { name: "action", type: "string", description: "One of: search, save, delete, list", required: true },
-      { name: "query", type: "string", description: "Search query (required for action=search)" },
+      { name: "query", type: "string", description: "Search query (required for action=search; results include the entry's #ID)" },
       { name: "content", type: "string", description: "Knowledge content to save (required for action=save)" },
       { name: "topic", type: "string", description: "Topic tag for the entry (optional, default: general)" },
       {
@@ -255,7 +288,7 @@ export function createMemoryTool(opts: MemoryToolOptions = {}): Tool {
         name: "supersedes",
         type: "string",
         description:
-          "With action=save: the id of an entry this one makes false. Only for facts " +
+          "With action=save: the numeric #ID of an entry this one makes false. Get it from search/list results. Only for facts " +
           "he corrected ('бросил полгода назад' retires 'пьёт энергетики 15 лет'). " +
           "Never for a case that differs from another — those are different moments.",
       },

@@ -44,7 +44,7 @@ export function shortDate(timestamp: number, offsetHours: number): string {
  */
 export function dayPart(timestamp: number, offsetHours: number): "ночь" | "утро" | "день" | "вечер" {
   const hour = new Date((timestamp + offsetHours * 3600) * 1000).getUTCHours();
-  if (hour >= 23 || hour < 6) return "ночь";
+  if (hour >= 22 || hour < 6) return "ночь";
   if (hour < 12) return "утро";
   if (hour < 18) return "день";
   return "вечер";
@@ -128,6 +128,60 @@ export function humanGap(seconds: number): string {
 }
 
 /**
+ * Describe which familiar part of the day actually passed during a pause.
+ * A scalar duration loses the distinction between ten hours in daylight and
+ * ten hours crossing the night, so short gaps are split at the approximate
+ * local boundaries 06:00 and 22:00. The wording is intentionally coarse.
+ */
+export function gapPassage(fromTs: number, toTs: number, offsetHours: number): string {
+  const seconds = Math.max(0, toTs - fromTs);
+  if (seconds < 2 * 3600 || seconds >= 36 * 3600) {
+    return `прошло ${humanGap(seconds)}`;
+  }
+
+  const offset = offsetHours * 3600;
+  const start = fromTs + offset;
+  const end = toTs + offset;
+  const daySeconds = 24 * 3600;
+  const segments: Array<{ kind: "day" | "night"; hours: number }> = [];
+
+  for (let cursor = start; cursor < end;) {
+    const localDay = Math.floor(cursor / daySeconds);
+    const inDay = cursor - localDay * daySeconds;
+    const isDaylight = inDay >= 6 * 3600 && inDay < 22 * 3600;
+    const boundary = isDaylight
+      ? localDay * daySeconds + 22 * 3600
+      : inDay < 6 * 3600
+        ? localDay * daySeconds + 6 * 3600
+        : (localDay + 1) * daySeconds + 6 * 3600;
+    const next = Math.min(end, boundary);
+    segments.push({ kind: isDaylight ? "day" : "night", hours: (next - cursor) / 3600 });
+    cursor = next;
+  }
+
+  const parts = segments.flatMap(({ kind, hours }) => {
+    if (kind === "day") {
+      if (hours >= 10) return ["весь день"];
+      if (hours >= 5) return ["полдня"];
+    } else {
+      if (hours >= 5) return ["всю ночь"];
+      if (hours >= 2.5) return ["полночи"];
+    }
+    return [];
+  });
+  if (parts.length === 0) return `прошло ${humanGap(seconds)}`;
+  if (parts.length === 1) {
+    if (parts[0] === "всю ночь") return "прошла вся ночь";
+    if (parts[0] === "весь день") return "прошёл весь день";
+    return `прошло ${parts[0]}`;
+  }
+  if (parts[0] === "всю ночь" && parts[1] === "полдня") {
+    return "прошла вся ночь и уже полдня";
+  }
+  return `пауза захватила ${parts.join(" и ")}`;
+}
+
+/**
  * The facts of one silence, for whoever is going to phrase it.
  *
  * Numbers and flags only — no sentences. Wording belongs to the prompt, which
@@ -146,6 +200,10 @@ export interface GapFacts {
   fromDate: string;
   /** И то же мгновение словами: вечер, ночь, утро, день. */
   fromDayPart: string;
+  toDate: string;
+  toDayPart: string;
+  /** A human description of the daylight/night segments actually crossed. */
+  passage: string;
 }
 
 /** How far apart two moments are, in the terms the prompt can use. */
@@ -159,6 +217,9 @@ export function gapFacts(fromTs: number, toTs: number, offsetHours: number): Gap
     touchedNight: touchesNight(fromTs, toTs, offsetHours),
     fromDate: shortDate(fromTs, offsetHours),
     fromDayPart: dayPart(fromTs, offsetHours),
+    toDate: shortDate(toTs, offsetHours),
+    toDayPart: dayPart(toTs, offsetHours),
+    passage: gapPassage(fromTs, toTs, offsetHours),
   };
 }
 

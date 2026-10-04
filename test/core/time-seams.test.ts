@@ -69,7 +69,14 @@ describe("recentSeams", () => {
 describe("buildTimeSeams", () => {
   it("says when the old thing was and how long the silence after it was", () => {
     const rendered = buildTimeSeams(
-      [{ id: 1, role: "user", timestamp: at(2, 36), head: "Поиграл", gapSeconds: 2 * 3600 + 120 }],
+      [{
+        id: 1,
+        role: "user",
+        timestamp: at(2, 36),
+        toTimestamp: at(4, 37),
+        head: "Поиграл",
+        gapSeconds: 2 * 3600 + 60,
+      }],
       OFFSET,
     );
     expect(rendered).toContain("## Швы во времени");
@@ -112,7 +119,7 @@ describe("loadSummary", () => {
     // The range carries a clock now, not only a date.
     expect(summary).toMatch(/\[\d{2}\.\d{2} \d{2}:\d{2}/);
     expect(summary).toContain("Он вернулся из игры.");
-    expect(summary).toContain("назад");
+    expect(summary).toContain("с тех пор прошло");
     expect(summary).toContain("Это прошлое");
   });
 });

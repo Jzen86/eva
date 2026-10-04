@@ -1,6 +1,6 @@
 import { buildPersonalityPrompt } from "./personality.js";
-import { humanGap, stampMoment } from "./memory/time-words.js";
-import type { TimeSeam } from "./memory/conversations.js";
+import { gapPassage, stampMoment } from "./memory/time-words.js";
+import type { LiveMessage, TimeSeam } from "./memory/conversations.js";
 
 /**
  * The moment, in words a model can use.
@@ -73,8 +73,14 @@ export interface GapNotice {
   fromDate: string;
   /** И то же мгновение словами: вечер, ночь, утро, день. */
   fromDayPart: string;
+  toDate: string;
+  toDayPart: string;
+  /** What actually passed: e.g. "прошла вся ночь и уже полдня". */
+  passage: string;
   /** Who spoke last: "assistant" — она, "user" — он. */
   prevRole: string;
+  /** The last two live lines, grounding the stale scene in the actual exchange. */
+  previousExchange: LiveMessage[];
 }
 
 /**
@@ -89,19 +95,18 @@ export interface GapNotice {
  * reason to be tender, but never a report.
  */
 function buildGapNotice(gap: GapNotice): string {
-  const who = gap.prevRole === "assistant" ? "последней писала ты" : "последним писал он";
-  let facts = `Его новое сообщение пришло через ${gap.label} после предыдущего — ${who}, это было ${gap.fromDate}, ${gap.fromDayPart}.`;
-
-  const shifts: string[] = [];
-  if (gap.crossedDay) shifts.push("сменились сутки");
-  if (gap.touchedNight) shifts.push("в паузу попала ночь");
-  if (shifts.length === 1) facts += ` За это время ${shifts[0]}.`;
-  if (shifts.length === 2) facts += ` За это время ${shifts[0]} и ${shifts[1]}.`;
+  const exchange = gap.previousExchange
+    .map((message) => `${message.role === "assistant" ? "ты" : "он"}: «${message.text}»`)
+    .join("\n");
+  const prior = exchange
+    ? `Последний обмен перед паузой (${gap.fromDate}, ${gap.fromDayPart}):\n${exchange}`
+    : `Последняя живая реплика была ${gap.fromDate}, ${gap.fromDayPart}.`;
 
   return `## Время между сообщениями
 
-${facts}
-Время — это расстояние, а не доклад: его не нужно объявлять, но по нему видно, как заговорить. Чем длиннее пауза, тем вернее, что прежнее — чем он занимался, в каком был настроении — уже устарело: не продолжай сцену как ни в чём не бывало, а спроси, чем он жил это время. Длительность называй по-человечески («часа два», а не «2 часа 14 минут»).`;
+${prior}
+Сейчас ${gap.toDate}, ${gap.toDayPart}; с тех пор ${gap.passage}.
+Это новая точка контакта после перерыва, а не продолжение той же минуты. Восстанови, что естественно могло измениться с учётом последней реплики и прошедших частей суток. Если он сказал, что скоро вернётся, а после этого прошла ночь и уже часть нового дня, не говори так, будто он всё ещё в прежнем занятии: тепло поздоровайся, можешь мягко предположить, что он успел искупаться и поспать, и спроси, как спалось и что он уже поделал сегодня. Предположение подавай как вопрос, не как известный факт. Не докладывай длительность или устройство этой подсказки — отрази перерыв естественно.`;
 }
 
 /** DD.MM HH:MM in his zone, for naming a moment inside the window. */
@@ -125,7 +130,7 @@ export function buildTimeSeams(seams: TimeSeam[], offsetHours: number): string {
   const lines = seams.map((s) => {
     const who = s.role === "assistant" ? "ты" : "он";
     const head = s.head.length > 48 ? `${s.head.slice(0, 48)}…` : s.head;
-    return `- ${clockStamp(s.timestamp, offsetHours)}, ${who}: «${head}» — после этого ${humanGap(s.gapSeconds)} тишины`;
+    return `- ${clockStamp(s.timestamp, offsetHours)}, ${who}: «${head}» — между этой репликой и следующей ${gapPassage(s.timestamp, s.toTimestamp, offsetHours)}`;
   });
 
   return `## Швы во времени
@@ -133,6 +138,14 @@ export function buildTimeSeams(seams: TimeSeam[], offsetHours: number): string {
 Между репликами ниже были паузы: сказанное в строке было **тогда**, а не только что. Не смешивай давнее с сиюминутным — то, что было до паузы, уже устарело.
 
 ${lines.join("\n")}`;
+}
+
+/** Turn-specific context, appended after memories and summaries and before the query. */
+export function buildTurnContext(userMessage?: string, gap?: GapNotice): string {
+  const parts: string[] = [];
+  if (gap) parts.push(buildGapNotice(gap));
+  if (userMessage) parts.push(`## Текущий запрос\n\n${userMessage}`);
+  return parts.join("\n\n");
 }
 
 function buildGenderBlock(gender: "female" | "male" | "neutral"): string {
@@ -208,14 +221,6 @@ ${genderBlock}
   // a date and one that quietly guesses.
   const now = new Date();
   prompt += `\nСейчас: ${formatMoment(now, config.timezoneOffsetHours ?? 4)}. Если спрашивают про «последнее», «новое», «актуальное» — считай ответ устаревшим, если в нём нет даты или версии новее этого года. Про цифры, версии, даты и цены всегда сверяйся через web и говори, когда сверила.`;
-
-  // How long the chat was silent before this message. Absent on the ordinary
-  // turn — a pause narrower than the threshold is not a gap, and the next
-  // message after a long one arrives seconds later, so this can only ever be
-  // said once per silence. See `Engine.gapFor` for the measuring half.
-  if (gap) {
-    prompt += `\n\n${buildGapNotice(gap)}`;
-  }
 
   /**
    * What to do in the moment he leaves.
@@ -344,10 +349,8 @@ ${genderBlock}
     prompt += `\n\n## Подключённые сервисы\n\nУ пользователя подключены: ${connectedServices.join(", ")}. Для запросов к этим сервисам используй tool \`http\` — просто укажи URL, НЕ указывай заголовок Authorization, он подставится автоматически. Пример: http(url="https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=5", method="GET") — БЕЗ headers.`;
   }
 
-  // Current query
-  if (userMessage) {
-    prompt += `\n\n## Текущий запрос\n\n${userMessage}`;
-  }
+  const turnContext = buildTurnContext(userMessage, gap);
+  if (turnContext) prompt += `\n\n${turnContext}`;
 
   return prompt;
 }

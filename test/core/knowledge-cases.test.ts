@@ -276,6 +276,63 @@ describe("memory tool, case fields", () => {
  * in practice neither ever fired.
  */
 describe("memory tool, a corrected fact", () => {
+  it("shows stable entry IDs in search results", async () => {
+    const tool = createMemoryTool();
+    await tool.execute({ action: "save", content: "Женя любит старые самолёты", topic: "хобби" });
+    const id = getAll()[0].id;
+
+    const result = await tool.execute({ action: "search", query: "самолёты" });
+
+    expect(result.output).toContain(`#${id}`);
+  });
+
+  it("does not save anything when supersedes is not a live numeric ID", async () => {
+    const tool = createMemoryTool();
+    await tool.execute({ action: "save", content: "Женя любит самолёты", topic: "хобби" });
+    const before = getAll().length;
+
+    const result = await tool.execute({
+      action: "save",
+      content: "Женя любит старые самолёты",
+      topic: "хобби",
+      supersedes: "memory-unknown-id",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("invalid_id");
+    expect(getAll()).toHaveLength(before);
+  });
+
+  it("deduplicates identical facts that have a conclusion", async () => {
+    const tool = createMemoryTool();
+    const input = {
+      action: "save",
+      content: "Оператор отключил домашний интернет",
+      topic: "интернет",
+      conclusion: "Женя злился на оператора, а не без причины",
+    };
+    await tool.execute(input);
+    const id = getAll()[0].id;
+
+    const result = await tool.execute(input);
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("Not saved");
+    expect(result.output).toContain(`#${id}`);
+    expect(getAll()).toHaveLength(1);
+  });
+
+  it("rolls back the replacement if retiring its old row fails", async () => {
+    await expect(
+      learnInsight(
+        { topic: "интернет", insight: "Оператор отключил домашний интернет", source: "memory_tool" },
+        { afterWrite: () => { throw new Error("retirement failed"); } },
+      ),
+    ).rejects.toThrow("retirement failed");
+
+    expect(getAll()).toHaveLength(0);
+  });
+
   it("retires the old row and points it at the new one", async () => {
     const tool = createMemoryTool();
     await tool.execute({ action: "save", content: "Женя пьёт энергетики 10-15 лет", topic: "привычки" });
@@ -334,8 +391,10 @@ describe("memory tool, a corrected fact", () => {
       supersedes: String(oldId),
     });
 
-    expect(result.success).toBe(true);
-    expect(result.output).toContain("not a live entry");
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("invalid_id");
+    expect(result.output).toContain("live memory entry");
+    expect(getAll()).toHaveLength(0);
   });
 });
 

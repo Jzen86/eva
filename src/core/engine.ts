@@ -2,7 +2,7 @@ import type { IncomingMessage, OutgoingMessage, ProgressCallback } from "./types
 import type { LLMClient, LLMMessage, ContentPart, ToolDefinition } from "./llm/types.js";
 import type { ToolRegistry } from "./tools/registry.js";
 import type { ToolResult } from "./tools/types.js";
-import { buildSystemPrompt, buildTimeSeams, type PromptConfig } from "./prompt.js";
+import { buildSystemPrompt, buildTimeSeams, buildTurnContext, type PromptConfig } from "./prompt.js";
 import {
   getConfigPath,
   getAgentName,
@@ -12,7 +12,7 @@ import {
   type EvaConfig,
 } from "./config.js";
 import { searchKnowledge, renderKnowledge, KNOWLEDGE_PROMPT_LIMIT } from "./memory/knowledge.js";
-import { saveMessage, loadHistory, extractText, previousLiveMessage, recentSeams } from "./memory/conversations.js";
+import { saveMessage, loadHistory, extractText, previousLiveExchange, recentSeams } from "./memory/conversations.js";
 import { gapFacts, GAP_THRESHOLD_MIN, type GapFacts } from "./memory/time-words.js";
 import { compactHistory } from "./memory/compaction.js";
 import { alignHistory } from "./llm/history.js";
@@ -534,12 +534,13 @@ export class Engine {
     userId: string,
     incomingAt: number,
     live: PromptConfig,
-  ): (GapFacts & { prevRole: string }) | null {
+  ): (GapFacts & { prevRole: string; previousExchange: ReturnType<typeof previousLiveExchange> }) | null {
     const thresholdMin = live.gapThresholdMinutes ?? GAP_THRESHOLD_MIN;
     const offsetHours = live.timezoneOffsetHours ?? 4;
 
     try {
-      const previous = previousLiveMessage(userId);
+      const previousExchange = previousLiveExchange(userId);
+      const previous = previousExchange.at(-1);
       if (!previous) return null;
 
       const facts = gapFacts(previous.timestamp, Math.floor(incomingAt / 1000), offsetHours);
@@ -555,13 +556,14 @@ export class Engine {
         emitted,
         gapSec: facts.seconds,
         label: facts.label,
+        passage: facts.passage,
         prevRole: previous.role,
         crossedDay: facts.crossedDay,
         touchedNight: facts.touchedNight,
         thresholdMin,
       }));
 
-      return emitted ? { ...facts, prevRole: previous.role } : null;
+      return emitted ? { ...facts, prevRole: previous.role, previousExchange } : null;
     } catch {
       // Memory not initialized yet — the same quiet failure the knowledge
       // lookup below is allowed to have.
@@ -599,7 +601,7 @@ export class Engine {
 
     const live = this.liveConfig();
     const gap = scheduledTurn ? null : this.gapFor(chatId, incomingAt, live);
-    let prompt = buildSystemPrompt(live, userMessage, chatId, connectedServiceNames, gap ?? undefined, engage);
+    let prompt = buildSystemPrompt(live, undefined, chatId, connectedServiceNames, undefined, engage);
 
     // What she has seen before, for this exact kind of moment. Rendered by
     // knowledge.ts so a case can never reach the prompt stripped of the state it
@@ -651,7 +653,8 @@ export class Engine {
       prompt += `\n\n## Краткое содержание предыдущего разговора\n\n${summary}`;
     }
 
-    return prompt;
+    const turnContext = buildTurnContext(userMessage, gap ?? undefined);
+    return turnContext ? `${prompt}\n\n${turnContext}` : prompt;
   }
 
   /**
