@@ -179,11 +179,16 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("Напоминания");
   });
 
-  it("includes tools list", () => {
+  it("carries the tool heuristics, not a stale list", () => {
     const prompt = buildSystemPrompt({ name: "Бетси" });
-    expect(prompt).toContain("shell");
+    // The tools themselves arrive as schemas built from the registry, so the
+    // prose keeps only what a schema cannot say: the order to try them in and
+    // the always-do. The enumerated list is gone — it named ssh long after it
+    // was no longer registered, and omitted tools that were.
+    expect(prompt).toContain("send_file");
+    expect(prompt).toContain("scheduler");
     expect(prompt).toContain("browser");
-    expect(prompt).toContain("self_config");
+    expect(prompt).not.toContain("Ты умеешь многое");
   });
 
   it("includes owner info when provided", () => {
