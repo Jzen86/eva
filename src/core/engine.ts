@@ -43,6 +43,18 @@ export const MAX_SAME_TOOL = 5;
 const PROCESS_TIMEOUT = 300_000; // 5 minutes — soft budget, triggers graceful wrap-up
 const MAX_TOOL_OUTPUT_CHARS = 8_000; // Truncate tool outputs to prevent history bloat
 
+/**
+ * Said when the model ends a turn with an empty answer, twice.
+ *
+ * The old fallback here was a bare `...`, and it was wrong twice over: it
+ * dressed a dropped completion as a deliberate message — a silent glitch read
+ * as "ну и?", which is exactly how a person reads three dots — and it hid the
+ * failure, so nobody could tell a dead turn from a meaningful pause. The retry
+ * above usually recovers a real answer; when it does not, this says so instead
+ * of inventing a message the model never sent.
+ */
+export const EMPTY_REPLY = "Не получилось ответить — повтори, пожалуйста.";
+
 export interface EngineDeps {
   llm: { fast(): LLMClient; strong(): LLMClient; hasRole?(name: string): boolean };
   config: PromptConfig;
@@ -373,7 +385,23 @@ export class Engine {
 
         // If LLM didn't request tools, return the text response
         if (response.stopReason !== "tool_use" || !response.toolCalls?.length) {
-          const text = response.text || "...";
+          let text = response.text ?? "";
+          if (!text.trim()) {
+            // The model ended the turn with nothing to say. Once is a glitch —
+            // a dropped completion, not a decision — so ask again before
+            // putting words in her mouth. The retry goes out without tools: the
+            // turn is already over, the model was not going to call one, and a
+            // tool call here would have no result to answer from.
+            console.log(JSON.stringify({ tag: "engine:empty", turn: turn + 1, retry: true }));
+            const retry = streamChunk
+              ? await llm.chatStream(request, streamChunk)
+              : await llm.chat(request);
+            text = (retry.text ?? "").trim();
+            if (!text) {
+              console.log(JSON.stringify({ tag: "engine:empty", turn: turn + 1, retry: false }));
+              text = EMPTY_REPLY;
+            }
+          }
           history.push({ role: "assistant", content: text });
           saveMessage(userId, msg.channelName, "assistant", text);
 

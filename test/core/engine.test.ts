@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { Engine } from "../../src/core/engine.js";
+import { Engine, EMPTY_REPLY } from "../../src/core/engine.js";
 import { ToolRegistry } from "../../src/core/tools/registry.js";
 
 function mockLLM(responseText: string) {
@@ -157,6 +157,37 @@ describe("Engine", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("retries once when the model answers with nothing", async () => {
+    const chat = vi.fn()
+      .mockResolvedValueOnce({ text: "", stopReason: "end_turn" })
+      .mockResolvedValueOnce({ text: "вот ответ", stopReason: "end_turn" });
+    const llm = { fast: () => ({ chat }), strong: () => ({ chat }) };
+    const engine = new Engine({ llm, config: testConfig, tools: new ToolRegistry() });
+    const res = await engine.process({
+      channelName: "test",
+      userId: "retry-user",
+      text: "привет",
+      timestamp: Date.now(),
+    });
+    expect(res.text).toBe("вот ответ");
+    expect(chat).toHaveBeenCalledTimes(2);
+  });
+
+  it("never sends a bare ... when the model answers with nothing twice", async () => {
+    const chat = vi.fn().mockResolvedValue({ text: "", stopReason: "end_turn" });
+    const llm = { fast: () => ({ chat }), strong: () => ({ chat }) };
+    const engine = new Engine({ llm, config: testConfig, tools: new ToolRegistry() });
+    const res = await engine.process({
+      channelName: "test",
+      userId: "empty-user",
+      text: "привет",
+      timestamp: Date.now(),
+    });
+    expect(res.text).not.toBe("...");
+    expect(res.text).toBe(EMPTY_REPLY);
+    expect(chat).toHaveBeenCalledTimes(2);
   });
 
   it("handles LLM errors gracefully", async () => {
