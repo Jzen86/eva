@@ -44,16 +44,47 @@ const PROCESS_TIMEOUT = 300_000; // 5 minutes — soft budget, triggers graceful
 const MAX_TOOL_OUTPUT_CHARS = 8_000; // Truncate tool outputs to prevent history bloat
 
 /**
- * Said when the model ends a turn with an empty answer, twice.
+ * What she says when two passes in a row came back empty.
  *
  * The old fallback here was a bare `...`, and it was wrong twice over: it
  * dressed a dropped completion as a deliberate message — a silent glitch read
  * as "ну и?", which is exactly how a person reads three dots — and it hid the
- * failure, so nobody could tell a dead turn from a meaningful pause. The retry
- * above usually recovers a real answer; when it does not, this says so instead
- * of inventing a message the model never sent.
+ * failure, so nobody could tell a dead turn from a meaningful pause. A person's
+ * missed beat is what it is, so it is worded as one: a distracted "sorry, say
+ * that again", not a status code. Picked at random so the same rare failure
+ * does not wear the same sentence every time.
+ *
+ * Gendered because Russian past-tense verbs are, and the gender is taken from
+ * the owner's config, never guessed here. The base ships `neutral` with
+ * impersonal wording ("меня отвлекло", not "я отвлеклась"): deciding she is a
+ * woman inside the repository is the one thing this base must not do.
  */
-export const EMPTY_REPLY = "Не получилось ответить — повтори, пожалуйста.";
+const EMPTY_REPLIES: Record<"female" | "male" | "neutral", readonly string[]> = {
+  female: [
+    "Ой, извини, я отвлеклась — повтори, пожалуйста.",
+    "Прости, я прослушала — повтори, пожалуйста.",
+    "Извини, я задумалась — повтори, пожалуйста.",
+    "Прости, я не совсем поняла — повтори, пожалуйста.",
+  ],
+  male: [
+    "Ой, извини, я отвлёкся — повтори, пожалуйста.",
+    "Прости, я прослушал — повтори, пожалуйста.",
+    "Извини, я задумался — повтори, пожалуйста.",
+    "Прости, я не совсем понял — повтори, пожалуйста.",
+  ],
+  neutral: [
+    "Ой, извини, меня что-то отвлекло — повтори, пожалуйста.",
+    "Прости, до меня не сразу дошло — повтори, пожалуйста.",
+    "Извини, что-то я не догоняю — повтори, пожалуйста.",
+    "Прости, мысль куда-то убежала — повтори, пожалуйста.",
+  ],
+};
+
+/** One empty-answer line, in the gender the config chose. */
+export function emptyReply(gender: "female" | "male" | "neutral" | undefined): string {
+  const list = EMPTY_REPLIES[gender ?? "neutral"] ?? EMPTY_REPLIES.neutral;
+  return list[Math.floor(Math.random() * list.length)] ?? EMPTY_REPLIES.neutral[0]!;
+}
 
 export interface EngineDeps {
   llm: { fast(): LLMClient; strong(): LLMClient; hasRole?(name: string): boolean };
@@ -399,7 +430,7 @@ export class Engine {
             text = (retry.text ?? "").trim();
             if (!text) {
               console.log(JSON.stringify({ tag: "engine:empty", turn: turn + 1, retry: false }));
-              text = EMPTY_REPLY;
+              text = emptyReply(this.liveConfig().gender);
             }
           }
           history.push({ role: "assistant", content: text });

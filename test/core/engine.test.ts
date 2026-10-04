@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { Engine, EMPTY_REPLY } from "../../src/core/engine.js";
+import { Engine, emptyReply } from "../../src/core/engine.js";
 import { ToolRegistry } from "../../src/core/tools/registry.js";
 
 function mockLLM(responseText: string) {
@@ -186,8 +186,14 @@ describe("Engine", () => {
       timestamp: Date.now(),
     });
     expect(res.text).not.toBe("...");
-    expect(res.text).toBe(EMPTY_REPLY);
+    expect(res.text).toMatch(/повтори, пожалуйста/);
     expect(chat).toHaveBeenCalledTimes(2);
+  });
+
+  it("phrases the empty answer in the configured voice", () => {
+    expect(emptyReply("female")).toMatch(/отвлеклась|прослушала|задумалась|поняла/);
+    expect(emptyReply("male")).toMatch(/отвлёкся|прослушал|задумался|понял/);
+    expect(emptyReply("neutral")).toMatch(/отвлекло|дошло|догоняю|убежала/);
   });
 
   it("handles LLM errors gracefully", async () => {
