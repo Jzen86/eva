@@ -355,7 +355,13 @@ describe("Engine time gap", () => {
     const insert = getDB().prepare(
       "INSERT INTO conversations (user_id, channel, role, content, timestamp) VALUES (?, ?, ?, ?, ?)",
     );
-    const now = Math.floor(Date.now() / 1000);
+    // Pinned, not Date.now(). The passage below names the parts of the day the
+    // pause crossed, so on a real clock this assertion only holds in the couple
+    // of hours it happens to be run in — it went red at 18:05 and would have
+    // been green at 15:00. The time of day is not what is under test here; the
+    // point is that the silence is measured from her own last sentence (21 h
+    // ago) and not from the scheduled report a minute ago.
+    const now = Date.UTC(2026, 9, 4, 11, 0) / 1000; // 04.10.2026, 15:00 UTC+4
     insert.run("u1", "telegram", "user", "Да, лучше поиграю", now - 21 * 3600);
     insert.run("u1", "telegram", "assistant", "Одобряю", now - 21 * 3600);
     insert.run("u1", "telegram", "user", `${SCHEDULED_TURN_PREFIX} "server_watch".`, now - 60);
