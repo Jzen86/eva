@@ -15,6 +15,7 @@ import { runStudyIfDue } from "./core/memory/study-runner.js";
 import type { LLMClient } from "./core/llm/types.js";
 import type { Channel } from "./channels/types.js";
 import { buildTools, describeToolset } from "./core/toolsets.js";
+import { userFilesPath } from "./core/user-files.js";
 import { describeBrowserInstall } from "./core/tools/browser.js";
 import { runDoctor, formatReport } from "./core/doctor.js";
 import { runInit, nextSteps, InitCancelled } from "./core/init.js";
@@ -205,6 +206,7 @@ async function main() {
       },
       personalitySliders: getPersonalitySliders(config),
       owner: config.owner,
+      filesVaultPath: userFilesPath(),
     },
     tools,
     encryptionKey: passwordHash,

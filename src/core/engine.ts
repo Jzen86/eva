@@ -3,6 +3,7 @@ import type { LLMClient, LLMMessage, ContentPart, ToolDefinition } from "./llm/t
 import type { ToolRegistry } from "./tools/registry.js";
 import type { ToolResult } from "./tools/types.js";
 import { buildSystemPrompt, buildTimeSeams, buildTurnContext, type PromptConfig } from "./prompt.js";
+import { userFilesPath } from "./user-files.js";
 import {
   getConfigPath,
   getAgentName,
@@ -162,6 +163,7 @@ export class Engine {
         timezoneOffsetHours: config.agent?.timezone_offset_hours,
         gapThresholdMinutes: config.agent?.gap_threshold_min,
         owner: config.owner,
+        filesVaultPath: userFilesPath(),
       };
     } catch (err) {
       console.error(

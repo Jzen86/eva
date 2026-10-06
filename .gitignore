@@ -24,3 +24,4 @@ data/
 # Local operator docs - machine-specific, never commit
 BOT.md
 PLANS.md
+.playwright-mcp/

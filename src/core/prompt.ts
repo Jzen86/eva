@@ -47,6 +47,12 @@ export interface PromptConfig {
    * — the engine decides with this number, the prompt only words the result.
    */
   gapThresholdMinutes?: number;
+  /**
+   * The owner's file vault (guides, tables), path only. The prompt says the
+   * place exists and when to look into it; the contents are read on demand
+   * with the `files` tool and never injected wholesale.
+   */
+  filesVaultPath?: string;
   owner?: {
     name?: string;
     addressAs?: string;
@@ -299,6 +305,18 @@ ${genderBlock}
     if (parts.length > 0) {
       prompt += `\n\n## Твой человек\n\n${parts.join("\n")}`;
     }
+  }
+
+  // The vault is a standing fact, not a per-turn file list: two lines that say
+  // the place exists and when to reach for it. The full file list in every
+  // prompt was tried and rejected by the owner — it would tax every turn to
+  // save one `list` call; what is inside she reads on demand.
+  if (config.filesVaultPath) {
+    prompt += `
+
+## Кладовая файлов
+
+У владельца есть папка файлов-справочников: ${config.filesVaultPath} (.txt, .md, .csv, .xlsx) — гайды и таблицы, которые он собрал сам. Когда вопрос может быть о том, что в них лежит — «где найти», «как пройти», цифры и маршруты из его таблиц, — сначала загляни туда: files(action: "list", path: "${config.filesVaultPath}"), затем files(action: "read", path: <файл>). В сеть обращайся, только если в файлах ответа нет. Большой файл читай частями: read вернёт подсказку, с какого offset продолжать.`;
   }
 
   // Settings capability

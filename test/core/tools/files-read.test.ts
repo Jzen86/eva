@@ -1,0 +1,145 @@
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { FilesTool } from "../../../src/core/tools/files.js";
+import { defaultPathPolicy } from "../../../src/core/path-policy.js";
+import { userFilesPath } from "../../../src/core/user-files.js";
+import { buildSystemPrompt, type PromptConfig } from "../../../src/core/prompt.js";
+
+/**
+ * The reads that make the vault work: .xlsx flattened to text, long files
+ * paged with a footer that names the next offset, and the standing prompt
+ * section that tells her the vault exists. The policy itself is exercised in
+ * path-policy.test.ts — here only one case guards that the new paging did not
+ * loosen it.
+ */
+
+let root: string;
+
+// The config file itself is the denied secret; the root is the only allowed root.
+const tool = () => new FilesTool({ policy: defaultPathPolicy(path.join(root, "config.yaml"), [root]) });
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const fixture = (name: string) => path.join(here, "..", "..", "fixtures", name);
+
+beforeAll(() => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), "eva-files-read-"));
+});
+
+afterAll(() => {
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+describe("files read paging", () => {
+  it("returns a whole small file in one page, no footer", async () => {
+    const p = path.join(root, "small.txt");
+    fs.writeFileSync(p, "alpha\nbeta\ngamma", "utf-8");
+    const res = await tool().execute({ action: "read", path: p });
+    expect(res.success).toBe(true);
+    expect(res.output).toBe("alpha\nbeta\ngamma");
+  });
+
+  it("pages a long file by characters and names the continuing offset", async () => {
+    const p = path.join(root, "long.txt");
+    const lines = Array.from({ length: 600 }, (_, i) => `line ${String(i + 1).padStart(4, "0")} ${"x".repeat(20)}`);
+    fs.writeFileSync(p, lines.join("\n"), "utf-8");
+
+    const first = await tool().execute({ action: "read", path: p });
+    expect(first.success).toBe(true);
+    expect(first.output).toContain("line 0001");
+    expect(first.output).not.toContain("line 0600");
+    const m = first.output!.match(/offset=(\d+)\)$/);
+    expect(m).not.toBeNull();
+    const offset = Number(m![1]);
+    expect(offset).toBeGreaterThan(0);
+    expect(offset).toBeLessThan(600);
+
+    // Every page names the next offset until the file is exhausted; the tail
+    // page says so and carries the last line.
+    let output = first.output!;
+    let cursor = offset;
+    for (let hops = 0; hops < 20 && output.includes("(показаны строки"); hops++) {
+      const next = await tool().execute({ action: "read", path: p, offset: cursor });
+      expect(next.success).toBe(true);
+      output = next.output!;
+      const m2 = output.match(/offset=(\d+)\)$/);
+      if (m2) cursor = Number(m2[1]);
+    }
+    expect(output).not.toContain("(показаны строки");
+    expect(output).toContain("(конец файла");
+    expect(output).toContain("line 0600");
+  });
+
+  it("offset past the end reports the real size instead of crashing", async () => {
+    const p = path.join(root, "short.txt");
+    fs.writeFileSync(p, "one\ntwo", "utf-8");
+    const res = await tool().execute({ action: "read", path: p, offset: 100 });
+    expect(res.success).toBe(true);
+    expect(res.output).toContain("2 строк");
+  });
+});
+
+describe("files read xlsx", () => {
+  it("flattens every sheet with headings, joined cells and ISO dates", async () => {
+    const res = await tool().execute({ action: "read", path: fixture("stalker-mini.xlsx") });
+    expect(res.success).toBe(true);
+    expect(res.output).toContain("### Лист: Артефакты");
+    expect(res.output).toContain("Слизь | Свалка | В радиоактивном автобусе");
+    // Empty cells drop out, the row still reads as a row.
+    expect(res.output).toContain("Душа | Химический завод");
+    expect(res.output).toContain("Затон | Только имя в ячейке");
+    expect(res.output).toContain("### Лист: Локации");
+    expect(res.output).toContain("2026-10-06");
+    // The fully empty row left no blank line of its own.
+    expect(res.output).not.toMatch(/\n\n\n/);
+  });
+
+  it("reports the sheet-reading failure as a tool error, not a throw", async () => {
+    const p = path.join(root, "fake.xlsx");
+    fs.writeFileSync(p, "not a zip", "utf-8");
+    const res = await tool().execute({ action: "read", path: p });
+    expect(res.success).toBe(false);
+    expect(res.error).toBeTruthy();
+  });
+});
+
+describe("policy stays armed under paging", () => {
+  it("still refuses secrets inside the roots", async () => {
+    const p = path.join(root, "config.yaml");
+    fs.writeFileSync(p, "token: x", "utf-8");
+    const res = await tool().execute({ action: "read", path: p });
+    expect(res.success).toBe(false);
+    expect(res.error).toContain("запрещён");
+  });
+
+  it("still writes inside a root without a gate", async () => {
+    const p = path.join(root, "note.txt");
+    const res = await tool().execute({ action: "write", path: p, content: "привет" });
+    expect(res.success).toBe(true);
+    expect(fs.readFileSync(p, "utf-8")).toBe("привет");
+  });
+});
+
+describe("user files vault path", () => {
+  it("derives from the config path, not from home", () => {
+    expect(userFilesPath(path.join("cfg", "eva", "config.yaml"))).toBe(path.join("cfg", "eva", "files"));
+  });
+});
+
+describe("prompt vault section", () => {
+  const base: PromptConfig = { name: "Ева" };
+
+  it("renders the standing section with the path when configured", () => {
+    const prompt = buildSystemPrompt({ ...base, filesVaultPath: "/root/.eva/files" });
+    expect(prompt).toContain("## Кладовая файлов");
+    expect(prompt).toContain("/root/.eva/files");
+    expect(prompt).toContain('files(action: "list"');
+  });
+
+  it("renders nothing when there is no vault", () => {
+    const prompt = buildSystemPrompt(base);
+    expect(prompt).not.toContain("Кладовая");
+  });
+});
