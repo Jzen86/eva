@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { FilesTool } from "../../../src/core/tools/files.js";
 import { defaultPathPolicy } from "../../../src/core/path-policy.js";
+import { discard } from "../../../src/core/pending.js";
 import { userFilesPath } from "../../../src/core/user-files.js";
 import { buildSystemPrompt, type PromptConfig } from "../../../src/core/prompt.js";
 
@@ -17,6 +18,7 @@ import { buildSystemPrompt, type PromptConfig } from "../../../src/core/prompt.j
  */
 
 let root: string;
+let outside: string;
 
 // The config file itself is the denied secret; the root is the only allowed root.
 const tool = () => new FilesTool({ policy: defaultPathPolicy(path.join(root, "config.yaml"), [root]) });
@@ -26,10 +28,12 @@ const fixture = (name: string) => path.join(here, "..", "..", "fixtures", name);
 
 beforeAll(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "eva-files-read-"));
+  outside = fs.mkdtempSync(path.join(os.tmpdir(), "eva-files-out-"));
 });
 
 afterAll(() => {
   fs.rmSync(root, { recursive: true, force: true });
+  fs.rmSync(outside, { recursive: true, force: true });
 });
 
 describe("files read paging", () => {
@@ -141,5 +145,92 @@ describe("prompt vault section", () => {
   it("renders nothing when there is no vault", () => {
     const prompt = buildSystemPrompt(base);
     expect(prompt).not.toContain("Кладовая");
+  });
+});
+
+describe("files edit", () => {
+  const seed = (name: string, content: string) => {
+    const p = path.join(root, name);
+    fs.writeFileSync(p, content, "utf-8");
+    return p;
+  };
+
+  it("replaces one fragment and leaves the rest of a big file alone", async () => {
+    const p = seed(
+      "guide.md",
+      Array.from({ length: 200 }, (_, i) => `строка ${i + 1} пустая`).join("\n") + "\nВихрь: 2.5/с\n",
+    );
+    const before = fs.readFileSync(p, "utf-8");
+    const res = await tool().execute({ action: "edit", path: p, old: "Вихрь: 2.5/с", new: "Вихрь: 1.5/с" });
+    expect(res.success).toBe(true);
+    expect(res.output).toContain("1");
+    const after = fs.readFileSync(p, "utf-8");
+    expect(after).toContain("Вихрь: 1.5/с");
+    // everything that was not the fragment is byte-identical
+    expect(after.replace("Вихрь: 1.5/с", "Вихрь: 2.5/с")).toBe(before);
+  });
+
+  it("refuses to guess: a missing fragment changes nothing", async () => {
+    const p = seed("nofind.txt", "альфа\nбета\n");
+    const res = await tool().execute({ action: "edit", path: p, old: "гамма", new: "дельта" });
+    expect(res.success).toBe(false);
+    expect(res.error).toContain("Не найдено");
+    expect(fs.readFileSync(p, "utf-8")).toBe("альфа\nбета\n");
+  });
+
+  it("refuses an ambiguous fragment unless replace_all is set", async () => {
+    const p = seed("ambig.txt", "кот и кот\n");
+    const res = await tool().execute({ action: "edit", path: p, old: "кот", new: "пёс" });
+    expect(res.success).toBe(false);
+    expect(res.error).toContain("2 раз");
+    expect(fs.readFileSync(p, "utf-8")).toBe("кот и кот\n");
+
+    const all = await tool().execute({ action: "edit", path: p, old: "кот", new: "пёс", replace_all: true });
+    expect(all.success).toBe(true);
+    expect(fs.readFileSync(p, "utf-8")).toBe("пёс и пёс\n");
+  });
+
+  it("deletes a fragment when new is empty", async () => {
+    const p = seed("del.txt", "оставить\nубрать это\n");
+    const res = await tool().execute({ action: "edit", path: p, old: "убрать это\n", new: "" });
+    expect(res.success).toBe(true);
+    expect(fs.readFileSync(p, "utf-8")).toBe("оставить\n");
+  });
+
+  it("refuses to touch a binary .xlsx table", async () => {
+    // A copy inside the root, so the .xlsx refusal is what answers — not the
+    // out-of-roots gate that would fire first for the fixture's own path.
+    const p = path.join(root, "table.xlsx");
+    fs.copyFileSync(fixture("stalker-mini.xlsx"), p);
+    const res = await tool().execute({ action: "edit", path: p, old: "Слизь", new: "Слизень" });
+    expect(res.success).toBe(false);
+    expect(res.error).toContain(".xlsx");
+  });
+
+  it("walks through the same gate as a write outside the roots", async () => {
+    const p = path.join(outside, "note.txt");
+    fs.writeFileSync(p, "тут был текст\n", "utf-8");
+    const res = await tool().execute({ action: "edit", path: p, old: "текст", new: "мусор" });
+    expect(res.success).toBe(false);
+    expect(res.error).toContain("подтверждения");
+    expect(fs.readFileSync(p, "utf-8")).toBe("тут был текст\n");
+  });
+
+  it("parks for /yes with a chat and names the edit for the owner", async () => {
+    const p = path.join(outside, "note2.txt");
+    fs.writeFileSync(p, "старое\n", "utf-8");
+    const res = await tool().execute({
+      action: "edit",
+      path: p,
+      old: "старое",
+      new: "новое",
+      _userId: "test-owner-edit",
+      reason: "исправить число по слову владельца",
+    });
+    expect(res.success).toBe(true);
+    expect(res.output).toContain("Жду подтверждения");
+    expect(res.output).toContain("исправить файл");
+    expect(fs.readFileSync(p, "utf-8")).toBe("старое\n"); // not applied until /yes
+    discard("test-owner-edit");
   });
 });

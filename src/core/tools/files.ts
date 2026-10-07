@@ -21,20 +21,33 @@ import { classifyPath, defaultPathPolicy, type PathPolicy } from "../path-policy
  * `.xlsx` flattens to text right here — one `### Лист: <имя>` block per sheet,
  * cells joined with " | " — so a spreadsheet the owner dropped as a table reads
  * like a file, and the pager works the same on both.
+ *
+ * `edit` exists for exactly one shape of document: a long one, where the only
+ * alternative is re-emitting the whole file. A `write` over an 80 KB guide means
+ * the model has to reproduce every byte it is not changing, and reproducibility
+ * at that size is a lie — one dropped paragraph and the guide loses a region. `edit` takes the fragment to replace and the fragment to put in its
+ * place, so correcting one number costs one line and touching everything else
+ * costs nothing.
  */
 export class FilesTool implements Tool {
   name = "files";
   description =
-    "Read, write, or list files. Reading and listing work anywhere except " +
+    "Read, write, edit, or list files. Reading and listing work anywhere except " +
     "secrets, system paths and the memory database. Writing is limited to the " +
     "configured file roots (the config directory and temp by default); a write " +
     "outside them does not run, and waits for the owner's /yes. " +
     "Reading is paged: pass offset (0-based line) to continue where the last " +
-    "page stopped; .xlsx files are returned as text, one block per sheet.";
+    "page stopped; .xlsx files are returned as text, one block per sheet. " +
+    "Use action=\"edit\" with old/new to replace an exact fragment inside a big " +
+    "file without rewriting it whole (pass replace_all=true to change every " +
+    "occurrence); editing .xlsx is refused — it is a binary table.";
   parameters = [
-    { name: "action", type: "string", description: "Action to perform: read, write, or list", required: true },
+    { name: "action", type: "string", description: "Action to perform: read, write, edit, or list", required: true },
     { name: "path", type: "string", description: "File or directory path", required: true },
     { name: "content", type: "string", description: "Content to write (required for write action)" },
+    { name: "old", type: "string", description: "Edit: exact text to replace (must be unique unless replace_all)" },
+    { name: "new", type: "string", description: "Edit: replacement text (empty string deletes the fragment)" },
+    { name: "replace_all", type: "boolean", description: "Edit: replace every occurrence instead of only a unique one" },
     {
       name: "offset",
       type: "number",
@@ -65,8 +78,8 @@ export class FilesTool implements Tool {
     if (!action || !rawPath) {
       return { success: false, output: "", error: "Missing required parameters: action and path" };
     }
-    if (action !== "read" && action !== "write" && action !== "list") {
-      return { success: false, output: "", error: `Unknown action: ${action}. Use read, write, or list.` };
+    if (action !== "read" && action !== "write" && action !== "edit" && action !== "list") {
+      return { success: false, output: "", error: `Unknown action: ${action}. Use read, write, edit, or list.` };
     }
 
     const verdict = classifyPath(rawPath, this.policy);
@@ -74,12 +87,20 @@ export class FilesTool implements Tool {
       return { success: false, output: "", error: `Путь запрещён: ${verdict.why} (${verdict.path})` };
     }
     // Reads past the roots are as allowed as `cat`; only a write past them is
-    // the thing the owner has to release.
-    if (verdict.kind === "gate" && action === "write") {
+    // the thing the owner has to release. An edit changes bytes just like a
+    // write, so it walks through the same gate.
+    if (verdict.kind === "gate" && (action === "write" || action === "edit")) {
       const approval = requireApproval(params, "files", {
-        summary: `записать файл ${verdict.path}`,
+        summary: action === "edit" ? `исправить файл ${verdict.path}` : `записать файл ${verdict.path}`,
         reason: typeof params.reason === "string" ? params.reason : "",
-        args: { action, path: verdict.path, content: params.content },
+        args: {
+          action,
+          path: verdict.path,
+          content: params.content,
+          old: params.old,
+          new: params.new,
+          replace_all: params.replace_all,
+        },
       });
       if (approval) return approval;
     }
@@ -182,6 +203,56 @@ async function runAction(action: string, path: string, params: Record<string, un
     if (action === "list") {
       return { success: true, output: (await readdir(path)).join("\n") };
     }
+    if (action === "edit") {
+      // A sheet is a zip of XML; a fragment replace inside it is not a thing.
+      if (path.toLowerCase().endsWith(".xlsx")) {
+        return {
+          success: false,
+          output: "",
+          error:
+            ".xlsx — бинарная таблица, точечная правка невозможна. Перезапиши файл целиком " +
+            '(action="write") или правь исходник и заливай заново.',
+        };
+      }
+      const oldText = params.old;
+      const newText = params.new;
+      if (typeof oldText !== "string" || oldText === "") {
+        return {
+          success: false,
+          output: "",
+          error: 'Missing required parameter: old (точный фрагмент для замены, не пустой)',
+        };
+      }
+      if (typeof newText !== "string") {
+        return {
+          success: false,
+          output: "",
+          error: 'Missing required parameter: new (замена; пустая строка — удалить фрагмент)',
+        };
+      }
+      const replaceAll = params.replace_all === true;
+      const current = await readFile(path, "utf-8");
+      const count = current.split(oldText).length - 1;
+      if (count === 0) {
+        return {
+          success: false,
+          output: "",
+          error: `Не найдено: в ${path} нет такого фрагмента. Прочитай файл и возьми точный текст (включая пробелы и переносы).`,
+        };
+      }
+      if (count > 1 && !replaceAll) {
+        return {
+          success: false,
+          output: "",
+          error:
+            `Фрагмент встречается ${count} раз. Добавь в "old" соседний контекст, чтобы он стал уникальным, ` +
+            `или передай replace_all=true, если менять нужно все вхождения. Ничего не изменено.`,
+        };
+      }
+      const updated = replaceAll ? current.split(oldText).join(newText) : current.replace(oldText, newText);
+      await writeFile(path, updated, "utf-8");
+      return { success: true, output: `Заменено вхождений: ${count} — ${path}` };
+    }
     const content = params.content;
     if (content === undefined || typeof content !== "string") {
       return { success: false, output: "", error: "Missing required parameter: content (for write action)" };
@@ -193,8 +264,8 @@ async function runAction(action: string, path: string, params: Record<string, un
   }
 }
 
-// How a parked write runs once the owner has said yes. Past the gate, the
-// policy has already done its job, so this performs the write directly.
+// How a parked write or edit runs once the owner has said yes. Past the gate,
+// the policy has already done its job, so this performs the change directly.
 registerApprovalApplier("files", async (args) => {
   return runAction(String(args.action ?? ""), String(args.path ?? ""), args as Record<string, unknown>);
 });
