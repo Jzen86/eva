@@ -38,6 +38,7 @@ export class FilesTool implements Tool {
     "outside them does not run, and waits for the owner's /yes. " +
     "Reading is paged: pass offset (0-based line) to continue where the last " +
     "page stopped; .xlsx files are returned as text, one block per sheet. " +
+    "Paging counts lines in `offset` and CHARACTERS in `limit`. " +
     "Use action=\"edit\" with old/new to replace an exact fragment inside a big " +
     "file without rewriting it whole (pass replace_all=true to change every " +
     "occurrence); editing .xlsx is refused — it is a binary table.";
@@ -56,7 +57,9 @@ export class FilesTool implements Tool {
     {
       name: "limit",
       type: "number",
-      description: "Read: page size in characters (lines are kept whole). Default 6000, cap 20000.",
+      description:
+        "Read: page size in CHARACTERS, not lines (lines are kept whole). Default 6000, cap 20000. " +
+        "A small value (50, 100) pages the file into uselessly tiny slices — omit it unless you know why.",
     },
     {
       name: "reason",
