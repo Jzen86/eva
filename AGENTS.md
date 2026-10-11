@@ -58,6 +58,7 @@ npm test            # 33 файла, зелёные
 | **Куда можно писать и слать файлы** | `src/core/path-policy.ts` — корни для `files`/`send_file` (`tools.files_roots`); секреты, БД и системные пути закрыты всегда |
 | **Локальная генерация фото** | `src/core/comfy.ts` — граф ComfyUI (`qwen-image-2.1-turbo`); идёт **первым** у `selfie`/`image_gen`, облако — фолбэк. Селфи берёт лицо с референс-фото (плоский ключ `images.image_1`) |
 | **Инициатива (пишет первой)** | `src/core/initiative.ts` — периоды дня + потолки; контент (текст/селфи/голос) — её. Таймер в `index.ts`, доставка медиа — `TelegramChannel.send` |
+| **Итоги проверок (архив)** | `src/core/watch-reports.ts` — `~/.eva/reports/<задача>.md`, по файлу на задачу; пишет планировщик **до** отправки (`archiveThenDeliver`), чтобы сбой телеги не унёс запись |
 | Тулзы агенту | `src/core/tools/` |
 | Telegram | `src/channels/telegram/` |
 | Точка входа и CLI | `src/index.ts` |

@@ -62,6 +62,14 @@ const personalitySchema = z.object({
      */
     ops: z.array(z.string()).optional(),
     /**
+     * Free text the owner wrote, mixed into most replies but not every one.
+     *
+     * The mechanism is the base's (present often enough to be read, rare enough
+     * not to become a tic); the words are the owner's. One install uses it for
+     * what to do when he steps away. Empty means nothing is mixed in.
+     */
+    turn_note: z.string().optional(),
+    /**
      * The original single blob, still read and still rendered. Installs that
      * never split their config keep working untouched; anything new goes to
      * `persona` and `ops`.
@@ -308,7 +316,7 @@ function normalizeConfig(raw: Record<string, unknown>): Record<string, unknown> 
   // agent
   out.agent = {
     name: raw.name ?? "Eva",
-    gender: raw.gender ?? "female",
+    gender: raw.gender ?? "neutral",
     personality: {
       tone: raw.tone,
       style: raw.style,
@@ -687,6 +695,7 @@ export function getPersonality(config: EvaConfig): {
   style?: string;
   persona?: string;
   ops?: string[];
+  turnNote?: string;
   customInstructions?: string;
 } {
   const p = config.agent?.personality;
@@ -696,6 +705,7 @@ export function getPersonality(config: EvaConfig): {
     style: p.style,
     persona: p.persona,
     ops: p.ops,
+    turnNote: p.turn_note,
     customInstructions: p.custom_instructions,
   };
 }

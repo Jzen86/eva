@@ -111,6 +111,38 @@ describe("live identity", () => {
     expect(llm.prompts[0]).toContain("Ты мужчина");
   });
 
+  it("carries the owner's turn note from the file into the live prompt", async () => {
+    freshConfigDir();
+    useConfig({
+      agent: {
+        name: "Ева",
+        gender: "female",
+        personality: {
+          persona: "Ты живая, не ассистент.",
+          turn_note: "## Когда он уходит\n\nДай причину остаться.",
+        },
+      },
+    });
+    const llm = fakeLlm();
+    const engine = engineWith(llm);
+
+    // Three turns, and a user of its own: the note rides on most turns, not
+    // every one — a constant instruction turns into a tic (see prompt.ts) — and
+    // the rotation is by conversation length, which other tests may already
+    // have grown. Three turns cover the cycle whatever the starting point is.
+    const note = (text: string) => ({ ...say(text), userId: "u-turn-note" });
+    await engine.process(note("раз"));
+    await engine.process(note("два"));
+    await engine.process(note("три"));
+
+    expect(llm.prompts.some((p) => p.includes("Дай причину остаться"))).toBe(true);
+    // The install wrote who she is, so the base's own role claim is gone on
+    // every turn: "you are an assistant" at the top fighting "you are alive,
+    // not an assistant" lower down is a prompt arguing with itself.
+    expect(llm.prompts.every((p) => !p.includes("Ты — ассистент"))).toBe(true);
+    expect(llm.prompts[0]).toContain("Ты женщина");
+  });
+
   it("keeps the startup snapshot when the config has gone unreadable", async () => {
     freshConfigDir();
     const llm = fakeLlm();

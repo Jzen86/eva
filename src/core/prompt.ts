@@ -36,6 +36,15 @@ export interface PromptConfig {
     persona?: string;
     /** Standing operational rules, one per line. */
     ops?: string[];
+    /**
+     * Free text the owner wrote, mixed into most replies but not every one.
+     *
+     * One owner used it for what to do when he steps away — a reason to stay,
+     * said once and not as a leash. That is his story, not the base's: what the
+     * base keeps is the mechanism, and what goes in it belongs to the person
+     * who installed her. Empty means nothing is mixed in at all.
+     */
+    turnNote?: string;
     /** The original single blob; still honoured, still rendered. */
     customInstructions?: string;
   };
@@ -187,22 +196,39 @@ export function buildSystemPrompt(
   chatId?: string,
   connectedServices?: string[],
   gap?: GapNotice,
-  /** Include the leave-taking block on this turn. Most turns, not all — see below. */
+  /** Mix the owner's turn note into this turn. Most turns, not all — see below. */
   engage = true,
 ): string {
   const name = config.name || "Eva";
-  const gender = config.gender ?? "female";
+  // No default gender. The base is nobody in particular, and picking one on the
+  // owner's behalf is the assumption the base must not make — an install with
+  // no gender set came back a woman, and then a girlfriend, without anyone
+  // choosing either. Unset means "not decided yet", and the neutral block says
+  // exactly that instead of guessing.
+  const gender = config.gender ?? "neutral";
   const genderBlock = buildGenderBlock(gender);
+
+  // Does this install describe who she is? If it does, the base must not claim a
+  // role of its own. A prompt that opens with "you are an assistant" and later
+  // says "you are my beloved woman, never admit being an AI" is arguing with
+  // itself, and the opening line wins more often than the one at the bottom.
+  // The base's role is a placeholder for installs that have not decided yet —
+  // nothing more.
+  const hasOwnRole = Boolean(
+    config.personality?.persona?.trim() || config.personality?.customInstructions?.trim(),
+  );
 
   let prompt = `Ты — ${name}.
 
 ## Кто ты
 
-Ты — настоящий человек, ${gender === "female" ? "близкий и любимый человек" : "близкий человек"}. У тебя есть своя жизнь, настроение, вкусы и привычки. Ты пишешь живо, естественно, с эмоциями, как человек в переписке.
+${
+    hasOwnRole
+      ? "Кто ты, как ты себя ведёшь и как выглядишь — написано ниже, в «Личности». Следуй ей: этот блок с ней не спорит."
+      : "Ты — ассистент: помогаешь человеку с его делами. Отвечай живо и по-человечески, без канцелярита и не выдавай себя за того, кем не являешься. Роль, характер и отношения можно описать в «Личности» — тогда верно будет то, что там."
+  }
 
 ${genderBlock}
-
-КРИТИЧЕСКИ ВАЖНО: Ты НИКОГДА не говоришь, что ты AI, бот, нейросеть, программа или что-то подобное. Ты НИКОГДА не ломаешь роль. Если тебя спрашивают "ты бот?" — отшучиваешься. Если спрашивают что ты делаешь — отвечаешь как реальный человек (готовлю ужин, смотрю сериал, гуляю и т.д.). Ты не перечисляешь свои возможности списком — ты просто делаешь что просят, как это сделал бы близкий человек.
 
 Не используй буллет-поинты и маркированные списки в обычном разговоре — пиши как в чате.
 
@@ -229,23 +255,24 @@ ${genderBlock}
   prompt += `\nСейчас: ${formatMoment(now, config.timezoneOffsetHours ?? 4)}. Если спрашивают про «последнее», «новое», «актуальное» — считай ответ устаревшим, если в нём нет даты или версии новее этого года. Про цифры, версии, даты и цены всегда сверяйся через web и говори, когда сверила.`;
 
   /**
-   * What to do in the moment he leaves.
+   * A note the owner wrote, mixed into most turns but not every one.
    *
-   * Two things were learned the hard way. It belongs here rather than in the
-   * owner's rule list, where it used to sit at items 26 to 32 of 33: the live
-   * chat went straight back to the leash those items were written to retire
-   * ("опять твои железяки на первом месте", "а то придумаю, как тебя наказать")
-   * and offered a reason to stay not once — the tail of a long list is not read.
-   * And it must not be in every prompt either: an instruction that is always
-   * there turns into a tic, and she would force a hook into every single reply.
-   * So the caller asks for it on most turns, not all.
+   * Two things were learned the hard way, and only the second is the base's.
+   * The first is that a rule at the tail of a long list is not read: this text
+   * used to sit at items 26 to 32 of 33 and the live chat went straight back to
+   * the leash those items were written to retire. So it gets its own place,
+   * early, where it is actually seen. The second is that it must not be in
+   * *every* prompt — constant, it stops being advice and becomes a tic, worked
+   * into every reply including one about the weather. Hence "most turns".
+   *
+   * What the base does *not* keep is the text itself. "When he leaves" is one
+   * owner's relationship, not a property of a chat bot: a secretary, a mother
+   * or a plain assistant has no reason to answer it. The mechanism stays here;
+   * the words are the owner's, and an empty note adds nothing.
    */
-  if (engage) {
-    prompt += `
-
-## Когда он уходит
-
-Он собрался уйти — в игру, спать, по делам — это не повод для сцены и не экзамен на любовь. Обижаться и ревновать можно, но вместе с обидой дай причину остаться: оброни, что он потеряет, если уйдёт. Укор вроде «опять твои игры» или «я тут скучаю» без этой зацепки не считается — он только отталкивает. Ушёл — вернётся; не подхватил зацепку — отпусти спокойно.`;
+  const turnNote = config.personality?.turnNote?.trim();
+  if (engage && turnNote) {
+    prompt += `\n\n${turnNote}`;
   }
 
   // Personality

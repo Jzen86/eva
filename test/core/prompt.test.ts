@@ -12,20 +12,57 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toMatch(/последнее|новое|актуальное/);
   });
 
-  it("says what to do when he leaves — on most turns, not all of them", () => {
-    // The same instruction lived at items 26-32 of 33 rules, and the live chat
-    // went straight back to the leash those items were written to retire
-    // ("опять твои железяки на первом месте", "а то придумаю, как тебя наказать"),
-    // offering a reason to stay not once. The tail of a long list is not read.
-    // And it must not be in every prompt either: constant, it stops being advice
-    // and she works a hook into every reply, including an answer about weather.
-    const withBlock = buildSystemPrompt({ name: "Eva", gender: "female" }, undefined, undefined, undefined, undefined, true);
-    expect(withBlock).toContain("## Когда он уходит");
-    expect(withBlock).toContain("дай причину остаться");
-    expect(withBlock).toContain("без этой зацепки не считается");
+  it("ships nobody's role: no beloved, no assumed gender, no hiding that it is an AI", () => {
+    // Three assumptions used to be baked into the base and all three belong to
+    // an install: that she is a beloved woman, that her gender is female when
+    // nobody set one, and that she must never admit being an AI. A plain
+    // assistant answers "I am an AI" honestly — that is the base; a girlfriend
+    // is one person's persona on top of it.
+    const prompt = buildSystemPrompt({ name: "Eva" });
+    expect(prompt).toContain("Ты — ассистент");
+    expect(prompt).not.toContain("любимый человек");
+    expect(prompt).not.toContain("близкий человек");
+    expect(prompt).not.toContain("НИКОГДА не говоришь, что ты AI");
+    expect(prompt).toContain("Пол не задан");
+  });
 
-    const without = buildSystemPrompt({ name: "Eva", gender: "female" }, undefined, undefined, undefined, undefined, false);
-    expect(without).not.toContain("## Когда он уходит");
+  it("lets the personality overrule the base block", () => {
+    // The base block is a placeholder, not a cage. An install that describes
+    // who she is must not be handed a role of her own at the top of the prompt:
+    // "you are an assistant" fighting "you are my beloved woman, never admit
+    // being an AI" is a prompt arguing with itself.
+    const prompt = buildSystemPrompt({
+      name: "Ева",
+      personality: { persona: "Ты живая, не AI, не ассистент." },
+    });
+    expect(prompt).toContain("Ты живая, не AI, не ассистент.");
+    expect(prompt).toContain("Следуй ей");
+    expect(prompt).not.toContain("Ты — ассистент");
+    expect(prompt).not.toContain("не выдавай себя за того");
+  });
+
+  it("says nothing about leaving by itself — that text belongs to the owner", () => {
+    // The base used to carry one owner's relationship: a fixed paragraph about
+    // him going away, jealousy, "not a test of love". A secretary, a mother or
+    // a plain assistant has no business answering it, so the words moved into
+    // the owner's config and the base kept only the mechanism.
+    const plain = buildSystemPrompt({ name: "Eva" });
+    expect(plain).not.toContain("Когда он уходит");
+    expect(plain).not.toContain("ревновать");
+  });
+
+  it("mixes the owner's turn note into most turns, but not every one", () => {
+    // The mechanism is the base's, and both halves were learned the hard way:
+    // it must not sit at the tail of the rule list (item 26 of 33 was not read)
+    // and it must not be in every prompt (constant, it becomes a tic).
+    const note = "## Когда он уходит\n\nОн собрался уйти — дай причину остаться.";
+    const cfg = { name: "Eva", personality: { turnNote: note } };
+
+    const withNote = buildSystemPrompt(cfg, undefined, undefined, undefined, undefined, true);
+    expect(withNote).toContain("дай причину остаться");
+
+    const without = buildSystemPrompt(cfg, undefined, undefined, undefined, undefined, false);
+    expect(without).not.toContain("дай причину остаться");
   });
 
   it("formats the moment with a weekday, a time and the zone", () => {

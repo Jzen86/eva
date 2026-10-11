@@ -198,12 +198,13 @@ async function main() {
     llm,
     config: {
       name,
-      gender: config.agent?.gender ?? "female",
+      gender: config.agent?.gender ?? "neutral",
       personality: {
         tone: personality.tone,
         responseStyle: personality.style,
         persona: personality.persona,
         ops: personality.ops,
+        turnNote: personality.turnNote,
         customInstructions: personality.customInstructions,
       },
       personalitySliders: getPersonalitySliders(config),

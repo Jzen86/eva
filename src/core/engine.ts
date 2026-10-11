@@ -152,12 +152,13 @@ export class Engine {
       const personality = getPersonality(config);
       return {
         name: getAgentName(config),
-        gender: config.agent?.gender ?? "female",
+        gender: config.agent?.gender ?? "neutral",
         personality: {
           tone: personality.tone,
           responseStyle: personality.style,
           persona: personality.persona,
           ops: personality.ops,
+          turnNote: personality.turnNote,
           customInstructions: personality.customInstructions,
         },
         personalitySliders: getPersonalitySliders(config),
