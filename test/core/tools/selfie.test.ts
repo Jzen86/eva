@@ -305,4 +305,35 @@ describe("SelfieTool", () => {
 
     vi.unstubAllGlobals();
   });
+
+  it("sends the requested frame to the cloud fallback too", async () => {
+    // The frame only reached the local graph; on the hosted path the size was
+    // dropped, so a 2:3 request came back in the model's own aspect. Eva found it.
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const mockFetch = vi.fn(async (url: unknown, init?: { body?: string }) => {
+      const u = String(url);
+      if (init?.body) calls.push({ url: u, body: JSON.parse(init.body) as Record<string, unknown> });
+      if (u.includes("/chat/completions")) {
+        return {
+          ok: false,
+          status: 404,
+          text: () => Promise.resolve("No endpoints found that support the requested output modalities"),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ data: [{ b64_json: "AAAA", media_type: "image/png" }] }),
+      };
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const tool = new SelfieTool({ openrouterApiKey: "or-key", openrouterModel: "vendor/image" });
+    const result = await tool.execute({ context: "в парке", mode: "mirror", format: "2:3" });
+    expect(result.success).toBe(true);
+    const imagesCall = calls.find((c) => c.url.endsWith("/images/generations"));
+    expect(imagesCall?.body.size).toBe("768x1152");
+
+    vi.unstubAllGlobals();
+  });
 });

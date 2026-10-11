@@ -240,7 +240,7 @@ export class SelfieTool implements Tool {
       return { success: true, output: "Селфи сгенерировано", mediaUrl: local };
     }
 
-    return this.generateOpenRouter(prompt, mode);
+    return this.generateOpenRouter(prompt, mode, `${width}x${height}`);
   }
 
   /** Local ComfyUI first: the reference photo goes in as the face, the canon as words. */
@@ -292,6 +292,7 @@ export class SelfieTool implements Tool {
     refUrl: string,
     prompt: string,
     mode: "mirror" | "direct",
+    size?: string,
   ): Promise<{ image?: string; filter?: boolean; error?: string }> {
     console.log(`📸 Selfie(openrouter/${model}): mode=${mode}${refUrl ? " +референс" : " без референса"}`);
     try {
@@ -321,7 +322,7 @@ export class SelfieTool implements Tool {
           // match the provider's own sentence rather than a list of ids, because
           // every one of these names has changed during a single afternoon.
           console.log(`📸 Selfie: ${model} живёт на /images/generations, переключаюсь`);
-          return await this.callImagesEndpoint(model, prompt);
+          return await this.callImagesEndpoint(model, prompt, size);
         }
         console.error(`📸 Selfie openrouter error ${response.status}: ${errText.slice(0, 200)}`);
         return { error: `OpenRouter ${response.status}` };
@@ -361,17 +362,25 @@ export class SelfieTool implements Tool {
    * because a selfie of a stranger that looks like a selfie is the failure that
    * gets noticed a week later.
    */
-  private async callImagesEndpoint(model: string, prompt: string): Promise<{ image?: string; error?: string }> {
+  private async callImagesEndpoint(model: string, prompt: string, size?: string): Promise<{ image?: string; error?: string }> {
     try {
+      const body: Record<string, unknown> = { model, prompt };
+      if (size) body.size = size;
       const response = await fetch(`${this.imageEndpoint().replace(/\/chat\/completions$/, "")}/images/generations`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${this.config.openrouterApiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ model, prompt }),
+        body: JSON.stringify(body),
       });
       if (!response.ok) {
+        // Same trade as in image_gen: a size the endpoint will not take must not
+        // cost the picture. Only 400/422 mean "bad parameter".
+        if (size && (response.status === 400 || response.status === 422)) {
+          console.error(`📸 Selfie: размер ${size} не принят (${response.status}) — пробую без него`);
+          return this.callImagesEndpoint(model, prompt);
+        }
         const errText = await response.text();
         console.error(`📸 Selfie images-endpoint error ${response.status}: ${errText.slice(0, 200)}`);
         return { error: `OpenRouter ${response.status}` };
@@ -391,13 +400,13 @@ export class SelfieTool implements Tool {
     }
   }
 
-  private async generateOpenRouter(prompt: string, mode: "mirror" | "direct"): Promise<ToolResult> {
+  private async generateOpenRouter(prompt: string, mode: "mirror" | "direct", size?: string): Promise<ToolResult> {
     const primary = this.config.openrouterModel ?? OPENROUTER_DEFAULT_MODEL;
     // With the canon set the photo stays home, on purpose: it is the thing the
     // provider refuses to draw, and the canon says the same without it.
     const refUrl = this.config.appearance?.trim() ? "" : (this.referenceDataUri() ?? "");
 
-    const first = await this.callOpenRouterModel(primary, refUrl, prompt, mode);
+    const first = await this.callOpenRouterModel(primary, refUrl, prompt, mode, size);
     if (first.image) {
       const known = refUrl || this.config.appearance?.trim();
       const noFace = known ? "" : " (референс не найден — лицо не сохранено)";
@@ -412,7 +421,7 @@ export class SelfieTool implements Tool {
 
     // Fallback model (different provider route often bypasses transient failures)
     const secondary = this.config.openrouterModel ? primary : OPENROUTER_FALLBACK_MODEL;
-    const second = await this.callOpenRouterModel(secondary, refUrl, prompt, mode);
+    const second = await this.callOpenRouterModel(secondary, refUrl, prompt, mode, size);
     if (second.image) {
       return { success: true, output: "Селфи сгенерировано", mediaUrl: second.image };
     }
