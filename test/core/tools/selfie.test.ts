@@ -176,10 +176,13 @@ describe("SelfieTool", () => {
     expect(result.success).toBe(true);
     expect(result.mediaUrl).toBe("data:image/png;base64,AAAA");
 
-    const graph = generate.mock.calls[0][0] as Record<string, { inputs: Record<string, unknown> }>;
+    const graph = generate.mock.calls[0][0] as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
     expect(graph["5"].inputs.prompt).toContain("reference image (image 1)");
     expect(graph["5"].inputs.prompt).toContain("A woman with a balanced figure");
-    expect(graph["5"].inputs["images.image_1"]).toEqual(["6", 0]);
+    // The reference is edited in through EditPlus — it keeps the vision tokens
+    // the plain encoder drops — not spliced as an images autogrow key.
+    expect(graph["5"].class_type).toBe("TextEncodeQwenImageEditPlus");
+    expect(graph["5"].inputs.image1).toEqual(["6", 0]);
 
     fs.unlinkSync(file);
   });

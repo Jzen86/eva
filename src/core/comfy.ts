@@ -46,23 +46,42 @@ export function sizeFor(format: string | undefined): { width: number; height: nu
 
 export type ComfyGraph = Record<string, { class_type: string; inputs: Record<string, unknown> }>;
 
-/** The text-to-image graph, with the reference wired in when one is given. */
+/** The picture graph: text-to-image alone, or reference-editing when a photo is given. */
 export function buildWorkflow(opts: ComfyGraphOptions): ComfyGraph {
+  const hasRef = Boolean(opts.referenceName);
   const graph: ComfyGraph = {
     "1": { class_type: "UNETLoader", inputs: { unet_name: COMFY_UNET, weight_dtype: "default" } },
     "2": { class_type: "CLIPLoader", inputs: { clip_name: COMFY_CLIP, type: "qwen_image", device: "default" } },
     "3": { class_type: "VAELoader", inputs: { vae_name: COMFY_VAE } },
     "4": { class_type: "QwenImage21Cache", inputs: { model: ["1", 0], device: "auto", dtype: "default" } },
-    "5": {
-      class_type: "TextEncodeQwenImage21",
-      inputs: {
-        clip: ["2", 0],
-        prompt: opts.prompt,
-        negative_prompt: "",
-        resolution: opts.resolution ?? 768,
-        vae: ["3", 0],
-      },
-    },
+    // The encoder is the whole ballgame for the face.
+    //
+    // With a reference the graph uses TextEncodeQwenImageEditPlus: it feeds the
+    // reference's vision tokens *and* its VAE latents into the model, so the text
+    // prompt edits that woman rather than describing a new one. The plain
+    // TextEncodeQwenImage21 drops the vision tokens the moment a reference latent
+    // is present, and then a long figure description simply overrides the face.
+    // Measured on the live reference, one seed per row: EditPlus kept her face on
+    // 4 of 4 seeds; the 21-encoder drew a different woman on 2 of them, both times
+    // with the long body text in the prompt and never without it.
+    //
+    // Without a reference (image_gen) there is nothing to edit, so the 21-encoder
+    // is the plain text-to-image path, negative prompt and all.
+    "5": hasRef
+      ? {
+          class_type: "TextEncodeQwenImageEditPlus",
+          inputs: { clip: ["2", 0], prompt: opts.prompt, vae: ["3", 0], image1: ["6", 0] },
+        }
+      : {
+          class_type: "TextEncodeQwenImage21",
+          inputs: {
+            clip: ["2", 0],
+            prompt: opts.prompt,
+            negative_prompt: "",
+            resolution: opts.resolution ?? 768,
+            vae: ["3", 0],
+          },
+        },
     "7": {
       class_type: "KSampler",
       inputs: {
@@ -73,7 +92,9 @@ export function buildWorkflow(opts: ComfyGraphOptions): ComfyGraph {
         sampler_name: "euler",
         scheduler: "simple",
         positive: ["5", 0],
-        negative: ["5", 1],
+        // EditPlus has a single output; the 21-encoder has positive and negative.
+        // cfg is 1, so the negative has no effect either way.
+        negative: hasRef ? ["5", 0] : ["5", 1],
         latent_image: ["9", 0],
         denoise: 1,
       },
@@ -94,15 +115,8 @@ export function buildWorkflow(opts: ComfyGraphOptions): ComfyGraph {
   };
 
   if (opts.referenceName) {
+    // Node 6 is the reference photo; node 5 (built above) points its image1 here.
     graph["6"] = { class_type: "LoadImage", inputs: { image: opts.referenceName } };
-    // The reference rides in as a FLAT autogrow key, `images.image_1` — not as
-    // `images: { image_1: … }`. ComfyUI accepts both without a word of complaint,
-    // but the nested form is silently dropped by TextEncodeQwenImage21: the job
-    // runs to completion, the tool logs "+reference", and the picture comes out a
-    // stranger because no image ever reached the encoder. Measured side by side on
-    // one seed: nested → a different woman, flat → the reference's face. Keep it
-    // flat; the `images` object that used to sit here is what broke the selfie.
-    (graph["5"].inputs as Record<string, unknown>)["images.image_1"] = ["6", 0];
   }
 
   return graph;
