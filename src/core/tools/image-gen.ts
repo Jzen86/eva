@@ -81,7 +81,7 @@ export class ImageGenTool implements Tool {
     "Формат кадра можно задать: 1:1 (по умолчанию), 3:4 или 4:3. Но пиши художественно: сцена, поза и свет важнее перечисления частей тела.";
   parameters = [
     { name: "prompt", type: "string", description: "Full description of the picture (in English). For a person, write the whole of them — face, figure, colours, pose, clothes; for anything else, whatever is in frame.", required: true },
-    { name: "format", type: "string", description: "Ориентация: 1:1 (квадрат, по умолчанию), 3:4 (вертикаль) или 4:3 (горизонталь). Выбери под сцену.", required: false },
+    { name: "format", type: "string", description: "Ориентация: 1:1 (квадрат, по умолчанию), 3:4 (вертикаль), 4:5 (портрет), 4:3 (горизонталь) или 5:4 (альбом). Выбери под сцену.", required: false },
   ];
 
   private apiKey: string;

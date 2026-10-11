@@ -203,7 +203,7 @@ describe("SelfieTool", () => {
 
     const graph = generate.mock.calls[0][0] as Record<string, { inputs: Record<string, unknown> }>;
     expect(graph["5"].inputs.prompt).toContain("Woman with a balanced figure, a flat stomach");
-    expect(graph["9"].inputs).toMatchObject({ width: 1024, height: 768 });
+    expect(graph["9"].inputs).toMatchObject({ width: 1152, height: 864 });
 
     fs.unlinkSync(file);
   });

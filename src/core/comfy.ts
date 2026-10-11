@@ -19,22 +19,26 @@ export interface ComfyGraphOptions {
   /** Uploaded reference image name, as returned by /upload/image. */
   referenceName?: string;
   filenamePrefix?: string;
-  /** Output size. Defaults to 768×768 (1:1). */
+  /** Output size. Defaults to 864×864 (1:1). */
   width?: number;
   height?: number;
-  /** How the reference is scaled for the encoder. Defaults to 768, to match output. */
+  /** How the reference is scaled for the encoder. Defaults to 864, to match output. */
   resolution?: number;
 }
 
 /**
- * Output formats on a 768 base: the short side is 768, the long side grows to the
- * ratio. Portrait 3:4 is the natural frame for a full-body selfie, 1:1 for a
- * close-up, 4:3 when the scene needs width.
+ * Output formats on an 864 base: the short side is 864, the long side grows to
+ * the ratio. Portrait 3:4 is the natural frame for a full-body selfie, 4:5 is the
+ * phone-shaped portrait with a little more in frame, 1:1 the close-up square, and
+ * 4:3 / 5:4 when the scene needs width. (4:5 lands on 1080, a multiple of 8 but
+ * not of 32 — checked on the live ComfyUI: it renders clean.)
  */
 export const FORMATS = {
-  "1:1": { width: 768, height: 768 },
-  "3:4": { width: 768, height: 1024 },
-  "4:3": { width: 1024, height: 768 },
+  "1:1": { width: 864, height: 864 },
+  "3:4": { width: 864, height: 1152 },
+  "4:5": { width: 864, height: 1080 },
+  "4:3": { width: 1152, height: 864 },
+  "5:4": { width: 1080, height: 864 },
 } as const;
 
 export type AspectFormat = keyof typeof FORMATS;
@@ -78,7 +82,7 @@ export function buildWorkflow(opts: ComfyGraphOptions): ComfyGraph {
             clip: ["2", 0],
             prompt: opts.prompt,
             negative_prompt: "",
-            resolution: opts.resolution ?? 768,
+            resolution: opts.resolution ?? 864,
             vae: ["3", 0],
           },
         },
@@ -106,7 +110,7 @@ export function buildWorkflow(opts: ComfyGraphOptions): ComfyGraph {
     // face intact, so the size is what decides the frame, not the reference.
     "9": {
       class_type: "EmptyLatentImage",
-      inputs: { width: opts.width ?? 768, height: opts.height ?? 768, batch_size: 1 },
+      inputs: { width: opts.width ?? 864, height: opts.height ?? 864, batch_size: 1 },
     },
     "10": {
       class_type: "SaveImage",
