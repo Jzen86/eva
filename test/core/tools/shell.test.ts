@@ -18,10 +18,13 @@ describe("ShellTool", () => {
     expect(result.output.trim()).toBe("hello");
   });
 
-  it("returns error for bad command", async () => {
-    const result = await tool.execute({ command: "nonexistent_xyz_cmd" });
-    expect(result.success).toBe(false);
-    expect(result.error).toBeDefined();
+  it("reports a non-zero exit as an answer, not a broken tool", async () => {
+    // `grep` with no match exits 1, `systemctl status` on an inactive unit exits
+    // 3. Both are normal replies to a read, and calling them "Command failed" is
+    // what made the live platform look like it was refusing the terminal.
+    const result = await tool.execute({ command: "type no_such_file_xyz" });
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("exit 1");
   });
 
   it("returns error for missing command", async () => {
