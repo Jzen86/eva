@@ -11,7 +11,8 @@
  * So there is a third destination, and it is the one meant to be read:
  * `~/.eva/reports/<task>.md`, appended in date order, task by task. The writer
  * is the scheduler itself, not the model — she cannot forget to save her own
- * report, and the archive cannot disagree with what was delivered.
+ * report, and it is written *before* the send, so a Telegram failure cannot take
+ * the record down with it.
  *
  * Beside the config, like the photo and the database: `EVA_CONFIG_PATH` can move
  * the whole install, and a report written to `~/.eva` while the bot reads
@@ -76,4 +77,52 @@ export function appendReport(
     // refusing to save it over a chmod is a worse trade than a loose mode.
   }
   return file;
+}
+
+/** What became of one scheduled report: kept, delivered, or neither. */
+export interface ReportOutcome {
+  /** The file it went to, or `null` when there was nothing to keep. */
+  saved: string | null;
+  delivered: boolean;
+  /** Whatever went wrong, in one line for the log. Absent means both halves held. */
+  error?: string;
+}
+
+/**
+ * Keep the report, then deliver it — in that order, and on purpose.
+ *
+ * Sending used to come first, so the archive only ran on the way back, and a
+ * Telegram failure lost the report entirely: the one copy meant to survive was
+ * written last and only if nothing went wrong. The file is the durable record
+ * and the message is the notification, so the record goes first and a failed
+ * send leaves it in place.
+ *
+ * Neither half throws. A scheduled task has no caller to catch for it, and the
+ * two failures are independent: a report that could not be saved is still worth
+ * sending, and one that could not be sent is still worth reading tomorrow.
+ */
+export async function archiveThenDeliver(
+  taskName: string,
+  text: string,
+  deliver: () => Promise<void>,
+  configPath?: string,
+): Promise<ReportOutcome> {
+  let saved: string | null = null;
+  let error: string | undefined;
+  try {
+    saved = appendReport(taskName, text, new Date(), configPath);
+  } catch (err) {
+    error = `архив не записан: ${err instanceof Error ? err.message : String(err)}`;
+  }
+
+  let delivered = false;
+  try {
+    await deliver();
+    delivered = true;
+  } catch (err) {
+    const message = `доставка не удалась: ${err instanceof Error ? err.message : String(err)}`;
+    error = error ? `${error}; ${message}` : message;
+  }
+
+  return { saved, delivered, ...(error ? { error } : {}) };
 }

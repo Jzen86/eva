@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
-import { reportsDir, reportPath, appendReport } from "../../src/core/watch-reports.js";
+import { reportsDir, reportPath, appendReport, archiveThenDeliver } from "../../src/core/watch-reports.js";
 
 /**
  * The archive exists so her reports can be read later without digging through
@@ -87,5 +87,80 @@ describe("appendReport", () => {
   it("writes nothing for a blank report — silence is not an empty entry", () => {
     expect(appendReport("self_watch", "   \n  ", when, configPath)).toBeNull();
     expect(fs.existsSync(reportPath("self_watch", configPath))).toBe(false);
+  });
+});
+
+describe("archiveThenDeliver", () => {
+  it("saves the report before it tries to send it", async () => {
+    // The order is the whole fix: a Telegram failure must not be able to take
+    // the record with it, so the file has to be on disk by the time the send
+    // runs — not written on the way back from a send that might throw.
+    let onDiskDuringSend: string | null = null;
+    const outcome = await archiveThenDeliver(
+      "self_watch",
+      "Нашла нестыковку.",
+      async () => {
+        const file = reportPath("self_watch", configPath);
+        onDiskDuringSend = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+      },
+      configPath,
+    );
+
+    expect(onDiskDuringSend).toContain("Нашла нестыковку.");
+    expect(outcome.delivered).toBe(true);
+    expect(outcome.saved).toBe(reportPath("self_watch", configPath));
+    expect(outcome.error).toBeUndefined();
+  });
+
+  it("keeps the report when the send fails, and says so", async () => {
+    const outcome = await archiveThenDeliver(
+      "self_watch",
+      "Всё штатно.",
+      async () => {
+        throw new Error("telegram 500");
+      },
+      configPath,
+    );
+
+    expect(outcome.delivered).toBe(false);
+    expect(outcome.error).toMatch(/доставка/i);
+    expect(outcome.error).toContain("telegram 500");
+    expect(fs.readFileSync(reportPath("self_watch", configPath), "utf8")).toContain("Всё штатно.");
+  });
+
+  it("still delivers when the archive cannot be written", async () => {
+    // Two independent halves: a disk the process cannot write must not turn a
+    // report into silence, since the owner would then see nothing at all.
+    fs.writeFileSync(path.join(dir, "reports"), "not a directory");
+    let delivered = false;
+    const outcome = await archiveThenDeliver(
+      "self_watch",
+      "Отчёт без дома.",
+      async () => {
+        delivered = true;
+      },
+      configPath,
+    );
+
+    expect(delivered).toBe(true);
+    expect(outcome.delivered).toBe(true);
+    expect(outcome.saved).toBeNull();
+    expect(outcome.error).toMatch(/архив/i);
+  });
+
+  it("is not an error to have nothing to report", async () => {
+    let delivered = false;
+    const outcome = await archiveThenDeliver(
+      "server_watch",
+      "  ",
+      async () => {
+        delivered = true;
+      },
+      configPath,
+    );
+
+    expect(outcome.saved).toBeNull();
+    expect(outcome.delivered).toBe(true);
+    expect(outcome.error).toBeUndefined();
   });
 });
