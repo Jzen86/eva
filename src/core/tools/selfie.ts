@@ -3,7 +3,7 @@ import path from "node:path";
 import type { Tool, ToolResult } from "./types.js";
 import { referencePhotoPath } from "../reference-photo.js";
 import { checkSelfieContext } from "./prompt-check.js";
-import { buildWorkflow, sizeFor, FORMATS, type ComfyClient } from "../comfy.js";
+import { buildWorkflow, sizeFor, cloudSizeFor, FORMATS, type ComfyClient } from "../comfy.js";
 
 /** Default image backend. The `modalities:["image"]` chat extension is an
  *  OpenRouter feature, not part of the OpenAI spec — a different endpoint only
@@ -240,7 +240,7 @@ export class SelfieTool implements Tool {
       return { success: true, output: "Селфи сгенерировано", mediaUrl: local };
     }
 
-    return this.generateOpenRouter(prompt, mode, `${width}x${height}`);
+    return this.generateOpenRouter(prompt, mode, cloudSizeFor({ width, height }));
   }
 
   /** Local ComfyUI first: the reference photo goes in as the face, the canon as words. */

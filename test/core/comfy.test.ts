@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildWorkflow, sizeFor, COMFY_UNET, FORMATS } from "../../src/core/comfy.js";
+import { buildWorkflow, sizeFor, cloudSizeFor, COMFY_UNET, FORMATS } from "../../src/core/comfy.js";
 
 describe("buildWorkflow", () => {
   it("builds a text-only graph with no reference node", () => {
@@ -59,5 +59,14 @@ describe("buildWorkflow", () => {
   it("falls back to 1:1 on an unknown format", () => {
     expect(sizeFor("16:9")).toEqual(FORMATS["1:1"]);
     expect(sizeFor(undefined)).toEqual(FORMATS["1:1"]);
+  });
+
+  it("sends the cloud a size its endpoints accept", () => {
+    expect(cloudSizeFor(sizeFor("1:1"))).toBe("1024x1024");
+    expect(cloudSizeFor(sizeFor("2:3"))).toBe("1024x1536");
+    expect(cloudSizeFor(sizeFor("9:16"))).toBe("1024x1536");
+    expect(cloudSizeFor(sizeFor("3:4"))).toBe("1024x1536");
+    expect(cloudSizeFor(sizeFor("4:5"))).toBe("1024x1536");
+    expect(cloudSizeFor(sizeFor("4:3"))).toBe("1536x1024");
   });
 });

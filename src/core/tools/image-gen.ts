@@ -1,6 +1,6 @@
 import type { Tool, ToolResult } from "./types.js";
 import { checkImagePrompt } from "./prompt-check.js";
-import { buildWorkflow, sizeFor, type ComfyClient } from "../comfy.js";
+import { buildWorkflow, sizeFor, cloudSizeFor, type ComfyClient } from "../comfy.js";
 
 /** Working OpenRouter image model (gemini-2.0-flash-exp:free no longer exists). */
 const MODEL = "google/gemini-2.5-flash-image";
@@ -258,7 +258,7 @@ export class ImageGenTool implements Tool {
     // The cloud fallback cannot reach EmptyLatentImage, so the size travels as a
     // request field. `/images/generations` takes `size`; the chat path has no such
     // field and gets the prompt alone — said here rather than left to look fixed.
-    const cloud = await this.callModel(prompt, `${width}x${height}`);
+    const cloud = await this.callModel(prompt, cloudSizeFor({ width, height }));
     if (cloud.image) {
       console.log(`image_gen OK (${this.model})`);
       return { success: true, output: "Image generated successfully", mediaUrl: cloud.image };

@@ -51,6 +51,20 @@ export function sizeFor(format: string | undefined): { width: number; height: nu
   return FORMATS[(format ?? "") as AspectFormat] ?? FORMATS["1:1"];
 }
 
+/**
+ * The frame as an images API wants it.
+ *
+ * The local graph takes any size we ask for, but the cloud endpoints accept a
+ * short list — 1024x1024, 1024x1536, 1536x1024 — and anything else comes back
+ * rejected or silently coerced. So the frame travels as its shape rather than
+ * its numbers: portrait, landscape, square.
+ */
+export function cloudSizeFor(size: { width: number; height: number }): string {
+  if (size.height > size.width) return "1024x1536";
+  if (size.width > size.height) return "1536x1024";
+  return "1024x1024";
+}
+
 export type ComfyGraph = Record<string, { class_type: string; inputs: Record<string, unknown> }>;
 
 /** The picture graph: text-to-image alone, or reference-editing when a photo is given. */
