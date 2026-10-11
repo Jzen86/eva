@@ -1,0 +1,79 @@
+/**
+ * Where her watch reports are kept — one file per task, beside the config.
+ *
+ * A watch task ("посмотри, что сломалось") is not the two of them talking: it is
+ * a report the bot decided to send itself. It already reaches the owner in
+ * Telegram, and it already lands in `conversations` like any other turn — that
+ * is how the engine keeps its own continuity, and it stays that way. But neither
+ * of those is a place to *read later*: the conversation table mixes her reports
+ * with every ordinary evening, and scrolling Telegram for them is not a search.
+ *
+ * So there is a third destination, and it is the one meant to be read:
+ * `~/.eva/reports/<task>.md`, appended in date order, task by task. The writer
+ * is the scheduler itself, not the model — she cannot forget to save her own
+ * report, and the archive cannot disagree with what was delivered.
+ *
+ * Beside the config, like the photo and the database: `EVA_CONFIG_PATH` can move
+ * the whole install, and a report written to `~/.eva` while the bot reads
+ * `/etc/eva` is the same bug the reference photo already paid for once.
+ */
+
+import fs from "node:fs";
+import path from "node:path";
+import { getConfigPath } from "./config.js";
+
+/** The directory holding one report file per scheduled task. */
+export function reportsDir(configPath?: string): string {
+  return path.join(path.dirname(configPath ?? getConfigPath()), "reports");
+}
+
+/**
+ * The report file for one task.
+ *
+ * The name comes from a database row (`self_watch`, `server_watch`) and ends up
+ * in a path, so it is reduced to a safe alphabet rather than trusted. A name
+ * with a slash in it would otherwise write outside the directory; a name that is
+ * only punctuation would produce a file called `.md`.
+ */
+export function reportPath(taskName: string, configPath?: string): string {
+  const safe = taskName
+    .replace(/[^A-Za-z0-9_-]+/g, "_")
+    .replace(/^[-_.]+/, "")
+    .slice(0, 80);
+  return path.join(reportsDir(configPath), `${safe || "task"}.md`);
+}
+
+/** A stamp in the shape the doctor uses: UTC, minute resolution. */
+function stamp(when: Date): string {
+  return `${when.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
+/**
+ * Append one report to its task's file, and say where it went.
+ *
+ * Blank text returns `null` and writes nothing: a task that found nothing to say
+ * is silence, and an empty dated heading is noise that reads like a report.
+ *
+ * Returns the file path so the caller can log it — the archive is otherwise
+ * invisible from the outside, and "where did it go" should never need a hunt.
+ */
+export function appendReport(
+  taskName: string,
+  text: string,
+  when: Date = new Date(),
+  configPath?: string,
+): string | null {
+  const body = text.trim();
+  if (!body) return null;
+
+  const file = reportPath(taskName, configPath);
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  fs.appendFileSync(file, `\n---\n\n## ${stamp(when)} — ${taskName}\n\n${body}\n`);
+  try {
+    fs.chmodSync(file, 0o600);
+  } catch {
+    // No POSIX modes on some filesystems. A report is not a credential, and
+    // refusing to save it over a chmod is a worse trade than a loose mode.
+  }
+  return file;
+}

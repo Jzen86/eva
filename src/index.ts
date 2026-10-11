@@ -21,6 +21,7 @@ import { describeBrowserInstall } from "./core/tools/browser.js";
 import { runDoctor, formatReport } from "./core/doctor.js";
 import { runInit, nextSteps, InitCancelled } from "./core/init.js";
 import { referencePhotoPath, hasReferencePhoto } from "./core/reference-photo.js";
+import { appendReport } from "./core/watch-reports.js";
 import type { EmbeddingEndpoint } from "./core/memory/dedup.js";
 
 /**
@@ -368,6 +369,16 @@ async function main() {
         });
         await channel.send(task.chatId, result);
         console.log(`✅ Scheduler: delivered "${task.name}" to ${task.channel}:${task.chatId}`);
+
+        // The archive is a separate destination on purpose: the owner reads her
+        // reports here, in order, without the ordinary conversation around them.
+        // Written by the scheduler, not by the model — see watch-reports.ts.
+        try {
+          const saved = appendReport(task.name, result.text);
+          if (saved) console.log(`🗂 Отчёт "${task.name}" → ${saved}`);
+        } catch (err) {
+          console.error(`⚠️ Scheduler: отчёт "${task.name}" не сохранился:`, err instanceof Error ? err.message : err);
+        }
       } catch (err) {
         console.error(`❌ Scheduler: failed to deliver "${task.name}":`, err);
       }
