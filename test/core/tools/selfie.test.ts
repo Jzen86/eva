@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { SelfieTool } from "../../../src/core/tools/selfie.js";
+import type { ComfyClient } from "../../../src/core/comfy.js";
 
 const PNG_URL = "data:image/png;base64,AAAA";
 const imageReply = {
@@ -156,6 +157,47 @@ describe("SelfieTool", () => {
     expect(result.mediaUrl).toContain("data:image/png;base64,AAAA");
 
     vi.unstubAllGlobals();
+  });
+
+  it("tells ComfyUI the face comes from the reference, and only when there is one", async () => {
+    const file = path.join(os.tmpdir(), `eva-ref-${Date.now()}.jpg`);
+    fs.writeFileSync(file, Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]));
+
+    const upload = vi.fn().mockResolvedValue("eva_ref.jpg");
+    const generate = vi.fn().mockResolvedValue("data:image/png;base64,AAAA");
+    const tool = new SelfieTool({
+      openrouterApiKey: "or-key",
+      openrouterModel: "vendor/image",
+      referencePath: file,
+      appearance: "A woman with a balanced figure",
+      comfy: { upload, generate } as unknown as ComfyClient,
+    });
+    const result = await tool.execute({ context: "в кафе" });
+    expect(result.success).toBe(true);
+    expect(result.mediaUrl).toBe("data:image/png;base64,AAAA");
+
+    const graph = generate.mock.calls[0][0] as Record<string, { inputs: Record<string, unknown> }>;
+    expect(graph["5"].inputs.prompt).toContain("reference image (image 1)");
+    expect(graph["5"].inputs.prompt).toContain("A woman with a balanced figure");
+    expect(graph["5"].inputs.images).toEqual({ image_1: ["6", 0] });
+
+    fs.unlinkSync(file);
+  });
+
+  it("does not add the reference sentence when no photo is attached", async () => {
+    const generate = vi.fn().mockResolvedValue("data:image/png;base64,AAAA");
+    const tool = new SelfieTool({
+      openrouterApiKey: "or-key",
+      openrouterModel: "vendor/image",
+      referencePath: path.join(os.tmpdir(), "eva-no-such-reference.jpg"),
+      appearance: "A woman with a balanced figure",
+      comfy: { upload: vi.fn(), generate } as unknown as ComfyClient,
+    });
+    await tool.execute({ context: "в кафе" });
+
+    const graph = generate.mock.calls[0][0] as Record<string, { inputs: Record<string, unknown> }>;
+    expect(graph["5"].inputs.prompt).not.toContain("reference image (image 1)");
+    expect(graph["6"]).toBeUndefined();
   });
 
   it("keeps a selfie quiet about faces when a reference is present", async () => {

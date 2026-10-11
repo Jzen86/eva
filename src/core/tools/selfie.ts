@@ -27,6 +27,14 @@ function detectMode(context: string): "mirror" | "direct" {
 const IDENTITY =
   "IMPORTANT: keep the EXACT same person as in the reference image — same face, facial features, hair color and hairstyle. Do NOT invent a new face. Only change pose, clothes, background, lighting and expression.";
 
+/**
+ * Only for the local graph with a reference attached. The hosted models take the
+ * photo-less prompt, so this sentence would be noise there; ComfyUI gets the photo
+ * as image 1 and needs to be told which part of the picture comes from it.
+ */
+const FACE_FROM_REFERENCE =
+  "Keep the exact face from the reference image (image 1): same facial features, eyes, nose, lips and face shape. The body, skin and figure are described below.";
+
 function buildPrompt(context: string, mode: "mirror" | "direct", appearance = ""): string {
   // Two ways to say "her": keep the face in the attached photo, or describe it.
   // The photo is the better likeness and the one the provider will not draw, so
@@ -217,7 +225,8 @@ export class SelfieTool implements Tool {
         const mime = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
         referenceName = await comfy.upload(fs.readFileSync(file), `eva_ref${ext || ".jpg"}`, mime);
       }
-      const image = await comfy.generate(buildWorkflow({ prompt, referenceName, filenamePrefix: "eva/selfie" }));
+      const text = referenceName ? `${FACE_FROM_REFERENCE} ${prompt}` : prompt;
+      const image = await comfy.generate(buildWorkflow({ prompt: text, referenceName, filenamePrefix: "eva/selfie" }));
       console.log(`📸 Selfie OK (comfy, qwen-image-2.1-turbo${referenceName ? ", +reference" : ""})`);
       return image;
     } catch (err) {
