@@ -282,11 +282,8 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
     decisions.push({ name: "image_gen", tier: "keyed", registered: false, reason: "нет ключа провайдера изображений" });
   }
 
-  // Selfies: either an external image backend, or a reference photo uploaded by
-  // the owner. The second case matters — with a reference photo and an
-  // image-capable provider she can still make pictures, and requiring a fal key
-  // for that would be exactly the kind of mandatory vendor to get rid of.
-  const falKey = str(selfies.fal_api_key) || str(video.fal_api_key);
+  // Selfies: a local ComfyUI, or an image-capable provider with a reference
+  // photo or a written canon. No fal — it is gone from the code.
   // The reference is a file the owner sent, not a config key. Reading the
   // config key alone is how the tool ended up registered-but-blank: a fresh
   // install has the photo on disk and no URL written anywhere, and the selfie
@@ -296,13 +293,11 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
   const selfieKey = keyFor(selfieSource);
   // A canon is as good as a photo for getting the tool registered: with it the
   // selfie works with no reference file at all, which is the whole point.
-  if (falKey || comfy || ((hasReference || appearance) && selfieKey)) {
+  if (comfy || ((hasReference || appearance) && selfieKey)) {
     add(
       new SelfieTool({
-        falApiKey: falKey,
         referencePhotoUrl: str(selfies.reference_photo_url) || undefined,
         referencePath: referenceFile,
-        provider: (selfies.provider as "fal" | "openrouter" | undefined) ?? "fal",
         openrouterApiKey: selfieKey,
         openrouterModel: selfieSource.model,
         imageBaseUrl: baseFor(selfieSource) || undefined,
@@ -316,7 +311,7 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
       name: "selfie",
       tier: "keyed",
       registered: false,
-      reason: "нет selfies.fal_api_key, selfies.appearance и референс-фото",
+      reason: "нет ComfyUI, ключа OpenRouter и референс-фото/канона",
     });
   }
 
@@ -329,9 +324,9 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
   // own preconditions per provider, and name the one that failed, because
   // "voice is off" is useless to whoever has to fix it.
   const voiceCfg = (config.voice as Record<string, unknown> | undefined) ?? {};
-  const voiceBackend = voiceBackendAvailable(voiceCfg, falKey || undefined);
+  const voiceBackend = voiceBackendAvailable(voiceCfg);
   if (voiceBackend.ok) {
-    add(new VoiceTool({ voiceConfig: voiceCfg, falApiKey: falKey || undefined }), "keyed");
+    add(new VoiceTool({ voiceConfig: voiceCfg }), "keyed");
   } else {
     decisions.push({ name: "voice", tier: "keyed", registered: false, reason: `нет TTS-бэкенда: ${voiceBackend.why}` });
   }

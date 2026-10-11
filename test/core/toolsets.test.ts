@@ -176,13 +176,10 @@ describe("buildTools", () => {
   });
 
   it("turns voice on when the configured TTS backend can answer", () => {
-    // A fal key used to be the whole test. It is not: the synthesizer reaches
-    // fal only through minimax, so a fal key with the default
-    // tts_provider=openai registered a tool that could only ever fail.
     const cfg = {
       ...MINIMAL,
-      selfies: { fal_api_key: "fal-key" },
-      voice: { tts_provider: "minimax" },
+      selfies: { appearance: "A woman" },
+      voice: { tts_provider: "gemini", gemini_api_key: "goog-key" },
     } as unknown as EvaConfig;
     const result = build(cfg);
     expect(result.registered).toContain("voice");
@@ -239,7 +236,7 @@ describe("buildTools", () => {
   it("gives the channel layer back the instances it has to reach later", () => {
     // The reference-photo command runs after the toolset is built and has to
     // reach the selfie tool; without this it would be silently dead.
-    const cfg = { ...MINIMAL, selfies: { fal_api_key: "k" } } as unknown as EvaConfig;
+    const cfg = { ...MINIMAL, selfies: { appearance: "A woman" } } as unknown as EvaConfig;
     const result = build(cfg);
     expect(result.instances.selfie).toBeDefined();
     expect(result.instances.selfie).toBe(result.tools.get("selfie"));

@@ -76,7 +76,7 @@ const base = (): EvaConfig =>
     selfies: {
       provider: "openrouter",
       openrouter_model: "google/gemini-3.1-flash-image",
-      fal_api_key: "fal-key",
+      appearance: "A woman",
     },
   }) as unknown as EvaConfig;
 
@@ -109,13 +109,13 @@ describe("picture tools follow the configured provider, not the chat model", () 
   });
 
   it("still registers both when there is no image role and no model anywhere", () => {
-    // A bare install with a fal key: pictures work through fal, and nothing here
-    // may throw because a model is missing.
+    // A bare install with a written canon: pictures work through the chat
+    // provider's key, and nothing here may throw because a model is missing.
     const bare = {
       agent: { name: "Eva" },
       telegram: { token: "t" },
       providers: { openrouter: { base_url: "https://openrouter.ai/api/v1", api_key: "sk-or-key" } },
-      selfies: { fal_api_key: "fal-key" },
+      selfies: { appearance: "A woman" },
     } as unknown as EvaConfig;
     const result = build(bare);
     expect(result.registered).toContain("selfie");
@@ -173,7 +173,7 @@ describe("picture tools follow the configured provider, not the chat model", () 
       agent: { name: "Eva" },
       telegram: { token: "t" },
       models: { fast: { provider: "openrouter", model: "vendor/chat-1" } },
-      selfies: { fal_api_key: "fal-key" },
+      selfies: { appearance: "A woman" },
     } as unknown as EvaConfig;
     expect(selfieInternals(build(cfg))?.openrouterModel).toBe("vendor/chat-1");
   });
