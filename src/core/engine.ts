@@ -19,6 +19,7 @@ import { compactHistory } from "./memory/compaction.js";
 import { alignHistory } from "./llm/history.js";
 import { LLMUnavailableError } from "./llm/router.js";
 import { isHeavyToolCall } from "./tool-tiers.js";
+import { peek } from "./pending.js";
 import { TokenStore } from "../services/tokens.js";
 import { getService } from "../services/catalog.js";
 import { SkillsStore } from "../services/skills-store.js";
@@ -234,7 +235,20 @@ export class Engine {
   }
 
   async process(msg: IncomingMessage, onProgress?: ProgressCallback): Promise<OutgoingMessage> {
-    return this.runExclusive(msg.userId, () => this.processLocked(msg, onProgress));
+    // A turn can park an action for the owner (pending.ts). Catch the one this
+    // turn created so the channel can put buttons under the reply rather than
+    // making the owner type /yes: createdAt moves only when a new proposal
+    // replaces the old one, so an older, untouched proposal does not re-prompt.
+    const parkedBefore = peek(msg.userId)?.createdAt ?? 0;
+    const out = await this.runExclusive(msg.userId, () => this.processLocked(msg, onProgress));
+    const parked = peek(msg.userId);
+    if (parked && parked.createdAt > parkedBefore) {
+      return {
+        ...out,
+        confirm: { summary: parked.summary, ...(parked.reason ? { reason: parked.reason } : {}) },
+      };
+    }
+    return out;
   }
 
   /** Serialise turns per user; see `turnLocks`. */

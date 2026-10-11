@@ -317,8 +317,16 @@ async function sendMedia(
   return false;
 }
 
-/** Deliver an OutgoingMessage through the appropriate Telegram media type. */
+/** Deliver an OutgoingMessage, and the approval buttons when the turn parked one. */
 export async function deliver(ctx: Context, response: OutgoingMessage, audio?: AudioOptions): Promise<void> {
+  await deliverBody(ctx, response, audio);
+  // A parked action goes out as two buttons — one tap instead of typing `/yes`.
+  // The commands still work for anyone who prefers them.
+  if (response.confirm) await sendConfirm(ctx, response.confirm);
+}
+
+/** Deliver an OutgoingMessage through the appropriate Telegram media type. */
+async function deliverBody(ctx: Context, response: OutgoingMessage, audio?: AudioOptions): Promise<void> {
   const mode = response.mode ?? "text";
 
   // Everything the turn made, in order. A turn can make two — two voice notes
@@ -362,6 +370,31 @@ export async function deliver(ctx: Context, response: OutgoingMessage, audio?: A
   }
 
   await replyHtml(ctx, response.text);
+}
+
+/**
+ * The approval prompt as two buttons.
+ *
+ * The owner asked for this instead of typing `/yes`: the decision is one tap,
+ * and the command is invisible. `/yes` and `/no` stay as they were — a button
+ * that fails to arrive must not leave the owner with no way to answer.
+ */
+async function sendConfirm(ctx: Context, confirm: { summary: string; reason?: string }): Promise<void> {
+  const text =
+    `❔ Подтверди: ${confirm.summary}` +
+    (confirm.reason ? `\nПричина: ${confirm.reason}` : "");
+  await ctx
+    .reply(text, {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "✅ Принять", callback_data: "pending:yes" },
+            { text: "❌ Отклонить", callback_data: "pending:no" },
+          ],
+        ],
+      },
+    })
+    .catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
@@ -794,6 +827,29 @@ export function registerHandlers(
         ? `Жду подтверждения: ${describe(waiting)}\n${waiting.reason ? `Причина: ${waiting.reason}` : "Причина не указана."}\n/yes — принять, /no — отклонить.`
         : "Ничего не ждёт подтверждения.",
     );
+  });
+
+  // The two buttons under an approval prompt. Same decision as /yes and /no, one
+  // tap; both commands still work, so a lost button never traps the owner.
+  bot.on("callback_query:data", async (ctx) => {
+    const chatId = ctx.chat?.id;
+    if (!chatId) return;
+    await ctx.answerCallbackQuery().catch(() => {});
+    if (currentOwner && chatId !== currentOwner) return;
+    // Take the keyboard away as soon as it is used, so a stale tap cannot fire
+    // the same decision twice.
+    await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } }).catch(() => {});
+
+    const data = ctx.callbackQuery.data;
+    if (data === "pending:yes") {
+      const result = await applyPending(String(chatId));
+      await ctx.reply(result.message);
+    } else if (data === "pending:no") {
+      const dropped = discard(String(chatId));
+      await ctx.reply(
+        dropped ? `Отклонила: ${describe(dropped)}.` : "Нечего отклонять — я ничего не предлагала.",
+      );
+    }
   });
 
   // /persona — the personality constructor. Four questions, asked here in the

@@ -23,6 +23,14 @@ export interface OutgoingMessage {
    * kept only the last, dropping the rest without a word.
    */
   media?: Array<{ url?: string; path?: string; text?: string }>
+  /**
+   * A parked action this turn produced, waiting for the owner's yes.
+   *
+   * The channel renders it as two buttons under the reply — one tap instead of
+   * typing `/yes`. The command still works; the buttons are the same decision,
+   * just not a command the owner has to remember or look up.
+   */
+  confirm?: { summary: string; reason?: string }
 }
 
 export interface LLMMessage {

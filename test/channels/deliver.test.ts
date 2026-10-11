@@ -118,4 +118,27 @@ describe("deliver", () => {
 
     fs.unlinkSync(file);
   });
+
+  it("puts a parked action on two buttons instead of a /yes to remember", async () => {
+    const ctx = fakeCtx();
+
+    await deliver(ctx as never, {
+      text: "Нужно твоё добро.",
+      confirm: { summary: "выполнить команду: npm install foo", reason: "просил поставить пакет" },
+    });
+
+    const withKeyboard = ctx.reply.mock.calls.find(
+      (c) => (c[1] as { reply_markup?: unknown } | undefined)?.reply_markup !== undefined,
+    );
+    expect(withKeyboard).toBeDefined();
+    const markup = (withKeyboard![1] as {
+      reply_markup: { inline_keyboard: Array<Array<{ callback_data: string }>> };
+    }).reply_markup;
+    expect(markup.inline_keyboard.flat().map((b) => b.callback_data)).toEqual([
+      "pending:yes",
+      "pending:no",
+    ]);
+    expect(String(withKeyboard![0])).toContain("npm install foo");
+    expect(String(withKeyboard![0])).toContain("просил поставить пакет");
+  });
 });
