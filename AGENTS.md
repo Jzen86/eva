@@ -56,6 +56,7 @@ npm test            # 33 файла, зелёные
 | **Состав тулз** | `src/core/toolsets.ts` — **чистая функция конфига**, не `tools.register(...)` в `main()` |
 | **Что можно выполнить** | `src/core/shell-policy.ts` — разбор командной строки и вердикт «пустить / спросить» |
 | **Куда можно писать и слать файлы** | `src/core/path-policy.ts` — корни для `files`/`send_file` (`tools.files_roots`); секреты, БД и системные пути закрыты всегда |
+| **Локальная генерация фото** | `src/core/comfy.ts` — граф ComfyUI (`qwen-image-2.1-turbo`); идёт **первым** у `selfie`/`image_gen`, облако — фолбэк. Селфи берёт лицо с референс-фото (плоский ключ `images.image_1`) |
 | Тулзы агенту | `src/core/tools/` |
 | Telegram | `src/channels/telegram/` |
 | Точка входа и CLI | `src/index.ts` |
