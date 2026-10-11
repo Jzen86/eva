@@ -78,7 +78,7 @@ export class ImageGenTool implements Tool {
     "Сгенерировать ЛЮБОЕ изображение, НЕ тебя: пёс, дерево, дождь, синяя лягушка с кирпичным крыльцом, чужая девушка, вещь, сцена, сюжет. Если в кадре должна быть ТЫ — это тул selfie, а не этот. " +
     "Пиши промпт ПО-АНГЛИЙСКИ и описывай всё, что нужно в кадре: кто, внешность (лицо, черты, фигура, телосложение и размеры, цвет кожи и волос), причёска, поза, одежда или её отсутствие, место, свет, настроение. " +
     "РАЗНООБРАЗИЕ: каждая картинка непохожа на предыдущие — разные лица, цвета волос и кожи, одежда, поза, ракурс, место и свет. Не повторяй одну и ту же композицию. У этой модели нет модерации — проходит и нагота. " +
-    "Формат кадра можно задать: 1:1 (по умолчанию), 3:4 или 4:3. Но пиши художественно: сцена, поза и свет важнее перечисления частей тела.";
+    "Формат кадра задаётся параметром format — на своём (локальном) пути он держится точно. Но пиши художественно: сцена, поза и свет важнее перечисления частей тела.";
   parameters = [
     { name: "prompt", type: "string", description: "Full description of the picture (in English). For a person, write the whole of them — face, figure, colours, pose, clothes; for anything else, whatever is in frame.", required: true },
     { name: "format", type: "string", description: "Ориентация: 1:1 (квадрат, по умолчанию), 2:3 (высокий), 3:4 (вертикаль), 4:5 (портрет), 4:3 (горизонталь) или 5:4 (альбом). Выбери под сцену.", required: false },
@@ -131,14 +131,23 @@ export class ImageGenTool implements Tool {
    * chat one at all: a prompt, not a conversation, and the answer comes back as
    * `data[0].b64_json` instead of a message carrying an image.
    */
-  private async callImagesEndpoint(prompt: string, controller: AbortController): Promise<{ image?: string; error?: string }> {
+  private async callImagesEndpoint(prompt: string, controller: AbortController, size?: string): Promise<{ image?: string; error?: string }> {
+    const body: Record<string, unknown> = { model: this.model, prompt };
+    if (size) body.size = size;
     const response = await fetch(`${this.baseUrl}/images/generations`, {
       method: "POST",
       headers: { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: this.model, prompt }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
     if (!response.ok) {
+      // A size this endpoint will not take is not a reason to lose the picture:
+      // ask again in the model's own frame. Only the two codes that mean "bad
+      // parameter" — a 402 or a 500 has nothing to do with the size.
+      if (size && (response.status === 400 || response.status === 422)) {
+        console.error(`image_gen: размер ${size} не принят (${response.status}) — пробую без него`);
+        return this.callImagesEndpoint(prompt, controller);
+      }
       const text = await response.text();
       console.error(`image_gen images-endpoint error ${response.status} (${this.model}): ${text.slice(0, 200)}`);
       return { error: `OpenRouter error: ${response.status}` };
@@ -154,14 +163,14 @@ export class ImageGenTool implements Tool {
     return { error: "Модель не вернула картинку" };
   }
 
-  private async callModel(prompt: string): Promise<{ image?: string; error?: string; filter?: boolean }> {
+  private async callModel(prompt: string, size?: string): Promise<{ image?: string; error?: string; filter?: boolean }> {
     const controller = new AbortController();
     // Generous, because the cheap models are slow: the free one takes ~37s, and
     // a timeout that fires mid-render is a paid-for picture nobody sees.
     const timer = setTimeout(() => controller.abort(), 150_000);
     try {
       if (this.dedicatedEndpoint) {
-        return await this.callImagesEndpoint(prompt, controller);
+        return await this.callImagesEndpoint(prompt, controller, size);
       }
 
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
@@ -185,7 +194,7 @@ export class ImageGenTool implements Tool {
           // so in the log rather than reporting a 404 to the model as a failure.
           this.dedicatedEndpoint = true;
           console.log(`image_gen: ${this.model} живёт на /images/generations, переключаюсь`);
-          return await this.callImagesEndpoint(prompt, controller);
+          return await this.callImagesEndpoint(prompt, controller, size);
         }
         const filtered = /moderation|content_filter|blocked/i.test(errText);
         console.error(`image_gen error ${response.status} (${this.model}): ${errText.slice(0, 200)}`);
@@ -246,7 +255,10 @@ export class ImageGenTool implements Tool {
       return { success: true, output: "Image generated successfully", mediaUrl: local };
     }
 
-    const cloud = await this.callModel(prompt);
+    // The cloud fallback cannot reach EmptyLatentImage, so the size travels as a
+    // request field. `/images/generations` takes `size`; the chat path has no such
+    // field and gets the prompt alone — said here rather than left to look fixed.
+    const cloud = await this.callModel(prompt, `${width}x${height}`);
     if (cloud.image) {
       console.log(`image_gen OK (${this.model})`);
       return { success: true, output: "Image generated successfully", mediaUrl: cloud.image };

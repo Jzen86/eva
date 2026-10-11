@@ -66,4 +66,35 @@ describe("ImageGenTool", () => {
 
     vi.unstubAllGlobals();
   });
+
+  it("asks the images endpoint for the requested frame", async () => {
+    // The cloud fallback cannot reach EmptyLatentImage, so the size has to travel
+    // as a request field — the owner's Eva noticed it did not, and she was right.
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const mockFetch = vi.fn(async (url: unknown, init: { body: string }) => {
+      const u = String(url);
+      calls.push({ url: u, body: JSON.parse(init.body) as Record<string, unknown> });
+      if (u.endsWith("/chat/completions")) {
+        return {
+          ok: false,
+          status: 404,
+          text: () => Promise.resolve("No endpoints found that support the requested output modalities"),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(JSON.stringify({ data: [{ b64_json: "AAAA", media_type: "image/png" }] })),
+      };
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const tool = new ImageGenTool({ apiKey: "k" });
+    const result = await tool.execute({ prompt: "a tower", format: "2:3" });
+    expect(result.success).toBe(true);
+    const imagesCall = calls.find((c) => c.url.endsWith("/images/generations"));
+    expect(imagesCall?.body.size).toBe("768x1152");
+
+    vi.unstubAllGlobals();
+  });
 });
