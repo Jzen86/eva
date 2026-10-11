@@ -236,9 +236,11 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
    * The figure standard, in words, for the selfie tool.
    *
    * Separate from `appearance`: that one stands in for the *face* on the cloud
-   * path, while this describes the *body* and rides on both paths, so the local
-   * ComfyUI keeps the face from the photo and still gets the same figure every
-   * frame. Lives in `selfies` beside the other picture settings.
+   * path, while this describes the *body*. Like `appearance`, `image_gen` does
+   * not read it — a plain picture is invented whole from its own prompt — so the
+   * figure only holds where the face does: on the selfie, where the local ComfyUI
+   * takes the face from the photo and the canon gives the same figure every frame.
+   * Lives in `selfies` beside the other picture settings.
    */
   const body = str(selfies.body) || str(imageCfg.body);
 

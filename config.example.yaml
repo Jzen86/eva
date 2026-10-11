@@ -178,7 +178,8 @@ memory:
 # У локального ComfyUI наоборот — лицо берётся с фото, и этот текст лишь дополняет его.
 # selfies:
 #   appearance: "A woman in her late twenties, warm skin, dark eyes, long dark hair"   # ПРИМЕР — впиши своё
-#   # `body` — стандарт фигуры: идёт на ОБОИХ путях, чтобы тело не менялось кадр от кадра.
+#   # `body` — стандарт фигуры для селфи: идёт в каждый селфи-кадр, чтобы тело не менялось кадр от кадра.
+#   # Путь «картинок» (image_gen) его не читает — тот рисует что угодно и берёт промпт как есть.
 #   # Только пропорции и кожа. Одежду задаёт сцена, и она сильнее: свитер в сцене = она одета.
 #   body: "Woman with a balanced figure, a proportionate waist, a flat stomach, beautiful natural hips, smooth realistic skin. Photorealistic, ultra detailed skin texture."
 #
