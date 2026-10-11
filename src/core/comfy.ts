@@ -28,13 +28,13 @@ export interface ComfyGraphOptions {
 
 /**
  * Output formats on a 768 base: the short side is 768, the long side grows to
- * the ratio. Portrait 3:4 is the natural frame for a full-body selfie, 4:5 is the
- * phone-shaped portrait with a little more in frame, 1:1 the close-up square, and
- * 4:3 / 5:4 when the scene needs width. 864 was tried and dropped: on a phone the
- * extra detail is not visible, and the render costs more.
+ * the ratio. 2:3 is the tallest frame, for a full body that should fill the shot;
+ * 3:4 the usual portrait; 4:5 the phone-shaped one that keeps a little more in
+ * frame; 1:1 the close-up square; 4:3 and 5:4 when the scene needs width.
  */
 export const FORMATS = {
   "1:1": { width: 768, height: 768 },
+  "2:3": { width: 768, height: 1152 },
   "3:4": { width: 768, height: 1024 },
   "4:5": { width: 768, height: 960 },
   "4:3": { width: 1024, height: 768 },

@@ -52,6 +52,8 @@ describe("buildWorkflow", () => {
     // The phone-shaped pair, on the same 768 short side.
     expect(sizeFor("4:5")).toEqual({ width: 768, height: 960 });
     expect(sizeFor("5:4")).toEqual({ width: 960, height: 768 });
+    // The tallest frame, for a full body that should fill the shot.
+    expect(sizeFor("2:3")).toEqual({ width: 768, height: 1152 });
   });
 
   it("falls back to 1:1 on an unknown format", () => {
