@@ -49,7 +49,7 @@ npm test            # 33 файла, зелёные
 | Память и БД | `src/core/memory/` |
 | Самообучение | `src/core/memory/study-runner.ts` |
 | Самодиагностика | `src/core/doctor.ts` (инструмент `doctor`, CLI `eva doctor`) |
-| Гейт подтверждения правок | `src/core/pending.ts` (`/yes`, `/no`, `/pending`) |
+| Гейт подтверждения правок | `src/core/pending.ts` (`/yes`, `/no`, `/pending`; в чате — кнопки ✅/❌) |
 | Установка | `src/core/init.ts` (CLI `eva init`) |
 | **Фото личности** | `src/core/reference-photo.ts` — путь, копирование, проверка. Единственное место, которое знает, где фото |
 | **Конструктор личности** | `src/core/persona-quest.ts` — четыре вопроса, чистая машина состояний. Проводка в `src/channels/telegram/handlers.ts` (`/persona`, `/cancel`) |
