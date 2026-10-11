@@ -33,25 +33,25 @@ describe("buildWorkflow", () => {
     expect(classes.some((c) => /JzenReference|JzenResolution|StringConcatenate/.test(c))).toBe(false);
   });
 
-  it("sizes the frame from an empty latent, 864 by default", () => {
+  it("sizes the frame from an empty latent, 768 by default", () => {
     // The encoder's own latent output is the *reference's* size (square), so it
     // would pin every frame to 1:1 and ignore the requested ratio. The empty
     // latent is what decides the frame.
     const g = buildWorkflow({ prompt: "x", seed: 1 });
     expect(g["9"].class_type).toBe("EmptyLatentImage");
-    expect(g["9"].inputs).toMatchObject({ width: 864, height: 864 });
+    expect(g["9"].inputs).toMatchObject({ width: 768, height: 768 });
     expect(g["7"].inputs.latent_image).toEqual(["9", 0]);
-    expect(g["5"].inputs.resolution).toBe(864);
+    expect(g["5"].inputs.resolution).toBe(768);
   });
 
   it("renders every format from the requested size", () => {
     const portrait = buildWorkflow({ prompt: "x", seed: 1, ...sizeFor("3:4") });
-    expect(portrait["9"].inputs).toMatchObject({ width: 864, height: 1152 });
+    expect(portrait["9"].inputs).toMatchObject({ width: 768, height: 1024 });
     const landscape = buildWorkflow({ prompt: "x", seed: 1, ...sizeFor("4:3") });
-    expect(landscape["9"].inputs).toMatchObject({ width: 1152, height: 864 });
-    // The phone-shaped pair, on the same 864 short side.
-    expect(sizeFor("4:5")).toEqual({ width: 864, height: 1080 });
-    expect(sizeFor("5:4")).toEqual({ width: 1080, height: 864 });
+    expect(landscape["9"].inputs).toMatchObject({ width: 1024, height: 768 });
+    // The phone-shaped pair, on the same 768 short side.
+    expect(sizeFor("4:5")).toEqual({ width: 768, height: 960 });
+    expect(sizeFor("5:4")).toEqual({ width: 960, height: 768 });
   });
 
   it("falls back to 1:1 on an unknown format", () => {
