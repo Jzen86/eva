@@ -305,6 +305,8 @@ describe("git — history is readable, writes are not", () => {
     expect(allow("git blame src/index.ts")).toBe(true);
     expect(allow("git rev-parse --short HEAD")).toBe(true);
     expect(allow("journalctl -u eva -n 5 | grep x; git log -1")).toBe(true);
+    // The one she actually used: a read run from another directory.
+    expect(allow("git -C /opt/eva status --short; git -C /opt/eva diff src/")).toBe(true);
   });
 
   it("leaves every writing verb parked", () => {
@@ -318,6 +320,7 @@ describe("git — history is readable, writes are not", () => {
       "git cherry-pick abc123",
       "git branch -D topic",
       "git remote add up url",
+      "git -C /opt/eva push",
       "git diff --output=/tmp/x",
       "git",
     ]) {

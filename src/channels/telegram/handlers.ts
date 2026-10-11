@@ -815,11 +815,15 @@ export function registerHandlers(
     const result = await applyPending(String(chatId));
     console.log(`🔘 ✅ подтверждение: ${result.ok ? "выполнено" : "не вышло"} — ${result.message.slice(0, 140)}`);
     await ctx.reply(result.message);
-    if (!result.ok || !result.output?.trim()) return;
+    if (!result.ok) return;
+    // Even an empty output deserves an answer: "git diff" with nothing to show is
+    // a result, and silence after a tap is what "the confirmation broke" looks
+    // like from the outside.
+    const body = result.output?.trim() ? result.output.slice(0, 3000) : "(вывод пустой)";
 
     const prompt =
       `[Подтверждено] Женя подтвердил отложенное действие, и оно выполнено. Его вывод:\n\n` +
-      `${result.output.slice(0, 3000)}\n\n` +
+      `${body}\n\n` +
       `Коротко скажи Жене, что из этого следует — что нашла, всё ли в порядке. Не пересказывай команду.`;
     try {
       const reply = await handler(await toIncoming(ctx, prompt, bot.token));

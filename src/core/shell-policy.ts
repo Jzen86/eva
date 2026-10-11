@@ -90,6 +90,15 @@ interface BinaryRule {
   /** Flags that turn this call into a write. Matched against the raw command. */
   writeFlags?: RegExp;
   /**
+   * Flags that take a value, so the token after them is not the sub-verb.
+   *
+   * `git -C /opt/eva log` made the reader take `-C`'s value as the verb, fail to
+   * find `/opt/eva` among the read verbs and park a plain history read — twice in
+   * a row, because the retry was the same command, which read to the owner as a
+   * confirmation that had stopped working.
+   */
+  valueFlags?: string[];
+  /**
    * Flags that make the *bare* form a read, for binaries whose sub-verb is
    * optional. `systemctl --failed` is `list-units --failed` with the verb left
    * out; the sub-verb reader finds no verb there and used to park it, which is
@@ -148,6 +157,9 @@ const RULES: Record<string, BinaryRule> = {
     // `git diff --output=<file>` writes a file, which is the one way a read verb
     // reaches the disk without a redirect to catch it.
     writeFlags: /(^|\s)--output(=|\s|$)/,
+    // `git -C /opt/eva log` is a history read run from another directory; without
+    // this the value of `-C` reads as the verb.
+    valueFlags: ["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"],
   },
   sort: {
     // `sort -o FILE` writes the sorted output to FILE; without it, sort can only
@@ -341,13 +353,19 @@ export function leadingBinary(segment: string): string | null {
  * The first non-flag token, so `systemctl --user status eva` is still read as
  * `status` rather than gated for having a global flag in front of it.
  */
-function subcommandOf(segment: string): string | null {
+function subcommandOf(segment: string, valueFlags?: string[]): string | null {
   const tokens = segment.split(/\s+/).filter(Boolean);
+  const takesValue = valueFlags && valueFlags.length ? new Set(valueFlags) : null;
   let i = 0;
   while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i += 1;
   for (let j = i + 1; j < tokens.length; j += 1) {
     const token = tokens[j];
-    if (!token || token.startsWith("-")) continue;
+    if (!token) continue;
+    if (token.startsWith("-")) {
+      // A flag that takes a value swallows the next token, which is not the verb.
+      if (takesValue?.has(token)) j += 1;
+      continue;
+    }
     return token;
   }
   return null;
@@ -400,7 +418,7 @@ export function classify(command: string, trusted: string[] = []): ShellVerdict 
     const rule = RULES[bin];
     if (rule) {
       if (rule.subcommands) {
-        const verb = subcommandOf(segment);
+        const verb = subcommandOf(segment, rule.valueFlags);
         if (!verb) {
           // No verb at all. A binary whose verb is optional may still be reading
           // (`systemctl --failed`); one that always takes a verb is unreadable
