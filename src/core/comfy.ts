@@ -19,26 +19,29 @@ export interface ComfyGraphOptions {
   /** Uploaded reference image name, as returned by /upload/image. */
   referenceName?: string;
   filenamePrefix?: string;
-  /** Output size. Defaults to 768×768 (1:1). */
+  /** Output size. Defaults to 1024×1024 (1:1). */
   width?: number;
   height?: number;
-  /** How the reference is scaled for the encoder. Defaults to 768, to match output. */
+  /** How the reference is scaled for the encoder. Defaults to 1024, to match output. */
   resolution?: number;
 }
 
 /**
- * Output formats on a 768 base: the short side is 768, the long side grows to
- * the ratio. 2:3 is the tallest frame, for a full body that should fill the shot;
- * 3:4 the usual portrait; 4:5 the phone-shaped one that keeps a little more in
- * frame; 1:1 the close-up square; 4:3 and 5:4 when the scene needs width.
+ * Output formats on a 1024 base: the short side is 1024, the long side grows to
+ * the ratio, every side a multiple of 32. Qwen-Image 2.1's own default is one
+ * megapixel (1024x1024) and its native 2K is four; what carries the detail is the
+ * short side, and 768 sat under it — the skin went soft and mottled there.
+ * 2:3 is the tallest frame, for a full body that should fill the shot; 9:16 fills
+ * a phone screen; 3:4 the usual portrait; 4:5 the feed-shaped one that keeps a
+ * little more in frame; 1:1 the close-up square; 4:3 when the scene needs width.
  */
 export const FORMATS = {
-  "1:1": { width: 768, height: 768 },
-  "2:3": { width: 768, height: 1152 },
-  "3:4": { width: 768, height: 1024 },
-  "4:5": { width: 768, height: 960 },
-  "4:3": { width: 1024, height: 768 },
-  "5:4": { width: 960, height: 768 },
+  "1:1": { width: 1024, height: 1024 },
+  "2:3": { width: 1024, height: 1536 },
+  "3:4": { width: 1024, height: 1376 },
+  "4:5": { width: 1024, height: 1280 },
+  "9:16": { width: 1024, height: 1824 },
+  "4:3": { width: 1376, height: 1024 },
 } as const;
 
 export type AspectFormat = keyof typeof FORMATS;
@@ -82,7 +85,7 @@ export function buildWorkflow(opts: ComfyGraphOptions): ComfyGraph {
             clip: ["2", 0],
             prompt: opts.prompt,
             negative_prompt: "",
-            resolution: opts.resolution ?? 768,
+            resolution: opts.resolution ?? 1024,
             vae: ["3", 0],
           },
         },
@@ -117,7 +120,7 @@ export function buildWorkflow(opts: ComfyGraphOptions): ComfyGraph {
     // face intact, so the size is what decides the frame, not the reference.
     "9": {
       class_type: "EmptyLatentImage",
-      inputs: { width: opts.width ?? 768, height: opts.height ?? 768, batch_size: 1 },
+      inputs: { width: opts.width ?? 1024, height: opts.height ?? 1024, batch_size: 1 },
     },
     "10": {
       class_type: "SaveImage",

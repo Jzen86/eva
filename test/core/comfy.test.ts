@@ -33,27 +33,27 @@ describe("buildWorkflow", () => {
     expect(classes.some((c) => /JzenReference|JzenResolution|StringConcatenate/.test(c))).toBe(false);
   });
 
-  it("sizes the frame from an empty latent, 768 by default", () => {
+  it("sizes the frame from an empty latent, 1024 by default", () => {
     // The encoder's own latent output is the *reference's* size (square), so it
     // would pin every frame to 1:1 and ignore the requested ratio. The empty
     // latent is what decides the frame.
     const g = buildWorkflow({ prompt: "x", seed: 1 });
     expect(g["9"].class_type).toBe("EmptyLatentImage");
-    expect(g["9"].inputs).toMatchObject({ width: 768, height: 768 });
+    expect(g["9"].inputs).toMatchObject({ width: 1024, height: 1024 });
     expect(g["7"].inputs.latent_image).toEqual(["9", 0]);
-    expect(g["5"].inputs.resolution).toBe(768);
+    expect(g["5"].inputs.resolution).toBe(1024);
   });
 
   it("renders every format from the requested size", () => {
     const portrait = buildWorkflow({ prompt: "x", seed: 1, ...sizeFor("3:4") });
-    expect(portrait["9"].inputs).toMatchObject({ width: 768, height: 1024 });
+    expect(portrait["9"].inputs).toMatchObject({ width: 1024, height: 1376 });
     const landscape = buildWorkflow({ prompt: "x", seed: 1, ...sizeFor("4:3") });
-    expect(landscape["9"].inputs).toMatchObject({ width: 1024, height: 768 });
-    // The phone-shaped pair, on the same 768 short side.
-    expect(sizeFor("4:5")).toEqual({ width: 768, height: 960 });
-    expect(sizeFor("5:4")).toEqual({ width: 960, height: 768 });
+    expect(landscape["9"].inputs).toMatchObject({ width: 1376, height: 1024 });
+    // Every frame on the same 1024 short side, every side a multiple of 32.
+    expect(sizeFor("4:5")).toEqual({ width: 1024, height: 1280 });
+    expect(sizeFor("9:16")).toEqual({ width: 1024, height: 1824 });
     // The tallest frame, for a full body that should fill the shot.
-    expect(sizeFor("2:3")).toEqual({ width: 768, height: 1152 });
+    expect(sizeFor("2:3")).toEqual({ width: 1024, height: 1536 });
   });
 
   it("falls back to 1:1 on an unknown format", () => {

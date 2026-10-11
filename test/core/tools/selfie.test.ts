@@ -203,13 +203,13 @@ describe("SelfieTool", () => {
 
     const graph = generate.mock.calls[0][0] as Record<string, { inputs: Record<string, unknown> }>;
     expect(graph["5"].inputs.prompt).toContain("Woman with a balanced figure, a flat stomach");
-    expect(graph["9"].inputs).toMatchObject({ width: 1024, height: 768 });
+    expect(graph["9"].inputs).toMatchObject({ width: 1376, height: 1024 });
 
     // A format later added to the table must survive here too: this whitelist went
     // stale once and silently dropped 2:3 back to 3:4.
     await tool.execute({ context: "в парке", format: "2:3", mode: "mirror" });
     const second = generate.mock.calls[1][0] as Record<string, { inputs: Record<string, unknown> }>;
-    expect(second["9"].inputs).toMatchObject({ width: 768, height: 1152 });
+    expect(second["9"].inputs).toMatchObject({ width: 1024, height: 1536 });
 
     fs.unlinkSync(file);
   });
@@ -332,7 +332,7 @@ describe("SelfieTool", () => {
     const result = await tool.execute({ context: "в парке", mode: "mirror", format: "2:3" });
     expect(result.success).toBe(true);
     const imagesCall = calls.find((c) => c.url.endsWith("/images/generations"));
-    expect(imagesCall?.body.size).toBe("768x1152");
+    expect(imagesCall?.body.size).toBe("1024x1536");
 
     vi.unstubAllGlobals();
   });

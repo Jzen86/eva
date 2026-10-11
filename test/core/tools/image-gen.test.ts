@@ -93,7 +93,7 @@ describe("ImageGenTool", () => {
     const result = await tool.execute({ prompt: "a tower", format: "2:3" });
     expect(result.success).toBe(true);
     const imagesCall = calls.find((c) => c.url.endsWith("/images/generations"));
-    expect(imagesCall?.body.size).toBe("768x1152");
+    expect(imagesCall?.body.size).toBe("1024x1536");
 
     vi.unstubAllGlobals();
   });
