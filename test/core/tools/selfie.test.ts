@@ -17,7 +17,7 @@ describe("SelfieTool", () => {
   it("has correct name and parameters", () => {
     const tool = new SelfieTool({ openrouterApiKey: "k", referencePhotoUrl: "https://example.com/photo.jpg" });
     expect(tool.name).toBe("selfie");
-    expect(tool.parameters).toHaveLength(2);
+    expect(tool.parameters).toHaveLength(3);
     expect(tool.parameters[0].name).toBe("context");
     expect(tool.parameters[0].required).toBe(true);
     expect(tool.parameters[1].name).toBe("mode");
@@ -180,6 +180,27 @@ describe("SelfieTool", () => {
     expect(graph["5"].inputs.prompt).toContain("reference image (image 1)");
     expect(graph["5"].inputs.prompt).toContain("A woman with a balanced figure");
     expect(graph["5"].inputs["images.image_1"]).toEqual(["6", 0]);
+
+    fs.unlinkSync(file);
+  });
+
+  it("puts the figure standard in the prompt and honors the requested format", async () => {
+    const file = path.join(os.tmpdir(), `eva-ref-${Date.now()}.jpg`);
+    fs.writeFileSync(file, Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]));
+    const upload = vi.fn().mockResolvedValue("eva_ref.jpg");
+    const generate = vi.fn().mockResolvedValue("data:image/png;base64,AAAA");
+    const tool = new SelfieTool({
+      openrouterApiKey: "or-key",
+      openrouterModel: "vendor/image",
+      referencePath: file,
+      body: "Woman with a balanced figure, a flat stomach",
+      comfy: { upload, generate } as unknown as ComfyClient,
+    });
+    await tool.execute({ context: "в кафе", format: "4:3" });
+
+    const graph = generate.mock.calls[0][0] as Record<string, { inputs: Record<string, unknown> }>;
+    expect(graph["5"].inputs.prompt).toContain("Woman with a balanced figure, a flat stomach");
+    expect(graph["9"].inputs).toMatchObject({ width: 1024, height: 768 });
 
     fs.unlinkSync(file);
   });

@@ -4,7 +4,7 @@ import path from "node:path";
 import type { Tool, ToolResult } from "./types.js";
 import { referencePhotoPath } from "../reference-photo.js";
 import { checkImagePrompt } from "./prompt-check.js";
-import { buildWorkflow, type ComfyClient } from "../comfy.js";
+import { buildWorkflow, sizeFor, type ComfyClient } from "../comfy.js";
 
 /** Working OpenRouter image model (gemini-2.0-flash-exp:free no longer exists). */
 const MODEL = "google/gemini-2.5-flash-image";
@@ -106,6 +106,7 @@ export class ImageGenTool implements Tool {
     "Но пиши художественно: сцена, поза и свет важнее перечисления частей тела, а грубые и медицинские слова не нужны — они ничего не добавляют к кадру.";
   parameters = [
     { name: "prompt", type: "string", description: "Detailed description of the scene/framing (in English). Describe pose, clothes, place, mood — NOT the face (the reference provides the face).", required: true },
+    { name: "format", type: "string", description: "Формат кадра: 1:1 (квадрат, по умолчанию), 3:4 (портрет) или 4:3 (альбом).", required: false },
   ];
 
   private apiKey: string;
@@ -143,10 +144,10 @@ export class ImageGenTool implements Tool {
   }
 
   /** Local picture first: canon in words, scene from the prompt, no reference. */
-  private async tryComfy(text: string): Promise<string | null> {
+  private async tryComfy(text: string, width: number, height: number): Promise<string | null> {
     if (!this.comfy) return null;
     try {
-      const image = await this.comfy.generate(buildWorkflow({ prompt: text, filenamePrefix: "eva/img" }));
+      const image = await this.comfy.generate(buildWorkflow({ prompt: text, filenamePrefix: "eva/img", width, height }));
       console.log("image_gen OK (comfy, qwen-image-2.1-turbo)");
       return image;
     } catch (err) {
@@ -306,7 +307,8 @@ export class ImageGenTool implements Tool {
     // of a real person" filter has nothing to catch. The face used to travel as
     // an image, and that image is what closed the intimate half of the range.
     const sceneText = this.appearance ? `${this.appearance}. Scene: ${safe}` : safe;
-    const local = await this.tryComfy(sceneText);
+    const { width, height } = sizeFor(String(params.format ?? ""));
+    const local = await this.tryComfy(sceneText, width, height);
     if (local) {
       return { success: true, output: "Image generated successfully", mediaUrl: local };
     }

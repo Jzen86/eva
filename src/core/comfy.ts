@@ -19,6 +19,29 @@ export interface ComfyGraphOptions {
   /** Uploaded reference image name, as returned by /upload/image. */
   referenceName?: string;
   filenamePrefix?: string;
+  /** Output size. Defaults to 768×768 (1:1). */
+  width?: number;
+  height?: number;
+  /** How the reference is scaled for the encoder. Defaults to 768, to match output. */
+  resolution?: number;
+}
+
+/**
+ * Output formats on a 768 base: the short side is 768, the long side grows to the
+ * ratio. Portrait 3:4 is the natural frame for a full-body selfie, 1:1 for a
+ * close-up, 4:3 when the scene needs width.
+ */
+export const FORMATS = {
+  "1:1": { width: 768, height: 768 },
+  "3:4": { width: 768, height: 1024 },
+  "4:3": { width: 1024, height: 768 },
+} as const;
+
+export type AspectFormat = keyof typeof FORMATS;
+
+/** Size for a named format; anything unknown falls back to 1:1. */
+export function sizeFor(format: string | undefined): { width: number; height: number } {
+  return FORMATS[(format ?? "") as AspectFormat] ?? FORMATS["1:1"];
 }
 
 export type ComfyGraph = Record<string, { class_type: string; inputs: Record<string, unknown> }>;
@@ -36,7 +59,7 @@ export function buildWorkflow(opts: ComfyGraphOptions): ComfyGraph {
         clip: ["2", 0],
         prompt: opts.prompt,
         negative_prompt: "",
-        resolution: 1024,
+        resolution: opts.resolution ?? 768,
         vae: ["3", 0],
       },
     },
@@ -51,12 +74,20 @@ export function buildWorkflow(opts: ComfyGraphOptions): ComfyGraph {
         scheduler: "simple",
         positive: ["5", 0],
         negative: ["5", 1],
-        latent_image: ["5", 2],
+        latent_image: ["9", 0],
         denoise: 1,
       },
     },
     "8": { class_type: "VAEDecode", inputs: { samples: ["7", 0], vae: ["3", 0] } },
+    // The empty latent sets the output size — the node's own latent output is
+    // sized to the reference (square), which would pin every frame to 1:1 and
+    // ignore 3:4 / 4:3. Measured: a 768×1024 empty latent renders 3:4 with the
+    // face intact, so the size is what decides the frame, not the reference.
     "9": {
+      class_type: "EmptyLatentImage",
+      inputs: { width: opts.width ?? 768, height: opts.height ?? 768, batch_size: 1 },
+    },
+    "10": {
       class_type: "SaveImage",
       inputs: { images: ["8", 0], filename_prefix: opts.filenamePrefix ?? "eva/img" },
     },

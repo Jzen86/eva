@@ -231,6 +231,16 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
    */
   const appearance = str(selfies.appearance) || str(imageCfg.appearance);
 
+  /**
+   * The figure standard, in words, for the selfie tool.
+   *
+   * Separate from `appearance`: that one stands in for the *face* on the cloud
+   * path, while this describes the *body* and rides on both paths, so the local
+   * ComfyUI keeps the face from the photo and still gets the same figure every
+   * frame. Lives in `selfies` beside the other picture settings.
+   */
+  const body = str(selfies.body) || str(imageCfg.body);
+
   const providerSpecs = registry?.toConfig().providers ?? {};
   const imageRoleRef = registry?.role("image");
   const chatRef = registry?.role("fast");
@@ -302,6 +312,7 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
         openrouterModel: selfieSource.model,
         imageBaseUrl: baseFor(selfieSource) || undefined,
         ...(appearance ? { appearance } : {}),
+        ...(body ? { body } : {}),
         ...(comfy ? { comfy } : {}),
       }),
       "keyed",

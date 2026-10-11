@@ -3,7 +3,7 @@ import path from "node:path";
 import type { Tool, ToolResult } from "./types.js";
 import { referencePhotoPath } from "../reference-photo.js";
 import { checkSelfieContext } from "./prompt-check.js";
-import { buildWorkflow, type ComfyClient } from "../comfy.js";
+import { buildWorkflow, sizeFor, type ComfyClient } from "../comfy.js";
 
 /** Default image backend. The `modalities:["image"]` chat extension is an
  *  OpenRouter feature, not part of the OpenAI spec — a different endpoint only
@@ -35,17 +35,21 @@ const IDENTITY =
 const FACE_FROM_REFERENCE =
   "Keep the exact face from the reference image (image 1): same facial features, eyes, nose, lips and face shape. The body, skin and figure are described below.";
 
-function buildPrompt(context: string, mode: "mirror" | "direct", appearance = ""): string {
+function buildPrompt(context: string, mode: "mirror" | "direct", appearance = "", body = ""): string {
   // Two ways to say "her": keep the face in the attached photo, or describe it.
   // The photo is the better likeness and the one the provider will not draw, so
   // when the canon is set the prompt opens with it and no image travels.
   const opener = appearance
     ? `${appearance}. Photorealistic.`
     : `${IDENTITY} Using the reference image of this exact woman:`;
+  // The figure standard, in words, so the body does not drift frame to frame.
+  // It describes proportions only — clothing still comes from the scene and wins
+  // over it, so an innocent scene stays dressed.
+  const figure = body ? ` ${body}` : "";
   if (mode === "mirror") {
-    return `${opener} She is taking a mirror selfie, ${context}. Full body visible in the mirror, realistic photo.`;
+    return `${opener}${figure} She is taking a mirror selfie, ${context}. Full body visible in the mirror, realistic photo.`;
   }
-  return `${opener} A close-up selfie taken by herself, ${context}, direct eye contact with the camera, looking straight into the lens, phone held at arm's length, face fully visible, natural and casual, realistic photo.`;
+  return `${opener}${figure} A close-up selfie taken by herself, ${context}, direct eye contact with the camera, looking straight into the lens, phone held at arm's length, face fully visible, natural and casual, realistic photo.`;
 }
 
 export interface SelfieToolConfig {
@@ -78,6 +82,16 @@ export interface SelfieToolConfig {
    * working on the scenes the photo made impossible.
    */
   appearance?: string;
+  /**
+   * The figure standard, in words: proportions only, applied to every selfie so
+   * the body does not drift from frame to frame.
+   *
+   * Unlike `appearance` it rides on *both* paths: the local ComfyUI keeps the
+   * face from the photo and takes the body from here, and the cloud path keeps
+   * the same body. Clothing still comes from the scene and wins over it, so an
+   * innocent scene stays dressed.
+   */
+  body?: string;
   /** Local ComfyUI, tried first. Any failure falls through to the hosted path. */
   comfy?: ComfyClient;
 }
@@ -102,6 +116,7 @@ export class SelfieTool implements Tool {
   parameters = [
     { name: "context", type: "string", description: "Описание ситуации (в кафе, в новом платье, на пляже)", required: true },
     { name: "mode", type: "string", description: "Режим: mirror (зеркальное, full-body) или direct (close-up). Если не указан — определяется автоматически.", required: false },
+    { name: "format", type: "string", description: "Формат кадра: 1:1 (квадрат), 3:4 (портрет, в полный рост) или 4:3 (альбом). Если не указан — 3:4 для зеркала и 1:1 для крупного плана.", required: false },
   ];
 
   readonly config: SelfieToolConfig;
@@ -168,6 +183,13 @@ export class SelfieTool implements Tool {
     return params.mode === "mirror" || params.mode === "direct" ? params.mode : detectMode(context);
   }
 
+  /** 1:1 / 3:4 / 4:3 from the caller, else the mode's natural frame. */
+  private resolveFormat(params: Record<string, unknown>, mode: "mirror" | "direct"): string {
+    const asked = String(params.format ?? "");
+    if (asked === "1:1" || asked === "3:4" || asked === "4:3") return asked;
+    return mode === "mirror" ? "3:4" : "1:1";
+  }
+
   async execute(params: Record<string, unknown>): Promise<ToolResult> {
     const context = String(params.context ?? "");
     if (!context) {
@@ -187,6 +209,7 @@ export class SelfieTool implements Tool {
     }
 
     const mode = this.resolveMode(params, context);
+    const { width, height } = sizeFor(this.resolveFormat(params, mode));
 
     // The finished prompt opens with the canon and closes with the framing the mode
     // demands, so the check runs on the scene she wrote — see prompt-check.ts.
@@ -203,9 +226,9 @@ export class SelfieTool implements Tool {
       }
     }
 
-    const prompt = buildPrompt(context, mode, appearance);
+    const prompt = buildPrompt(context, mode, appearance, this.config.body ?? "");
 
-    const local = await this.tryComfy(prompt);
+    const local = await this.tryComfy(prompt, width, height);
     if (local) {
       return { success: true, output: "Селфи сгенерировано", mediaUrl: local };
     }
@@ -214,7 +237,7 @@ export class SelfieTool implements Tool {
   }
 
   /** Local ComfyUI first: the reference photo goes in as the face, the canon as words. */
-  private async tryComfy(prompt: string): Promise<string | null> {
+  private async tryComfy(prompt: string, width: number, height: number): Promise<string | null> {
     const comfy = this.config.comfy;
     if (!comfy) return null;
     try {
@@ -226,7 +249,7 @@ export class SelfieTool implements Tool {
         referenceName = await comfy.upload(fs.readFileSync(file), `eva_ref${ext || ".jpg"}`, mime);
       }
       const text = referenceName ? `${FACE_FROM_REFERENCE} ${prompt}` : prompt;
-      const image = await comfy.generate(buildWorkflow({ prompt: text, referenceName, filenamePrefix: "eva/selfie" }));
+      const image = await comfy.generate(buildWorkflow({ prompt: text, referenceName, filenamePrefix: "eva/selfie", width, height }));
       console.log(`📸 Selfie OK (comfy, qwen-image-2.1-turbo${referenceName ? ", +reference" : ""})`);
       return image;
     } catch (err) {
