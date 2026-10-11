@@ -51,7 +51,11 @@ export function minutesOfDay(hhmm: string): number | null {
   if (!m) return null;
   const h = Number(m[1]);
   const min = Number(m[2]);
-  if (h < 0 || h > 23 || min < 0 || min > 59) return null;
+  if (min < 0 || min > 59) return null;
+  // 24:00 is how a person writes "the end of the day", and the owner's own table
+  // says "вечер 20:00–24:00". Accept the bare hour; anything past it does not exist.
+  if (h === 24) return min === 0 ? 1440 : null;
+  if (h < 0 || h > 23) return null;
   return h * 60 + min;
 }
 

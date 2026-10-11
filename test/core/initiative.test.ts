@@ -25,7 +25,8 @@ describe("initiative", () => {
     expect(minutesOfDay("06:00")).toBe(360);
     expect(minutesOfDay("23:59")).toBe(1439);
     expect(minutesOfDay("6:00")).toBe(360);
-    expect(minutesOfDay("24:00")).toBeNull();
+    expect(minutesOfDay("24:00")).toBe(1440);
+    expect(minutesOfDay("24:30")).toBeNull();
     expect(minutesOfDay("nonsense")).toBeNull();
 
     const cfg = parseInitiative({
@@ -124,5 +125,23 @@ describe("initiative", () => {
     expect(localClock(at(6, 37), 4).minutes).toBe(6 * 60 + 37 + 240);
     // At 05:00 UTC with +4 it is 09:00 local: outside the window.
     expect(dueNow(cfg, NONE, at(5, 0), 4, null)).toBeNull();
+  });
+
+  it("takes the owner's own table, 24:00 and all", () => {
+    const cfg = parseInitiative({
+      enabled: true,
+      periods: [
+        { name: "утро", from: "06:00", to: "10:00", per_day: 1 },
+        { name: "день", from: "10:00", to: "20:00", per_day: 1 },
+        { name: "вечер", from: "20:00", to: "24:00", per_day: 1 },
+        { name: "ночь", from: "00:00", to: "06:00", per_day: 1 },
+      ],
+    })!;
+    expect(cfg.periods.map((p) => p.name)).toEqual(["утро", "день", "вечер", "ночь"]);
+    // 23:30 is the evening, not the night; 01:00 is the night.
+    expect(instanceAt(cfg, "2026-10-11", 23 * 60 + 30)!.period.name).toBe("вечер");
+    expect(instanceAt(cfg, "2026-10-12", 60)!.period.name).toBe("ночь");
+    // 09:00 is morning.
+    expect(instanceAt(cfg, "2026-10-11", 9 * 60)!.period.name).toBe("утро");
   });
 });
