@@ -1,0 +1,154 @@
+import { randomUUID } from "node:crypto";
+
+/**
+ * Local image generation through ComfyUI.
+ *
+ * The graph is ours and only ours: its own node ids, its own output folder
+ * (`eva/`), its own uploaded reference names (`eva_ref_*`). The owner's
+ * workflows live in the same ComfyUI and use custom nodes and prefixes of their
+ * own; nothing here reads or writes them.
+ */
+
+export const COMFY_UNET = "qwen-image-2.1-turbo-int8-convrot.safetensors";
+export const COMFY_CLIP = "qwen3vl_8b_int8_convrot.safetensors";
+export const COMFY_VAE = "qwen_image_2.1_vae_bf16.safetensors";
+
+export interface ComfyGraphOptions {
+  prompt: string;
+  seed?: number;
+  /** Uploaded reference image name, as returned by /upload/image. */
+  referenceName?: string;
+  filenamePrefix?: string;
+}
+
+export type ComfyGraph = Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+
+/** The text-to-image graph, with the reference wired in when one is given. */
+export function buildWorkflow(opts: ComfyGraphOptions): ComfyGraph {
+  const graph: ComfyGraph = {
+    "1": { class_type: "UNETLoader", inputs: { unet_name: COMFY_UNET, weight_dtype: "default" } },
+    "2": { class_type: "CLIPLoader", inputs: { clip_name: COMFY_CLIP, type: "qwen_image", device: "default" } },
+    "3": { class_type: "VAELoader", inputs: { vae_name: COMFY_VAE } },
+    "4": { class_type: "QwenImage21Cache", inputs: { model: ["1", 0], device: "auto", dtype: "default" } },
+    "5": {
+      class_type: "TextEncodeQwenImage21",
+      inputs: {
+        clip: ["2", 0],
+        prompt: opts.prompt,
+        negative_prompt: "",
+        resolution: 1024,
+        vae: ["3", 0],
+        images: {},
+      },
+    },
+    "7": {
+      class_type: "KSampler",
+      inputs: {
+        model: ["4", 0],
+        seed: opts.seed ?? Math.floor(Math.random() * 2 ** 31),
+        steps: 8,
+        cfg: 1,
+        sampler_name: "euler",
+        scheduler: "simple",
+        positive: ["5", 0],
+        negative: ["5", 1],
+        latent_image: ["5", 2],
+        denoise: 1,
+      },
+    },
+    "8": { class_type: "VAEDecode", inputs: { samples: ["7", 0], vae: ["3", 0] } },
+    "9": {
+      class_type: "SaveImage",
+      inputs: { images: ["8", 0], filename_prefix: opts.filenamePrefix ?? "eva/img" },
+    },
+  };
+
+  if (opts.referenceName) {
+    graph["6"] = { class_type: "LoadImage", inputs: { image: opts.referenceName } };
+    (graph["5"].inputs as Record<string, unknown>).images = { image_1: ["6", 0] };
+  }
+
+  return graph;
+}
+
+export interface ComfyClientOptions {
+  baseUrl: string;
+  /** Whole-job budget. A cold model load on 12 GB VRAM is slow, not stuck. */
+  timeoutMs?: number;
+  pollMs?: number;
+}
+
+export class ComfyClient {
+  private baseUrl: string;
+  private timeoutMs: number;
+  private pollMs: number;
+  private clientId = randomUUID();
+
+  constructor(opts: ComfyClientOptions) {
+    this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
+    this.timeoutMs = opts.timeoutMs ?? 180_000;
+    this.pollMs = opts.pollMs ?? 1_500;
+  }
+
+  /** Uploads a reference picture to ComfyUI's input folder and returns its name. */
+  async upload(bytes: Buffer, filename: string, mime: string): Promise<string> {
+    const form = new FormData();
+    form.append("image", new Blob([new Uint8Array(bytes)], { type: mime }), filename);
+    form.append("overwrite", "true");
+    const res = await fetch(`${this.baseUrl}/upload/image`, { method: "POST", body: form });
+    if (!res.ok) throw new Error(`comfy upload ${res.status}`);
+    const json = (await res.json()) as { name?: string };
+    if (!json.name) throw new Error("comfy upload: no name in response");
+    return json.name;
+  }
+
+  /** Runs a graph and returns the first picture as a data URL. */
+  async generate(graph: ComfyGraph): Promise<string> {
+    const queued = await fetch(`${this.baseUrl}/prompt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: graph, client_id: this.clientId }),
+    });
+    if (!queued.ok) throw new Error(`comfy prompt ${queued.status}`);
+    const { prompt_id } = (await queued.json()) as { prompt_id: string };
+
+    const deadline = Date.now() + this.timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, this.pollMs));
+      const hist = await fetch(`${this.baseUrl}/history/${prompt_id}`);
+      if (!hist.ok) continue;
+      const entry = ((await hist.json()) as Record<string, ComfyHistory>)[prompt_id];
+      if (!entry) continue;
+      if (entry.status?.status_str === "error") throw new Error("comfy job failed");
+      const image = firstImage(entry.outputs);
+      if (!image) throw new Error("comfy: no image in outputs");
+      const view = await fetch(
+        `${this.baseUrl}/view?${new URLSearchParams({ filename: image.filename, subfolder: image.subfolder, type: image.type })}`,
+      );
+      if (!view.ok) throw new Error(`comfy view ${view.status}`);
+      const b64 = Buffer.from(await view.arrayBuffer()).toString("base64");
+      return `data:image/png;base64,${b64}`;
+    }
+    throw new Error("comfy timeout");
+  }
+}
+
+interface ComfyImage {
+  filename: string;
+  subfolder: string;
+  type: string;
+}
+
+interface ComfyHistory {
+  status?: { status_str?: string };
+  outputs?: Record<string, { images?: ComfyImage[] }>;
+}
+
+function firstImage(outputs: ComfyHistory["outputs"]): ComfyImage | undefined {
+  if (!outputs) return undefined;
+  for (const node of Object.values(outputs)) {
+    const img = node.images?.[0];
+    if (img) return img;
+  }
+  return undefined;
+}

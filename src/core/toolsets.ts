@@ -37,6 +37,7 @@ import { SelfieTool } from "./tools/selfie.js";
 import { referencePhotoPath, hasReferencePhoto } from "./reference-photo.js";
 import { VoiceTool, voiceBackendAvailable } from "./tools/voice.js";
 import { ImageGenTool } from "./tools/image-gen.js";
+import { ComfyClient } from "./comfy.js";
 import { WebTool } from "./tools/web.js";
 import { SkillSearchTool } from "./tools/skill-search.js";
 import { SkillInstallTool } from "./tools/skill-install.js";
@@ -262,14 +263,18 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
     str(imageCfg.api_key) || specFor(s)?.api_key || getLLMApiKey(config) || "";
   const baseFor = (s: { provider: string }) => str(imageCfg.base_url) || specFor(s)?.base_url;
 
+  const comfyUrl = str((config.comfy as Record<string, unknown> | undefined)?.url);
+  const comfy = comfyUrl ? new ComfyClient({ baseUrl: comfyUrl }) : undefined;
+
   const genKey = keyFor(genSource);
-  if (genKey) {
+  if (genKey || comfy) {
     add(
       new ImageGenTool({
         apiKey: genKey,
         baseUrl: baseFor(genSource),
         model: genSource.model,
         ...(appearance ? { appearance } : {}),
+        ...(comfy ? { comfy } : {}),
       }),
       "keyed",
     );
@@ -291,7 +296,7 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
   const selfieKey = keyFor(selfieSource);
   // A canon is as good as a photo for getting the tool registered: with it the
   // selfie works with no reference file at all, which is the whole point.
-  if (falKey || ((hasReference || appearance) && selfieKey)) {
+  if (falKey || comfy || ((hasReference || appearance) && selfieKey)) {
     add(
       new SelfieTool({
         falApiKey: falKey,
@@ -302,6 +307,7 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
         openrouterModel: selfieSource.model,
         imageBaseUrl: baseFor(selfieSource) || undefined,
         ...(appearance ? { appearance } : {}),
+        ...(comfy ? { comfy } : {}),
       }),
       "keyed",
     );

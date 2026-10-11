@@ -4,6 +4,7 @@ import type { Tool, ToolResult } from "./types.js";
 import { uploadToFal } from "../fal-upload.js";
 import { referencePhotoPath } from "../reference-photo.js";
 import { checkSelfieContext } from "./prompt-check.js";
+import { buildWorkflow, type ComfyClient } from "../comfy.js";
 
 const FAL_ENDPOINT = "https://fal.run/xai/grok-imagine-image/edit";
 /** Default image backend. The `modalities:["image"]` chat extension is an
@@ -74,6 +75,8 @@ export interface SelfieToolConfig {
    * working on the scenes the photo made impossible.
    */
   appearance?: string;
+  /** Local ComfyUI, tried first. Any failure falls through to the hosted path. */
+  comfy?: ComfyClient;
 }
 
 /** Same sentence the dedicated image models use to name the endpoint they want. */
@@ -237,10 +240,36 @@ export class SelfieTool implements Tool {
 
     const prompt = buildPrompt(context, mode, appearance);
 
+    const local = await this.tryComfy(prompt);
+    if (local) {
+      return { success: true, output: "Селфи сгенерировано", mediaUrl: local };
+    }
+
     if (provider === "openrouter") {
       return this.generateOpenRouter(prompt, mode);
     }
     return this.generateFal(prompt, mode);
+  }
+
+  /** Local ComfyUI first: the reference photo goes in as the face, the canon as words. */
+  private async tryComfy(prompt: string): Promise<string | null> {
+    const comfy = this.config.comfy;
+    if (!comfy) return null;
+    try {
+      const file = this.config.referencePath ?? defaultReferenceFile();
+      let referenceName: string | undefined;
+      if (fs.existsSync(file)) {
+        const ext = path.extname(file).toLowerCase();
+        const mime = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
+        referenceName = await comfy.upload(fs.readFileSync(file), `eva_ref${ext || ".jpg"}`, mime);
+      }
+      const image = await comfy.generate(buildWorkflow({ prompt, referenceName, filenamePrefix: "eva/selfie" }));
+      console.log(`📸 Selfie OK (comfy, qwen-image-2.1-turbo${referenceName ? ", +reference" : ""})`);
+      return image;
+    } catch (err) {
+      console.error(`📸 Selfie comfy failed, фолбэк на облако: ${err instanceof Error ? err.message : err}`);
+      return null;
+    }
   }
 
   private async generateFal(prompt: string, mode: "mirror" | "direct"): Promise<ToolResult> {

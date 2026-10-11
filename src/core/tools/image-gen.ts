@@ -4,6 +4,7 @@ import path from "node:path";
 import type { Tool, ToolResult } from "./types.js";
 import { referencePhotoPath } from "../reference-photo.js";
 import { checkImagePrompt } from "./prompt-check.js";
+import { buildWorkflow, type ComfyClient } from "../comfy.js";
 
 /** Working OpenRouter image model (gemini-2.0-flash-exp:free no longer exists). */
 const MODEL = "google/gemini-2.5-flash-image";
@@ -29,6 +30,8 @@ export interface ImageGenToolConfig {
    * filter to catch. Measured 4 of 4 across four scenes, intimate included.
    */
   appearance?: string;
+  /** Local ComfyUI, tried first. Any failure falls through to the hosted path. */
+  comfy?: ComfyClient;
 }
 
 interface ORMessage {
@@ -111,6 +114,7 @@ export class ImageGenTool implements Tool {
   private referencePath: string;
   /** The written canon, or "" when the photo is still the way in. */
   private appearance: string;
+  private comfy?: ComfyClient;
   /**
    * Set once the provider has said this model lives on `/images/generations`.
    * Cached because a chat bot generates more than one picture.
@@ -135,6 +139,20 @@ export class ImageGenTool implements Tool {
     this.baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
     this.referencePath = config.referencePath ?? DEFAULT_REFERENCE;
     this.appearance = config.appearance?.trim() ?? "";
+    this.comfy = config.comfy;
+  }
+
+  /** Local picture first: canon in words, scene from the prompt, no reference. */
+  private async tryComfy(text: string): Promise<string | null> {
+    if (!this.comfy) return null;
+    try {
+      const image = await this.comfy.generate(buildWorkflow({ prompt: text, filenamePrefix: "eva/img" }));
+      console.log("image_gen OK (comfy, qwen-image-2.1-turbo)");
+      return image;
+    } catch (err) {
+      console.error(`image_gen comfy failed, фолбэк на облако: ${err instanceof Error ? err.message : err}`);
+      return null;
+    }
   }
 
   /** Data URI of the reference photo, or null if none. */
@@ -287,8 +305,14 @@ export class ImageGenTool implements Tool {
     // The written canon: no photo on the wire, so the provider's "no pictures
     // of a real person" filter has nothing to catch. The face used to travel as
     // an image, and that image is what closed the intimate half of the range.
+    const sceneText = this.appearance ? `${this.appearance}. Scene: ${safe}` : safe;
+    const local = await this.tryComfy(sceneText);
+    if (local) {
+      return { success: true, output: "Image generated successfully", mediaUrl: local };
+    }
+
     if (this.appearance) {
-      const once = await this.callModel(`${this.appearance}. Scene: ${safe}`, false);
+      const once = await this.callModel(sceneText, false);
       if (once.image) {
         console.log(`image_gen OK (${this.model}, канон-текст)`);
         return { success: true, output: "Image generated successfully", mediaUrl: once.image };
