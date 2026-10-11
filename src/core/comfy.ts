@@ -94,7 +94,14 @@ export function buildWorkflow(opts: ComfyGraphOptions): ComfyGraph {
         steps: 8,
         cfg: 1,
         sampler_name: "euler",
-        scheduler: "simple",
+        // `linear_quadratic`, not `simple`. On this turbo checkpoint the fine
+        // low-frequency tail of `simple` lets the model invent anatomy — a crease
+        // across the belly, veins on the forearms — whenever there is no reference
+        // to hold the structure. Measured locally, one seed per row at 1024x1536
+        // (ours, not hers): `simple` grows the crease and the veins; the same seed
+        // on `linear_quadratic` is clean. With a reference both read fine, so this
+        // costs the selfie path nothing and fixes image_gen.
+        scheduler: "linear_quadratic",
         positive: ["5", 0],
         // EditPlus has a single output; the 21-encoder has positive and negative.
         // cfg is 1, so the negative has no effect either way.
