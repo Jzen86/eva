@@ -205,6 +205,12 @@ describe("SelfieTool", () => {
     expect(graph["5"].inputs.prompt).toContain("Woman with a balanced figure, a flat stomach");
     expect(graph["9"].inputs).toMatchObject({ width: 1024, height: 768 });
 
+    // A format later added to the table must survive here too: this whitelist went
+    // stale once and silently dropped 2:3 back to 3:4.
+    await tool.execute({ context: "в парке", format: "2:3", mode: "mirror" });
+    const second = generate.mock.calls[1][0] as Record<string, { inputs: Record<string, unknown> }>;
+    expect(second["9"].inputs).toMatchObject({ width: 768, height: 1152 });
+
     fs.unlinkSync(file);
   });
 

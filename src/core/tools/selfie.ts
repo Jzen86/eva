@@ -3,7 +3,7 @@ import path from "node:path";
 import type { Tool, ToolResult } from "./types.js";
 import { referencePhotoPath } from "../reference-photo.js";
 import { checkSelfieContext } from "./prompt-check.js";
-import { buildWorkflow, sizeFor, type ComfyClient } from "../comfy.js";
+import { buildWorkflow, sizeFor, FORMATS, type ComfyClient } from "../comfy.js";
 
 /** Default image backend. The `modalities:["image"]` chat extension is an
  *  OpenRouter feature, not part of the OpenAI spec — a different endpoint only
@@ -183,10 +183,17 @@ export class SelfieTool implements Tool {
     return params.mode === "mirror" || params.mode === "direct" ? params.mode : detectMode(context);
   }
 
-  /** 1:1 / 3:4 / 4:3 from the caller, else the mode's natural frame. */
+  /**
+   * The frame from the caller, else the mode's natural one.
+   *
+   * The whitelist is the formats table itself, not a second list written out here:
+   * a hand-copied one went stale the moment 2:3, 4:5 and 5:4 were added, and the
+   * tool quietly dropped them back to 3:4 — the description promised six and the
+   * code honoured three. Eva found it by reading the file.
+   */
   private resolveFormat(params: Record<string, unknown>, mode: "mirror" | "direct"): string {
     const asked = String(params.format ?? "");
-    if (asked === "1:1" || asked === "3:4" || asked === "4:3") return asked;
+    if (asked in FORMATS) return asked;
     return mode === "mirror" ? "3:4" : "1:1";
   }
 
