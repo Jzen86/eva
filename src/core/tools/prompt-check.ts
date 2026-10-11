@@ -76,8 +76,14 @@ function find(text: string, words: string[]): string | null {
  *
  * Only the first defect is reported. A prompt with two of them is rewritten whole
  * anyway, and a list of complaints reads as a scolding rather than as an edit.
+ *
+ * `checkAppearance` decides whether describing her appearance counts as a defect.
+ * For the selfie it does: the canon already says how she looks, and a second
+ * description argues with it. For a plain picture it does not — there the person
+ * is invented from scratch, and the whole point is that she writes the face and
+ * the figure herself. So the caller passes `false`.
  */
-export function checkImagePrompt(prompt: string): string | null {
+export function checkImagePrompt(prompt: string, checkAppearance = true): string | null {
   if (!prompt.trim()) return null;
 
   if (CLOSE_UP.test(prompt) && FULL_BODY.test(prompt)) {
@@ -87,13 +93,15 @@ export function checkImagePrompt(prompt: string): string | null {
     );
   }
 
-  const appearance = find(prompt, APPEARANCE_WORDS);
-  if (appearance) {
-    return (
-      `Ты описываешь её внешность («${appearance}») — она уже целиком задана каноном, и второе ` +
-      "описание спорит с первым: лицо дрейфует сильнее, кадр плывёт. Опиши только сцену " +
-      "(место, поза, что на ней, причёска, свет) — и вызови снова."
-    );
+  if (checkAppearance) {
+    const appearance = find(prompt, APPEARANCE_WORDS);
+    if (appearance) {
+      return (
+        `Ты описываешь её внешность («${appearance}») — она уже целиком задана каноном, и второе ` +
+        "описание спорит с первым: лицо дрейфует сильнее, кадр плывёт. Опиши только сцену " +
+        "(место, поза, что на ней, причёска, свет) — и вызови снова."
+      );
+    }
   }
 
   if (STANDING.test(prompt) && LYING.test(prompt)) {

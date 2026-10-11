@@ -1,15 +1,10 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import type { Tool, ToolResult } from "./types.js";
-import { referencePhotoPath } from "../reference-photo.js";
 import { checkImagePrompt } from "./prompt-check.js";
 import { buildWorkflow, sizeFor, type ComfyClient } from "../comfy.js";
 
 /** Working OpenRouter image model (gemini-2.0-flash-exp:free no longer exists). */
 const MODEL = "google/gemini-2.5-flash-image";
 const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
-const DEFAULT_REFERENCE = referencePhotoPath();
 
 export interface ImageGenToolConfig {
   apiKey: string;
@@ -18,18 +13,6 @@ export interface ImageGenToolConfig {
    *  the `modalities: ["image","text"]` extension — it is not part of the
    *  OpenAI spec, so most compatible endpoints reject it. */
   baseUrl?: string;
-  /** Path to the reference photo used to keep the same face. */
-  referencePath?: string;
-  /**
-   * A written description of how she looks, used instead of the photo.
-   *
-   * The photo is the better likeness and the worse tool: the provider refuses
-   * to draw an identifiable person, so a lingerie reference made even a sweater
-   * scene fail seven times out of eight, and every intimate one failed — 0 of
-   * 32 measured attempts. Text carries the same identity with nothing for that
-   * filter to catch. Measured 4 of 4 across four scenes, intimate included.
-   */
-  appearance?: string;
   /** Local ComfyUI, tried first. Any failure falls through to the hosted path. */
   comfy?: ComfyClient;
 }
@@ -60,20 +43,20 @@ function extractImage(message: ORMessage | undefined): string | null {
 }
 
 /**
- * The prompt goes to the provider as written.
+ * Any picture, and only a picture.
  *
- * There used to be a `softenPrompt` here: a safety net under the model that
- * rewrote `nude` into "implied nudity", `topless` into "in a sheer lace bra", and
- * kept a pile of lingerie variants to substitute. It was the right tool while the
- * picture models refused blunt words — measured then, nudity in any framing was a
- * refusal on every provider and every Google model, and the rewrite was the only
- * way to get a picture at all.
+ * This tool draws whatever she describes — a stranger, a city, an object — and
+ * never her. The reference photo and the appearance canon belong to the selfie
+ * tool; when the picture happens to be a woman, she writes the whole of her in
+ * the prompt: face, features, figure and build, colours, clothes, scene. So the
+ * prompt travels exactly as written, no image rides along, and nothing is
+ * prepended. That is the difference from the selfie, and it is the point.
  *
- * The model this install runs now (`recraft/recraft-v4.1-flash`, $0.007 a frame)
- * is not moderated: the same words come back as a picture, checked on the live key
- * before the switch. Keeping the rewrite would mean quietly downgrading every
- * request to the ceiling of a model that is no longer in use — she asks for one
- * picture and receives a different, tamer one, with nothing in the log saying so.
+ * There used to be a `softenPrompt` here: it rewrote `nude` into "implied
+ * nudity" and kept a pile of lingerie substitutions, back when the picture
+ * models refused blunt words. The model this install runs now is not moderated —
+ * checked on the live key — so the rewrite would only quietly downgrade a
+ * request to the ceiling of a model that is no longer in use.
  */
 
 /**
@@ -84,45 +67,33 @@ function extractImage(message: ORMessage | undefined): string | null {
  * sentence rather than on a list of model ids means a model that is renamed, or
  * one that moves from the premium set to the cheap set, keeps working without
  * anyone editing this file. Every id in this area has turned over at least once
- * today.
- *
- * The fourth phrasing is the one an images-only model returns when the request
- * carries `modalities: ["image","text"]`, which is what this tool always sends:
- * "No endpoints found that support the requested output modalities". Recraft
- * answers in those words and nothing else, so the switch never fired and the
- * caller was told `OpenRouter error: 404` — a wrong door reported as a broken
- * model. A plain 404 counts as well, for the same reason: on this path a 404 is
- * the door, not the model.
+ * today. A plain 404 counts as well: on this path a 404 is the door, not the
+ * model.
  */
 const WRONG_DOOR = /cannot be used with the chat\/completions endpoint|image generation model|use the \/api\/v1\/images|support the requested output modalities/i;
 
 export class ImageGenTool implements Tool {
   name = "image_gen";
   description =
-    "Сгенерировать обычную картинку по текстовому промпту. Это НЕ селфи: здесь нет её референса и её внешности, каждая картинка — свой человек или сюжет. " +
-    "Пиши промпт ПО-АНГЛИЙСКИ и описывай всё, что нужно в кадре: кто, внешность, место, поза, одежда или её отсутствие, причёска, свет, настроение. " +
+    "Сгенерировать ЛЮБОЕ изображение по текстовому промпту — человека, сцену, вещь, что угодно. Это НЕ селфи: здесь нет её референса и её внешности — если в кадре девушка, ты описываешь её целиком сама. " +
+    "Пиши промпт ПО-АНГЛИЙСКИ и описывай всё, что нужно в кадре: кто, внешность (лицо, черты, фигура, телосложение и размеры, цвет кожи и волос), причёска, поза, одежда или её отсутствие, место, свет, настроение. " +
     "РАЗНООБРАЗИЕ: каждая картинка непохожа на предыдущие — разные лица, цвета волос и кожи, одежда, поза, ракурс, место и свет. Не повторяй одну и ту же композицию. " +
-    "МОДЕРАЦИЯ: у этой модели её нет — проверено на живом ключе. Проходит и полуоткровенное ('sheer black lace lingerie', 'silk robe slipping off one shoulder', 'see-through bodysuit'), и нагота: 'topless', 'nude', 'bare breasts', 'no clothes', 'lying naked on silk sheets'. Одежда больше не обязательна. " +
+    "МОДЕРАЦИЯ: у этой модели её нет — проверено на живом ключе. Проходит и полуоткровенное ('sheer black lace lingerie', 'silk robe slipping off one shoulder', 'see-through bodysuit'), и нагота: 'topless', 'nude', 'bare breasts', 'no clothes', 'lying naked on silk sheets'. Одежда не обязательна. " +
     "Но пиши художественно: сцена, поза и свет важнее перечисления частей тела, а грубые и медицинские слова не нужны — они ничего не добавляют к кадру.";
   parameters = [
-    { name: "prompt", type: "string", description: "Detailed description of the scene/framing (in English). Describe pose, clothes, place, mood — NOT the face (the reference provides the face).", required: true },
+    { name: "prompt", type: "string", description: "Full description of the picture (in English). For a person, write the whole of them — face, figure, colours, pose, clothes; for anything else, whatever is in frame.", required: true },
     { name: "format", type: "string", description: "Формат кадра: 1:1 (квадрат, по умолчанию), 3:4 (портрет) или 4:3 (альбом).", required: false },
   ];
 
   private apiKey: string;
   private model: string;
   private baseUrl: string;
-  private referencePath: string;
-  /** The written canon, or "" when the photo is still the way in. */
-  private appearance: string;
   private comfy?: ComfyClient;
   /**
    * Set once the provider has said this model lives on `/images/generations`.
    * Cached because a chat bot generates more than one picture.
    */
   private dedicatedEndpoint = false;
-  /** True when a reference was asked for but this path cannot carry one. */
-  private referenceDropped = false;
   /**
    * The last prompt this tool refused to send, verbatim.
    *
@@ -138,12 +109,10 @@ export class ImageGenTool implements Tool {
     this.apiKey = config.apiKey;
     this.model = config.model ?? MODEL;
     this.baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
-    this.referencePath = config.referencePath ?? DEFAULT_REFERENCE;
-    this.appearance = config.appearance?.trim() ?? "";
     this.comfy = config.comfy;
   }
 
-  /** Local picture first: canon in words, scene from the prompt, no reference. */
+  /** Local picture first — plain text-to-image, no reference in or out. */
   private async tryComfy(text: string, width: number, height: number): Promise<string | null> {
     if (!this.comfy) return null;
     try {
@@ -156,30 +125,12 @@ export class ImageGenTool implements Tool {
     }
   }
 
-  /** Data URI of the reference photo, or null if none. */
-  private referenceDataUrl(): string | null {
-    try {
-      if (!fs.existsSync(this.referencePath)) return null;
-      const buf = fs.readFileSync(this.referencePath);
-      const ext = path.extname(this.referencePath).toLowerCase();
-      const mime = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
-      return `data:${mime};base64,${buf.toString("base64")}`;
-    } catch {
-      return null;
-    }
-  }
-
   /**
    * The cheap door: `POST /images/generations`.
    *
-   * Free and twenty-five times cheaper picture models live here, and the request
-   * is not the chat one at all — a prompt, not a conversation, and the answer
-   * comes back as `data[0].b64_json` instead of a message with an image in it.
-   *
-   * There is no reference photo on this path: the endpoint takes a prompt, and a
-   * model that does not accept an image input cannot keep a face. So when the
-   * model lands here, `referenceDropped` is set and the caller is told, because a
-   * silently different face is worse than a slower honest one.
+   * Free and much cheaper picture models live here, and the request is not the
+   * chat one at all: a prompt, not a conversation, and the answer comes back as
+   * `data[0].b64_json` instead of a message carrying an image.
    */
   private async callImagesEndpoint(prompt: string, controller: AbortController): Promise<{ image?: string; error?: string }> {
     const response = await fetch(`${this.baseUrl}/images/generations`, {
@@ -204,28 +155,15 @@ export class ImageGenTool implements Tool {
     return { error: "Модель не вернула картинку" };
   }
 
-  private async callModel(prompt: string, useReference: boolean): Promise<{ image?: string; error?: string; filter?: boolean }> {
+  private async callModel(prompt: string): Promise<{ image?: string; error?: string; filter?: boolean }> {
     const controller = new AbortController();
     // Generous, because the cheap models are slow: the free one takes ~37s, and
     // a timeout that fires mid-render is a paid-for picture nobody sees.
     const timer = setTimeout(() => controller.abort(), 150_000);
     try {
-      const ref = this.dedicatedEndpoint ? null : useReference ? this.referenceDataUrl() : null;
-      if (useReference && !ref && this.dedicatedEndpoint) this.referenceDropped = true;
-      const text = ref
-        ? `Keep the EXACT same person/face as in the reference image — same facial features, hair and identity; do NOT invent a new face. Only change pose, clothes, background and lighting. Scene: ${prompt}`
-        : prompt;
-
       if (this.dedicatedEndpoint) {
-        return await this.callImagesEndpoint(text, controller);
+        return await this.callImagesEndpoint(prompt, controller);
       }
-
-      const content: unknown = ref
-        ? [
-            { type: "text", text },
-            { type: "image_url", image_url: { url: ref } },
-          ]
-        : text;
 
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
@@ -235,7 +173,7 @@ export class ImageGenTool implements Tool {
         },
         body: JSON.stringify({
           model: this.model,
-          messages: [{ role: "user", content }],
+          messages: [{ role: "user", content: prompt }],
           modalities: ["image", "text"],
         }),
         signal: controller.signal,
@@ -248,8 +186,7 @@ export class ImageGenTool implements Tool {
           // so in the log rather than reporting a 404 to the model as a failure.
           this.dedicatedEndpoint = true;
           console.log(`image_gen: ${this.model} живёт на /images/generations, переключаюсь`);
-          if (useReference) this.referenceDropped = true;
-          return await this.callImagesEndpoint(text, controller);
+          return await this.callImagesEndpoint(prompt, controller);
         }
         const filtered = /moderation|content_filter|blocked/i.test(errText);
         console.error(`image_gen error ${response.status} (${this.model}): ${errText.slice(0, 200)}`);
@@ -271,10 +208,9 @@ export class ImageGenTool implements Tool {
         return { error: "Запрос заблокирован модерацией (content_filter)", filter: true };
       }
       // A refusal that does not name itself: the model answers with words
-      // instead of a picture and calls it `stop`. Counted as a block, because
-      // for the caller it is one. Before this it read as "the model did not
-      // return an image", which points at the API rather than at the prompt,
-      // and the recovery step — drop the photo and try again — never ran.
+      // instead of a picture and calls it `stop`. Counted as a block, because for
+      // the caller it is one — otherwise it reads as "the model did not return an
+      // image", which points at the API rather than at the prompt.
       return { error: "Модель вернула текст вместо картинки", filter: true };
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
@@ -289,77 +225,39 @@ export class ImageGenTool implements Tool {
       return { success: false, output: "Missing required parameter: prompt" };
     }
 
-    const safe = prompt;
-
-    const objection = checkImagePrompt(safe);
+    // Appearance words are allowed here, unlike in the selfie: this is not a
+    // scene under an existing canon, it is the whole picture, and a person in it
+    // is described from scratch. Only the contradictions are still refused — two
+    // framings, two poses, two lights in one frame come back as a mess.
+    const objection = checkImagePrompt(prompt, false);
     if (objection) {
-      if (this.rejectedOnce === safe) {
+      if (this.rejectedOnce === prompt) {
         console.log("image_gen: тот же промпт отклонён во второй раз — рисую как есть");
         this.rejectedOnce = "";
       } else {
-        this.rejectedOnce = safe;
+        this.rejectedOnce = prompt;
         console.log(`image_gen: промпт отклонён — ${objection.slice(0, 70)}`);
         return { success: false, output: objection };
       }
     }
 
-    // The written canon: no photo on the wire, so the provider's "no pictures
-    // of a real person" filter has nothing to catch. The face used to travel as
-    // an image, and that image is what closed the intimate half of the range.
-    const sceneText = this.appearance ? `${this.appearance}. Scene: ${safe}` : safe;
     const { width, height } = sizeFor(String(params.format ?? ""));
-    const local = await this.tryComfy(sceneText, width, height);
+    const local = await this.tryComfy(prompt, width, height);
     if (local) {
       return { success: true, output: "Image generated successfully", mediaUrl: local };
     }
 
-    if (this.appearance) {
-      const once = await this.callModel(sceneText, false);
-      if (once.image) {
-        console.log(`image_gen OK (${this.model}, канон-текст)`);
-        return { success: true, output: "Image generated successfully", mediaUrl: once.image };
-      }
+    const cloud = await this.callModel(prompt);
+    if (cloud.image) {
+      console.log(`image_gen OK (${this.model})`);
+      return { success: true, output: "Image generated successfully", mediaUrl: cloud.image };
+    }
+    if (cloud.filter) {
       return {
         success: false,
-        output: `Провайдер отклонил сцену (${once.error ?? "unknown"}). Попробуй другую сцену или сформулируй иначе.`,
+        output: `Провайдер отклонил сцену (${cloud.error ?? "unknown"}). Попробуй другую сцену или сформулируй иначе.`,
       };
     }
-
-    const first = await this.callModel(safe, true);
-    if (first.image) {
-      const dropped = this.referenceDropped ? " (референс не поддерживается этой моделью — лицо может быть другим)" : "";
-      console.log(`image_gen OK (${this.model}${this.referenceDropped ? ", /images/generations, без референса" : ", +reference"})${dropped}`);
-      return { success: true, output: `Image generated successfully${dropped}`, mediaUrl: first.image };
-    }
-
-    // The filter trips on the *reference*, not on the prompt: a photo of a woman
-    // can be borderline on its own while the words are innocent. And the verdict
-    // is close to a coin flip — a second identical attempt regularly goes
-    // through. Dropping the face on the first refusal is what turned one filtered
-    // request into a picture of a stranger, and a stranger is not obviously a
-    // failure: it looks like a picture, so nobody asks why it is not her.
-    //
-    // So: ask again with the same reference before giving the face up. Only the
-    // second refusal means the photo cannot be used.
-    if (first.filter) {
-      const retry = await this.callModel(safe, true);
-      if (retry.image) {
-        console.log(`image_gen OK (${this.model}, +reference on retry after filter)`);
-        return { success: true, output: "Картинка готова, лицо с референса", mediaUrl: retry.image };
-      }
-      this.referenceDropped = false;
-      const second = await this.callModel(safe, false);
-      if (second.image) {
-        console.log(`image_gen OK (${this.model}, no-reference fallback after filter)`);
-        return {
-          success: true,
-          output: "Картинка готова, НО БЕЗ ЛИЦА: Google заблокировал фото дважды, лицо не сохранено. Скажи владельцу, что это не она.",
-          mediaUrl: second.image,
-        };
-      }
-      return { success: false, output: `Заблокировано модерацией и без референса: ${second.error ?? "content_filter"}` };
-    }
-
-    return { success: false, output: `Не удалось сгенерировать (${first.error ?? "unknown"}). Попробуй другую сцену.` };
+    return { success: false, output: `Не удалось сгенерировать (${cloud.error ?? "unknown"}). Попробуй другую сцену.` };
   }
 }

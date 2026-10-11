@@ -220,14 +220,15 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
   const video = (config.video as Record<string, unknown> | undefined) ?? {};
 
   /**
-   * How she looks, in words, for both picture tools.
+   * How she looks, in words, for the selfie tool's cloud path.
    *
    * Lives in `selfies` — the block that already owns her appearance (provider,
    * model, reference photo) — and is the single source of truth for it. When it
-   * is set neither tool attaches the photo, because the photo is the thing the
-   * image providers refuse to draw: measured, a lingerie reference failed even
-   * a sweater scene 7 times out of 8, and an intimate one never passed at all.
-   * Text has nothing for that filter to catch.
+   * is set the cloud path does not attach the photo, because the photo is the
+   * thing the image providers refuse to draw: measured, a lingerie reference
+   * failed even a sweater scene 7 times out of 8, and an intimate one never
+   * passed at all. Text has nothing for that filter to catch. `image_gen` does
+   * not read it — a plain picture is invented whole from its own prompt.
    */
   const appearance = str(selfies.appearance) || str(imageCfg.appearance);
 
@@ -283,7 +284,6 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
         apiKey: genKey,
         baseUrl: baseFor(genSource),
         model: genSource.model,
-        ...(appearance ? { appearance } : {}),
         ...(comfy ? { comfy } : {}),
       }),
       "keyed",
