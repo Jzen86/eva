@@ -802,11 +802,37 @@ export function registerHandlers(
   // core/pending.ts). These are the only ways to settle one, which is the
   // point: the decision comes from the owner, in a channel of their own
   // choosing, not from the same conversation that wanted the change.
+  /**
+   * Run an approved action, then let her read what came back.
+   *
+   * Approving used to just execute the command and answer "Готово: <что>" — the
+   * output went nowhere and she never saw it, so a confirmation asked for a
+   * *check* ended in a receipt: the owner approved expecting her to go and look,
+   * and nothing looked back. Now the result is handed to her, and she says what
+   * it means.
+   */
+  const confirmAndReport = async (ctx: Context, chatId: number): Promise<void> => {
+    const result = await applyPending(String(chatId));
+    console.log(`🔘 ✅ подтверждение: ${result.ok ? "выполнено" : "не вышло"} — ${result.message.slice(0, 140)}`);
+    await ctx.reply(result.message);
+    if (!result.ok || !result.output?.trim()) return;
+
+    const prompt =
+      `[Подтверждено] Женя подтвердил отложенное действие, и оно выполнено. Его вывод:\n\n` +
+      `${result.output.slice(0, 3000)}\n\n` +
+      `Коротко скажи Жене, что из этого следует — что нашла, всё ли в порядке. Не пересказывай команду.`;
+    try {
+      const reply = await handler(await toIncoming(ctx, prompt, bot.token));
+      await deliver(ctx, reply, audio);
+    } catch (err) {
+      console.error("Продолжение после подтверждения не удалось:", err instanceof Error ? err.message : err);
+    }
+  };
+
   bot.command("yes", async (ctx) => {
     const chatId = ctx.chat?.id;
     if (!chatId) return;
-    const result = await applyPending(String(chatId));
-    await ctx.reply(result.message);
+    await confirmAndReport(ctx, chatId);
   });
   bot.command("no", async (ctx) => {
     const chatId = ctx.chat?.id;
@@ -852,9 +878,7 @@ export function registerHandlers(
       .catch(() => {});
 
     if (accepted) {
-      const result = await applyPending(String(chatId));
-      console.log(`🔘 Кнопка ✅: ${result.ok ? "выполнено" : "не вышло"} — ${result.message.slice(0, 140)}`);
-      await ctx.reply(result.message);
+      await confirmAndReport(ctx, chatId);
     } else {
       const dropped = discard(String(chatId));
       console.log(`🔘 Кнопка ❌: отклонено — ${dropped?.summary ?? "нечего"}`);

@@ -134,7 +134,9 @@ export function requireApproval(
  * after being proposed lands on top of whatever happened in between instead
  * of rolling it back.
  */
-export async function applyPending(ownerId: string): Promise<{ ok: boolean; message: string }> {
+export async function applyPending(
+  ownerId: string,
+): Promise<{ ok: boolean; message: string; output?: string }> {
   const change = pending.get(ownerId);
   if (!change) {
     return { ok: false, message: "Нечего подтверждать — я ничего не предлагала." };
@@ -168,7 +170,7 @@ export async function applyPending(ownerId: string): Promise<{ ok: boolean; mess
     if (!result.success) {
       return { ok: false, message: `Не получилось: ${result.error ?? result.output}` };
     }
-    return { ok: true, message: `Готово: ${change.summary}` };
+    return { ok: true, message: `Готово: ${change.summary}`, output: result.output ?? "" };
   } catch (err) {
     return {
       ok: false,
