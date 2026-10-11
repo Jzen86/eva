@@ -184,6 +184,15 @@ const configSchema = z.object({
   voice: z.record(z.string(), z.any()).optional(),
   video: z.record(z.string(), z.any()).optional(),
   selfies: z.record(z.string(), z.any()).optional(),
+  /**
+   * Whether she writes first, and within what limits.
+   *
+   * `enabled`, per-period caps and the silences. The periods say *when* and *how
+   * often*; what she writes is hers. Kept permissive here on purpose — the shape
+   * is read and validated in `initiative.ts`, whose parser drops a bad period
+   * instead of taking the whole config down.
+   */
+  initiative: z.record(z.string(), z.any()).optional(),
   sync_so: z.record(z.string(), z.any()).optional(),
   /**
    * Powerful tools, off unless switched on here.

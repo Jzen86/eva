@@ -199,6 +199,24 @@ export function previousLiveMessage(userId: string, limit = 80): LiveMessage | n
   return previousLiveExchange(userId, limit).at(-1) ?? null;
 }
 
+/**
+ * When the owner last wrote, in ms — the initiative must not talk over him.
+ *
+ * A scheduled report is a `user` row too, so it is skipped: it is the bot's own
+ * voice, and counting it as the owner's would both mask a real silence and let a
+ * report reset the idle check. Returns null when he has never written.
+ */
+export function lastOwnerMessageAt(userId: string): number | null {
+  const row = getDB()
+    .prepare(
+      `SELECT timestamp FROM conversations
+       WHERE user_id = ? AND role = 'user' AND content NOT LIKE ?
+       ORDER BY id DESC LIMIT 1`,
+    )
+    .get(userId, `${SCHEDULED_TURN_PREFIX}%`) as { timestamp: number } | undefined;
+  return row?.timestamp ?? null;
+}
+
 /** Decode stored text parts without surfacing serialized image payloads. */
 function conversationText(content: string): string {
   try {

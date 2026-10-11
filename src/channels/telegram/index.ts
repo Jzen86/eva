@@ -1,4 +1,5 @@
 import { Bot } from "grammy";
+import fs from "node:fs";
 import { autoRetry } from "@grammyjs/auto-retry";
 import type { Channel, MessageHandler } from "../types.js";
 import type { OutgoingMessage } from "../../core/types.js";
@@ -94,8 +95,42 @@ export class TelegramChannel implements Channel {
     await this.bot?.stop();
   }
 
+  /**
+   * Send a message the bot made on its own — a scheduled report, or the
+   * initiative. Media used to be dropped here: `sendMessage` carries text and
+   * nothing else, so a picture a spontaneous turn produced would leave as a bare
+   * caption. Kept photo-shaped, which is what both picture tools make.
+   */
   async send(userId: string, message: OutgoingMessage): Promise<void> {
-    await this.bot?.api.sendMessage(parseInt(userId, 10), message.text);
+    const api = this.bot?.api;
+    if (!api) return;
+    const chatId = parseInt(userId, 10);
+    const last = message.media?.[message.media.length - 1];
+    const url = message.mediaUrl ?? last?.url;
+    const file = message.mediaPath ?? last?.path;
+    if (url || file) {
+      try {
+        const { InputFile } = await import("grammy");
+        const source =
+          file && fs.existsSync(file)
+            ? new InputFile(file)
+            : url
+              ? new InputFile(
+                  url.startsWith("data:")
+                    ? Buffer.from(url.replace(/^data:image\/[^;]+;base64,/, ""), "base64")
+                    : Buffer.from(await (await fetch(url)).arrayBuffer()),
+                  "eva.jpg",
+                )
+              : null;
+        if (source) {
+          await api.sendPhoto(chatId, source, message.text ? { caption: message.text } : {});
+          return;
+        }
+      } catch {
+        // A picture that will not send is not a reason to send nothing.
+      }
+    }
+    await api.sendMessage(chatId, message.text);
   }
 
   onMessage(handler: MessageHandler): void {

@@ -10,7 +10,8 @@ import { Engine } from "./core/engine.js";
 import { SchedulerService } from "./core/tools/scheduler.js";
 import { SchedulerStore } from "./core/tools/scheduler-store.js";
 import { getDB } from "./core/memory/db.js";
-import { SCHEDULED_TURN_PREFIX } from "./core/memory/conversations.js";
+import { SCHEDULED_TURN_PREFIX, lastOwnerMessageAt } from "./core/memory/conversations.js";
+import { parseInitiative, dueNow, loadState, saveState, markSent, localClock } from "./core/initiative.js";
 import { runStudyIfDue } from "./core/memory/study-runner.js";
 import type { LLMClient } from "./core/llm/types.js";
 import type { Channel } from "./channels/types.js";
@@ -375,6 +376,61 @@ async function main() {
     await scheduler.recoverMissed();
     scheduler.start();
     console.log("✅ Планировщик запущен");
+
+    // --- Initiative: she writes first ----------------------------------------
+    // The clock and the caps live in core/initiative.ts; what she sends is hers.
+    // Config is re-read every tick, so the owner can change the periods or switch
+    // it off without a restart. The first tick is five minutes after boot, never
+    // at once, so a restart cannot set her off mid-morning.
+    if (config.telegram?.owner_id) {
+      const initiativeOwnerId = String(config.telegram.owner_id);
+      const runInitiative = async (): Promise<void> => {
+        try {
+          const live = loadConfig() ?? config;
+          const cfg = parseInitiative(live.initiative);
+          if (!cfg || !cfg.enabled) return;
+
+          const offset = live.agent?.timezone_offset_hours ?? 0;
+          const now = Date.now();
+          const state = loadState();
+          const due = dueNow(cfg, state, now, offset, lastOwnerMessageAt(initiativeOwnerId));
+          if (!due) return;
+
+          const { minutes } = localClock(now, offset);
+          const clock = `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+          const prompt = [
+            `${SCHEDULED_TURN_PREFIX} «инициатива».`,
+            `Сейчас ${clock} — период «${due.instance.period.name}». Ты пишешь Жене сама, первой, без его запроса.`,
+            `Реши сама: написать текстом, прислать селфи (с подписью или без) — или не писать ничего, если момент не тот. Что и как — на твоё усмотрение; пусть будет по времени суток к месту.`,
+            `Одно короткое сообщение. Если решишь промолчать — ответь ровно [тишина].`,
+          ].join("\n");
+
+          const result = await engine.process({
+            channelName: "telegram",
+            userId: initiativeOwnerId,
+            text: prompt,
+            timestamp: now,
+            metadata: { scheduledTask: true },
+          });
+
+          // The moment is spent either way; only a real message resets the gap.
+          const fired = (state.instanceId === due.instance.id ? state.fired : 0) + 1;
+          if (result.text.trim() === "[тишина]") {
+            saveState({ instanceId: due.instance.id, fired, lastSentAt: state.lastSentAt });
+            console.log(`🕊 Инициатива: ${due.instance.period.name} — промолчала`);
+            return;
+          }
+          saveState(markSent(state, due.instance.id, now));
+          await channels.get("telegram")?.send(initiativeOwnerId, result);
+          console.log(`💌 Инициатива: ${due.instance.period.name} — отправлено`);
+        } catch (err) {
+          console.error("❌ Инициатива:", err instanceof Error ? err.message : err);
+        }
+      };
+      const initiativeTimer = setInterval(() => { void runInitiative(); }, 5 * 60_000);
+      initiativeTimer.unref?.();
+      console.log("💌 Инициатива: таймер запущен (раз в 5 мин)");
+    }
   }
 
   setupShutdown(scheduler, llm ?? undefined);
