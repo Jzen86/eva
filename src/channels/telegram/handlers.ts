@@ -395,6 +395,7 @@ async function sendConfirm(ctx: Context, confirm: { summary: string; reason?: st
       },
     })
     .catch(() => {});
+  console.log(`🔘 Кнопки подтверждения отправлены: ${confirm.summary.slice(0, 100)}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -836,16 +837,27 @@ export function registerHandlers(
     if (!chatId) return;
     await ctx.answerCallbackQuery().catch(() => {});
     if (currentOwner && chatId !== currentOwner) return;
-    // Take the keyboard away as soon as it is used, so a stale tap cannot fire
-    // the same decision twice.
-    await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } }).catch(() => {});
 
     const data = ctx.callbackQuery.data;
-    if (data === "pending:yes") {
+    if (data !== "pending:yes" && data !== "pending:no") return;
+
+    const accepted = data === "pending:yes";
+    const waiting = peek(String(chatId));
+    // Take the keyboard away, and rewrite the prompt into the verdict. A tap that
+    // leaves no visible mark is a tap the owner cannot tell from a dead button —
+    // which is exactly what he asked about.
+    await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } }).catch(() => {});
+    await ctx
+      .editMessageText(`${accepted ? "✅ Принято" : "❌ Отклонено"}: ${waiting?.summary ?? "—"}`)
+      .catch(() => {});
+
+    if (accepted) {
       const result = await applyPending(String(chatId));
+      console.log(`🔘 Кнопка ✅: ${result.ok ? "выполнено" : "не вышло"} — ${result.message.slice(0, 140)}`);
       await ctx.reply(result.message);
-    } else if (data === "pending:no") {
+    } else {
       const dropped = discard(String(chatId));
+      console.log(`🔘 Кнопка ❌: отклонено — ${dropped?.summary ?? "нечего"}`);
       await ctx.reply(
         dropped ? `Отклонила: ${describe(dropped)}.` : "Нечего отклонять — я ничего не предлагала.",
       );

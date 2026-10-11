@@ -131,6 +131,24 @@ const RULES: Record<string, BinaryRule> = {
     // and syncing them are writes wearing a log tool's clothes.
     writeFlags: /(^|\s)(--vacuum\S*|--rotate|--sync|--flush|--relinquish-var|--smart-relinquish-var)(\s|$|=)/,
   },
+  git: {
+    // Reading history is how she reviews her own changes. Her standing rule
+    // promises she may look at the sources and the git history — and until now
+    // the gate denied the second half, because `git` was not on any list at all.
+    //
+    // Only verbs that cannot write: history, diffs, object reads. `branch`,
+    // `remote`, `tag`, `config`, `reflog`, `stash` and everything else are NOT
+    // here, because each has a write mode under the same name — a table of them
+    // would be the fiction the rest of this file warns about. Those stay parked.
+    subcommands: [
+      "log", "show", "diff", "status", "blame", "shortlog", "rev-list",
+      "rev-parse", "describe", "ls-files", "ls-tree", "cat-file",
+      "whatchanged", "grep", "version", "help",
+    ],
+    // `git diff --output=<file>` writes a file, which is the one way a read verb
+    // reaches the disk without a redirect to catch it.
+    writeFlags: /(^|\s)--output(=|\s|$)/,
+  },
   sort: {
     // `sort -o FILE` writes the sorted output to FILE; without it, sort can only
     // reach stdout, where the redirect check already looks.
