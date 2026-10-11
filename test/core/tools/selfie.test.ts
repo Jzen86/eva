@@ -179,7 +179,7 @@ describe("SelfieTool", () => {
     const graph = generate.mock.calls[0][0] as Record<string, { inputs: Record<string, unknown> }>;
     expect(graph["5"].inputs.prompt).toContain("reference image (image 1)");
     expect(graph["5"].inputs.prompt).toContain("A woman with a balanced figure");
-    expect(graph["5"].inputs.images).toEqual({ image_1: ["6", 0] });
+    expect(graph["5"].inputs["images.image_1"]).toEqual(["6", 0]);
 
     fs.unlinkSync(file);
   });

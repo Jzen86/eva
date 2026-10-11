@@ -38,7 +38,6 @@ export function buildWorkflow(opts: ComfyGraphOptions): ComfyGraph {
         negative_prompt: "",
         resolution: 1024,
         vae: ["3", 0],
-        images: {},
       },
     },
     "7": {
@@ -65,7 +64,14 @@ export function buildWorkflow(opts: ComfyGraphOptions): ComfyGraph {
 
   if (opts.referenceName) {
     graph["6"] = { class_type: "LoadImage", inputs: { image: opts.referenceName } };
-    (graph["5"].inputs as Record<string, unknown>).images = { image_1: ["6", 0] };
+    // The reference rides in as a FLAT autogrow key, `images.image_1` — not as
+    // `images: { image_1: … }`. ComfyUI accepts both without a word of complaint,
+    // but the nested form is silently dropped by TextEncodeQwenImage21: the job
+    // runs to completion, the tool logs "+reference", and the picture comes out a
+    // stranger because no image ever reached the encoder. Measured side by side on
+    // one seed: nested → a different woman, flat → the reference's face. Keep it
+    // flat; the `images` object that used to sit here is what broke the selfie.
+    (graph["5"].inputs as Record<string, unknown>)["images.image_1"] = ["6", 0];
   }
 
   return graph;
