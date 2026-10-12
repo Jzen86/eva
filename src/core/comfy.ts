@@ -34,21 +34,45 @@ export interface ComfyGraphOptions {
  * 2:3 is the tallest frame, for a full body that should fill the shot; 9:16 fills
  * a phone screen; 3:4 the usual portrait; 4:5 the feed-shaped one that keeps a
  * little more in frame; 1:1 the close-up square; 4:3 when the scene needs width.
+ *
+ * `label` is the word the tool descriptions use for the format, and those
+ * descriptions are built from this table (`formatList`) rather than written
+ * beside it. The second copy is what drifted, twice: first the tools promised
+ * three formats while the table had six, then they kept promising 5:4 after 5:4
+ * was gone and said nothing about 9:16 — a request for 5:4 fell silently back to
+ * the default, and nobody asked for 9:16 because nobody knew it existed. Eva
+ * found the second one by reading the file. A list that cannot be written twice
+ * cannot go stale.
  */
 export const FORMATS = {
-  "1:1": { width: 1024, height: 1024 },
-  "2:3": { width: 1024, height: 1536 },
-  "3:4": { width: 1024, height: 1376 },
-  "4:5": { width: 1024, height: 1280 },
-  "9:16": { width: 1024, height: 1824 },
-  "4:3": { width: 1376, height: 1024 },
+  "1:1": { width: 1024, height: 1024, label: "квадрат" },
+  "2:3": { width: 1024, height: 1536, label: "высокий" },
+  "3:4": { width: 1024, height: 1376, label: "вертикаль" },
+  "4:5": { width: 1024, height: 1280, label: "портрет" },
+  "9:16": { width: 1024, height: 1824, label: "высокий, под телефон" },
+  "4:3": { width: 1376, height: 1024, label: "горизонталь" },
 } as const;
 
 export type AspectFormat = keyof typeof FORMATS;
 
 /** Size for a named format; anything unknown falls back to 1:1. */
 export function sizeFor(format: string | undefined): { width: number; height: number } {
-  return FORMATS[(format ?? "") as AspectFormat] ?? FORMATS["1:1"];
+  const frame = FORMATS[(format ?? "") as AspectFormat] ?? FORMATS["1:1"];
+  // Only the two numbers: this gets spread into the graph, and a stray field
+  // would ride along into the workflow.
+  return { width: frame.width, height: frame.height };
+}
+
+/**
+ * The formats as one phrase for the tool descriptions: "1:1 (квадрат), 2:3 (высокий), …".
+ *
+ * Built from the table, never typed out beside it — see the note on `FORMATS`
+ * for the two times a hand-written copy went stale.
+ */
+export function formatList(): string {
+  return (Object.keys(FORMATS) as AspectFormat[])
+    .map((key) => `${key} (${FORMATS[key].label})`)
+    .join(", ");
 }
 
 /**

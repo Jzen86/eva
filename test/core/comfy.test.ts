@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildWorkflow, sizeFor, cloudSizeFor, COMFY_UNET, FORMATS } from "../../src/core/comfy.js";
+import { buildWorkflow, sizeFor, cloudSizeFor, COMFY_UNET } from "../../src/core/comfy.js";
 
 describe("buildWorkflow", () => {
   it("builds a text-only graph with no reference node", () => {
@@ -57,8 +57,11 @@ describe("buildWorkflow", () => {
   });
 
   it("falls back to 1:1 on an unknown format", () => {
-    expect(sizeFor("16:9")).toEqual(FORMATS["1:1"]);
-    expect(sizeFor(undefined)).toEqual(FORMATS["1:1"]);
+    // Literal, not FORMATS["1:1"]: the table now carries a label as well as a
+    // size, and `sizeFor` deliberately returns only the two numbers — it gets
+    // spread into the graph.
+    expect(sizeFor("16:9")).toEqual({ width: 1024, height: 1024 });
+    expect(sizeFor(undefined)).toEqual({ width: 1024, height: 1024 });
   });
 
   it("sends the cloud a size its endpoints accept", () => {

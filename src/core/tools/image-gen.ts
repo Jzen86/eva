@@ -1,6 +1,6 @@
 import type { Tool, ToolResult } from "./types.js";
 import { checkImagePrompt } from "./prompt-check.js";
-import { buildWorkflow, sizeFor, cloudSizeFor, type ComfyClient } from "../comfy.js";
+import { buildWorkflow, sizeFor, cloudSizeFor, formatList, type ComfyClient } from "../comfy.js";
 
 /** Working OpenRouter image model (gemini-2.0-flash-exp:free no longer exists). */
 const MODEL = "google/gemini-2.5-flash-image";
@@ -81,7 +81,7 @@ export class ImageGenTool implements Tool {
     "Формат кадра задаётся параметром format — на своём (локальном) пути он держится точно. Но пиши художественно: сцена, поза и свет важнее перечисления частей тела.";
   parameters = [
     { name: "prompt", type: "string", description: "Full description of the picture (in English). For a person, write the whole of them — face, figure, colours, pose, clothes; for anything else, whatever is in frame.", required: true },
-    { name: "format", type: "string", description: "Ориентация: 1:1 (квадрат, по умолчанию), 2:3 (высокий), 3:4 (вертикаль), 4:5 (портрет), 4:3 (горизонталь) или 5:4 (альбом). Выбери под сцену.", required: false },
+    { name: "format", type: "string", description: `Ориентация: ${formatList()} (по умолчанию 1:1). Выбери под сцену.`, required: false },
   ];
 
   private apiKey: string;

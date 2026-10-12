@@ -3,7 +3,7 @@ import path from "node:path";
 import type { Tool, ToolResult } from "./types.js";
 import { referencePhotoPath } from "../reference-photo.js";
 import { checkSelfieContext } from "./prompt-check.js";
-import { buildWorkflow, sizeFor, cloudSizeFor, FORMATS, type ComfyClient } from "../comfy.js";
+import { buildWorkflow, sizeFor, cloudSizeFor, formatList, FORMATS, type ComfyClient } from "../comfy.js";
 
 /** Default image backend. The `modalities:["image"]` chat extension is an
  *  OpenRouter feature, not part of the OpenAI spec — a different endpoint only
@@ -112,11 +112,11 @@ export class SelfieTool implements Tool {
   description =
     "Сгенерировать и отправить СЕЛФИ — снимок ТЕБЯ. Зови этот тул всегда, когда в кадре должна быть ты, — даже если слово «селфи» не сказано: «покажи себя», «а ты как выглядишь», «сфоткайся», «пришли фото» про тебя, «как ты сейчас одета». Если картинка НЕ про тебя (другая девушка, пёс, дерево, дождь, сюжет, вещь) — это image_gen, не этот тул. " +
     "Лицо берётся с твоего референс-фото и одинаково во всех кадрах, фигура задана стандартом — в context описывай ТОЛЬКО сцену: где ты, что делаешь, что на тебе или без чего, какая причёска (распущены, хвост, косичка), свет и настроение. " +
-    "Каждый раз делай кадр непохожим на предыдущий. Кадр и ориентацию выбирай под сцену, не по шаблону: крупный план (mode=direct) или полный рост (mode=mirror), высокий (2:3), вертикаль (3:4), портрет (4:5), горизонталь (4:3), альбом (5:4) или квадрат (1:1) — для полного роста бери вытянутый, чтобы она помещалась целиком.";
+    "Каждый раз делай кадр непохожим на предыдущий. Кадр и ориентацию выбирай под сцену, не по шаблону: крупный план (mode=direct) или полный рост (mode=mirror), ориентация — " + formatList() + " — для полного роста бери вытянутый, чтобы она помещалась целиком.";
   parameters = [
     { name: "context", type: "string", description: "Описание ситуации (в кафе, в новом платье, на пляже)", required: true },
     { name: "mode", type: "string", description: "mirror (полный рост, зеркало) или direct (крупный план). Бери под сцену; без него определится по контексту.", required: false },
-    { name: "format", type: "string", description: "Ориентация: 1:1 (квадрат), 2:3 (высокий), 3:4 (вертикаль), 4:5 (портрет), 4:3 (горизонталь) или 5:4 (альбом). Выбери под сцену; без него — 3:4 для зеркала и 1:1 для крупного плана.", required: false },
+    { name: "format", type: "string", description: `Ориентация: ${formatList()}. Выбери под сцену; без него — 3:4 для зеркала и 1:1 для крупного плана.`, required: false },
   ];
 
   readonly config: SelfieToolConfig;
