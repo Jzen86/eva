@@ -58,8 +58,15 @@ export const MAX_SAME_TOOL = 5;
  * `git diff`, then the sources it names — all through `shell`, one command at a
  * time. Five stopped it at the sixth call on 11.10 and again on 13.10, and the
  * report ended with "про Задрота не успела — на меня свалился лимит на команды".
- * Twelve leaves room for the job and still stops. The idle periods of the day
- * are not what bounds this either — `MAX_TURNS` and the five-minute budget do.
+ *
+ * Twelve is evidence, not taste: on 11.10 she was still firing `shell` calls
+ * when the old check caught her at the ninth, so the job needs at least nine and
+ * twelve is nine plus slack. That is also how to re-judge this later — if a
+ * report is once cut at twelve, the ceiling is what to raise, not the task text
+ * to cut down; if the reports never come near twelve, it is room nobody uses and
+ * five was enough after all. The idle periods of the day are not what bounds
+ * this either: `MAX_TURNS` and the five-minute budget do, and those are
+ * unchanged.
  */
 export const MAX_SAME_TOOL_SERVICE = 12;
 const PROCESS_TIMEOUT = 300_000; // 5 minutes — soft budget, triggers graceful wrap-up
