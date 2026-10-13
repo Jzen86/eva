@@ -76,8 +76,8 @@ export class TelegramChannel implements Channel {
     const commands = [
       { command: "help", description: "Что она умеет" },
       { command: "status", description: "Состояние: модель, память, задачи" },
-      { command: "photo", description: "Показать фото, которое сейчас её лицо" },
-      { command: "setphoto", description: "Сменить фото: скинь его с этой подписью" },
+      { command: "photo", description: "Показать фото, которое сейчас её лицо (/photo me — твоё)" },
+      { command: "setphoto", description: "Сменить фото: скинь его с этой подписью (/setphoto me — твоё)" },
       { command: "selfie", description: "Селфи (или спроси её словами)" },
       { command: "persona", description: "Собрать её личность заново" },
       { command: "voice", description: "Голосовое сообщение" },

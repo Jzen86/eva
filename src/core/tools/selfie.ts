@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Tool, ToolResult } from "./types.js";
-import { referencePhotoPath } from "../reference-photo.js";
+import { referencePhotoPath, ownerReferencePhotoPath } from "../reference-photo.js";
 import { checkSelfieContext } from "./prompt-check.js";
 import { buildWorkflow, sizeFor, cloudSizeFor, formatList, FORMATS, type ComfyClient } from "../comfy.js";
 
@@ -52,6 +52,22 @@ function buildPrompt(context: string, mode: "mirror" | "direct", appearance = ""
   return `${opener}${figure} A close-up selfie taken by herself, ${context}, direct eye contact with the camera, looking straight into the lens, phone held at arm's length, face fully visible, natural and casual, realistic photo.`;
 }
 
+/**
+ * The prompt for a frame with both of them in it.
+ *
+ * Same reason as FACE_FROM_REFERENCE: the local graph is handed two photos and
+ * has to be told which part of the picture comes from which. It names both faces
+ * first — hers is image 1, his is image 2 — and the scene (`context`) comes last,
+ * so the words say what they are doing rather than who they are.
+ */
+const PAIR_FACES =
+  "Two people in one photo. The woman is the person from image 1: keep her exact face. The man is the person from image 2: keep his exact face. Do not swap, blend or merge the faces.";
+
+function buildPairPrompt(context: string, body = ""): string {
+  const figure = body ? ` The woman's figure: ${body}.` : "";
+  return `${PAIR_FACES}${figure} ${context}. Photorealistic photo of the two of them together, both fully in frame, natural.`;
+}
+
 export interface SelfieToolConfig {
   referencePhotoUrl?: string;
   /** OpenRouter API key. */
@@ -73,6 +89,17 @@ export interface SelfieToolConfig {
    * the default, because the file is what exists.
    */
   referencePath?: string;
+  /**
+   * The owner's photo on disk, for a frame that has both of them in it.
+   *
+   * A separate file from `referencePath` on purpose: replacing his photo must
+   * not change hers, and vice versa. Missing means a pair frame cannot be drawn
+   * — and, unlike her selfie, it does not fall back to the cloud at all, because
+   * a provider will not take a photo of a real person: that refusal is colour,
+   * not shape, and every pair frame is built on his face. `with_owner` on the
+   * tool reads this path; nothing else does.
+   */
+  ownerReferencePath?: string;
   /**
    * A written description of how she looks, used instead of the photo.
    *
@@ -112,11 +139,13 @@ export class SelfieTool implements Tool {
   description =
     "Сгенерировать и отправить СЕЛФИ — снимок ТЕБЯ. Зови этот тул всегда, когда в кадре должна быть ты, — даже если слово «селфи» не сказано: «покажи себя», «а ты как выглядишь», «сфоткайся», «пришли фото» про тебя, «как ты сейчас одета». Если картинка НЕ про тебя (другая девушка, пёс, дерево, дождь, сюжет, вещь) — это image_gen, не этот тул. " +
     "Лицо берётся с твоего референс-фото и одинаково во всех кадрах, фигура задана стандартом — в context описывай ТОЛЬКО сцену: где ты, что делаешь, что на тебе или без чего, какая причёска (распущены, хвост, косичка), свет и настроение. " +
-    "Каждый раз делай кадр непохожим на предыдущий. Кадр и ориентацию выбирай под сцену, не по шаблону: крупный план (mode=direct) или полный рост (mode=mirror), ориентация — " + formatList() + " — для полного роста бери вытянутый, чтобы она помещалась целиком.";
+    "Каждый раз делай кадр непохожим на предыдущий. Кадр и ориентацию выбирай под сцену, не по шаблону: крупный план (mode=direct) или полный рост (mode=mirror), ориентация — " + formatList() + " — для полного роста бери вытянутый, чтобы она помещалась целиком. " +
+    "ЕСЛИ В КАДРЕ ВЫ ВДВОЁМ — владелец просит «мы», «ты и я», «сфоткай нас», «обними меня», «покажи нас вместе» — поставь with_owner=true: тогда на кадре будете оба, его лицо берётся с его фото, и context описывает ТОЛЬКО сцену (где вы, что делаете — стоите рядом, обнимаетесь, целуетесь). Для общего плана вдвоём ставь format 4:3 или 1:1, чтобы оба помещались. Такой кадр рисуется только локально.";
   parameters = [
     { name: "context", type: "string", description: "Описание ситуации (в кафе, в новом платье, на пляже)", required: true },
     { name: "mode", type: "string", description: "mirror (полный рост, зеркало) или direct (крупный план). Бери под сцену; без него определится по контексту.", required: false },
     { name: "format", type: "string", description: `Ориентация: ${formatList()}. Выбери под сцену; без него — 3:4 для зеркала и 1:1 для крупного плана.`, required: false },
+    { name: "with_owner", type: "boolean", description: "true — на кадре вы вдвоём (она и владелец). По умолчанию false — только она.", required: false },
   ];
 
   readonly config: SelfieToolConfig;
@@ -203,6 +232,15 @@ export class SelfieTool implements Tool {
       return { success: false, output: "Не указан контекст для селфи", error: "Missing context" };
     }
 
+    // A frame with both of them is a different job: two references in, one
+    // picture out, and no cloud path at all. The image providers refuse a photo
+    // of a real person, and every pair frame is built on one — so it is the
+    // local ComfyUI or an honest refusal, never a stranger's face. Checked
+    // before the key, because a pair frame needs no key.
+    if (params.with_owner === true || params.with_owner === "true") {
+      return this.generatePair(context, String(params.format ?? ""));
+    }
+
     if (!this.config.openrouterApiKey) {
       return { success: false, output: "Для генерации селфи нужен ключ OpenRouter. Сохрани через self_config." };
     }
@@ -241,6 +279,68 @@ export class SelfieTool implements Tool {
     }
 
     return this.generateOpenRouter(prompt, mode, cloudSizeFor({ width, height }));
+  }
+
+  /** MIME by extension, the way the selfie path has always guessed it. */
+  private mimeOf(file: string): string {
+    const ext = path.extname(file).toLowerCase();
+    return ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
+  }
+
+  /**
+   * The two of them in one frame.
+   *
+   * Local ComfyUI only. Two references go in — hers as image 1, his as image 2 —
+   * and the prompt names which face is which. The cloud is not an option here,
+   * not even as a last resort: the providers refuse a photo of a real person,
+   * and a pair frame is exactly that, twice over. A missing ComfyUI or a missing
+   * owner photo is an honest refusal ("not now", "no his photo yet"), which is
+   * better than a picture of two strangers with her name on it.
+   */
+  private async generatePair(context: string, format: string): Promise<ToolResult> {
+    const comfy = this.config.comfy;
+    if (!comfy) {
+      return {
+        success: false,
+        output: "Парный кадр рисуется только локально, а ComfyUI сейчас недоступен. Попробуй позже.",
+      };
+    }
+    const ownerFile = this.config.ownerReferencePath ?? ownerReferencePhotoPath();
+    if (!fs.existsSync(ownerFile)) {
+      return {
+        success: false,
+        output: "Нет фото владельца — пришли его с подписью /setphoto me, и я смогу снять нас двоих.",
+      };
+    }
+    const herFile = this.config.referencePath ?? defaultReferenceFile();
+    if (!fs.existsSync(herFile)) {
+      return { success: false, output: "Нет моего референс-фото — сначала /setphoto с моим лицом." };
+    }
+
+    const prompt = buildPairPrompt(context, this.config.body ?? "");
+    const { width, height } = sizeFor(format);
+    try {
+      const herName = await comfy.upload(fs.readFileSync(herFile), `eva_ref${path.extname(herFile) || ".jpg"}`, this.mimeOf(herFile));
+      const ownerName = await comfy.upload(fs.readFileSync(ownerFile), `eva_owner${path.extname(ownerFile) || ".jpg"}`, this.mimeOf(ownerFile));
+      const image = await comfy.generate(
+        buildWorkflow({
+          prompt,
+          referenceName: herName,
+          referenceName2: ownerName,
+          filenamePrefix: "eva/couple",
+          width,
+          height,
+        }),
+      );
+      console.log("📸 Парный кадр OK (comfy, qwen-image-2.1-turbo, +2 референса)");
+      return { success: true, output: "Парный кадр сгенерирован", mediaUrl: image };
+    } catch (err) {
+      console.error(`📸 Парный кадр: comfy failed: ${err instanceof Error ? err.message : err}`);
+      return {
+        success: false,
+        output: `Не вышло сгенерировать парный кадр: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
   }
 
   /** Local ComfyUI first: the reference photo goes in as the face, the canon as words. */

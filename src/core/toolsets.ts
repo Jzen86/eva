@@ -34,7 +34,7 @@ import { FilesTool } from "./tools/files.js";
 import { HttpTool } from "./tools/http.js";
 import { BrowserTool } from "./tools/browser.js";
 import { SelfieTool } from "./tools/selfie.js";
-import { referencePhotoPath, hasReferencePhoto } from "./reference-photo.js";
+import { referencePhotoPath, ownerReferencePhotoPath, hasReferencePhoto } from "./reference-photo.js";
 import { VoiceTool, voiceBackendAvailable } from "./tools/voice.js";
 import { ImageGenTool } from "./tools/image-gen.js";
 import { ComfyClient } from "./comfy.js";
@@ -301,6 +301,7 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
   // install has the photo on disk and no URL written anywhere, and the selfie
   // then drew a stranger.
   const referenceFile = referencePhotoPath();
+  const ownerReferenceFile = ownerReferencePhotoPath();
   const hasReference = hasReferencePhoto() || Boolean(str(selfies.reference_photo_url));
   const selfieKey = keyFor(selfieSource);
   // A canon is as good as a photo for getting the tool registered: with it the
@@ -310,6 +311,7 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
       new SelfieTool({
         referencePhotoUrl: str(selfies.reference_photo_url) || undefined,
         referencePath: referenceFile,
+        ownerReferencePath: ownerReferenceFile,
         openrouterApiKey: selfieKey,
         openrouterModel: selfieSource.model,
         imageBaseUrl: baseFor(selfieSource) || undefined,

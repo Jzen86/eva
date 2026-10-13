@@ -27,6 +27,26 @@ describe("buildWorkflow", () => {
     expect(g["10"].inputs.filename_prefix).toBe("eva/selfie");
   });
 
+  it("feeds a second reference into EditPlus through image2", () => {
+    // A frame with both of them: image 1 is her, image 2 is the owner. Same
+    // node, one more image — the prompt is what names which face is which, and
+    // the graph stays the graph it was for a lone selfie.
+    const g = buildWorkflow({
+      prompt: "x",
+      seed: 1,
+      referenceName: "her.jpg",
+      referenceName2: "owner.jpg",
+      filenamePrefix: "eva/couple",
+    });
+    expect(g["6"]).toEqual({ class_type: "LoadImage", inputs: { image: "her.jpg" } });
+    expect(g["11"]).toEqual({ class_type: "LoadImage", inputs: { image: "owner.jpg" } });
+    expect(g["5"].class_type).toBe("TextEncodeQwenImageEditPlus");
+    expect(g["5"].inputs.image1).toEqual(["6", 0]);
+    expect(g["5"].inputs.image2).toEqual(["11", 0]);
+    expect(g["7"].inputs.negative).toEqual(["5", 0]);
+    expect(g["10"].inputs.filename_prefix).toBe("eva/couple");
+  });
+
   it("never reuses the owner's custom nodes", () => {
     const g = buildWorkflow({ prompt: "x", seed: 1, referenceName: "r.jpg" });
     const classes = Object.values(g).map((n) => n.class_type);

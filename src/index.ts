@@ -20,7 +20,7 @@ import { userFilesPath } from "./core/user-files.js";
 import { describeBrowserInstall } from "./core/tools/browser.js";
 import { runDoctor, formatReport } from "./core/doctor.js";
 import { runInit, nextSteps, InitCancelled } from "./core/init.js";
-import { referencePhotoPath, hasReferencePhoto } from "./core/reference-photo.js";
+import { referencePhotoPath, ownerReferencePhotoPath, hasReferencePhoto, hasOwnerReferencePhoto } from "./core/reference-photo.js";
 import { archiveThenDeliver } from "./core/watch-reports.js";
 import type { EmbeddingEndpoint } from "./core/memory/dedup.js";
 
@@ -232,7 +232,14 @@ async function main() {
         });
         console.log(`🔒 Owner ID ${chatId} сохранён в конфиг`);
       };
-      telegram.onSetReferencePhoto = (photoPath) => {
+      telegram.onSetReferencePhoto = (photoPath, who) => {
+        // Her face and the owner's are different files. Routing his photo into
+        // `setReferencePhoto` would make her own selfie start drawing him — the
+        // kind is the whole reason this callback takes two arguments.
+        if (who === "owner") {
+          console.log(`📸 Фото владельца обновлено: ${photoPath.slice(0, 60)}`);
+          return;
+        }
         toolset.instances.selfie?.setReferencePhoto(photoPath);
         console.log(`📸 Референсное фото обновлено: ${photoPath.slice(0, 60)}`);
       };
@@ -270,6 +277,9 @@ async function main() {
       if (!toolset.instances.selfie?.config.referencePhotoUrl && hasReferencePhoto()) {
         toolset.instances.selfie?.setReferencePhoto(savedRef);
         console.log("📸 Референсное фото: ~/.eva/reference.jpg");
+      }
+      if (hasOwnerReferencePhoto()) {
+        console.log(`📸 Фото владельца: ${ownerReferencePhotoPath()}`);
       }
       console.log("✅ Telegram бот запущен");
     } catch (err) {

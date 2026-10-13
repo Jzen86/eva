@@ -8,6 +8,10 @@ import {
   hasReferencePhoto,
   describeReferencePhoto,
   saveReferencePhoto,
+  ownerReferencePhotoPath,
+  hasOwnerReferencePhoto,
+  saveOwnerReferencePhoto,
+  describeOwnerReferencePhoto,
   ReferencePhotoError,
 } from "../../src/core/reference-photo.js";
 
@@ -139,5 +143,47 @@ describe("saveReferencePhoto", () => {
 
   it("accepts an uppercase extension, because phones do that too", () => {
     expect(() => saveReferencePhoto(write("P.JPEG"), configPath)).not.toThrow();
+  });
+});
+
+describe("the owner's photo", () => {
+  it("lives in its own file, so one face never overwrites the other", () => {
+    // Hers and his are separate files with separate lifetimes: replacing one
+    // must never touch the other. That is the whole reason the kind is a
+    // parameter here rather than a second copy of this module.
+    expect(ownerReferencePhotoPath(configPath)).toBe(path.join(dir, "owner.jpg"));
+    saveReferencePhoto(write("her.jpg", Buffer.from("her")), configPath);
+    saveOwnerReferencePhoto(write("him.jpg", Buffer.from("him")), configPath);
+    expect(fs.readFileSync(path.join(dir, "reference.jpg")).toString()).toBe("her");
+    expect(fs.readFileSync(path.join(dir, "owner.jpg")).toString()).toBe("him");
+    expect(hasReferencePhoto(configPath)).toBe(true);
+    expect(hasOwnerReferencePhoto(configPath)).toBe(true);
+  });
+
+  it("is independent: his photo does not imply hers", () => {
+    saveOwnerReferencePhoto(write("him.jpg"), configPath);
+    expect(hasOwnerReferencePhoto(configPath)).toBe(true);
+    expect(hasReferencePhoto(configPath)).toBe(false);
+  });
+
+  it("keeps a backup of the previous owner photo, the same as hers", () => {
+    saveOwnerReferencePhoto(write("him1.jpg", Buffer.from("one")), configPath);
+    saveOwnerReferencePhoto(write("him2.jpg", Buffer.from("two")), configPath);
+    expect(fs.readFileSync(path.join(dir, "owner.prev.jpg")).toString()).toBe("one");
+  });
+
+  it("describes his photo by path and size, never the photo", () => {
+    expect(describeOwnerReferencePhoto(configPath)).toBe("нет");
+    saveOwnerReferencePhoto(write("him.jpg"), configPath);
+    const text = describeOwnerReferencePhoto(configPath);
+    expect(text).toContain("owner.jpg");
+    expect(text).toMatch(/\d+ КБ/);
+  });
+
+  it("refuses a non-image for him just as it does for her", () => {
+    expect(() => saveOwnerReferencePhoto(write("config.yaml", "not a photo"), configPath)).toThrow(
+      /не картинка/i,
+    );
+    expect(fs.existsSync(path.join(dir, "owner.jpg"))).toBe(false);
   });
 });

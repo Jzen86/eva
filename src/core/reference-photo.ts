@@ -16,31 +16,74 @@
  * `~/.eva/` beside the config, never in the repository, and it is optional: no
  * photo means no selfies until one arrives, which is a missing feature rather
  * than a broken install.
+ *
+ * There are two of them now. `self` is the face the bot wears — the woman the
+ * selfie draws. `owner` is the person on the other side of the chat, kept for
+ * the one thing a photo of him is for: a frame with both of them in it. They
+ * are separate files with separate lifetimes, and replacing one must never
+ * touch the other — which is why the kind is a parameter of the functions here
+ * rather than a second copy of this module.
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import { getConfigPath } from "./config.js";
 
+/** Whose face a file holds: `self` is the bot's, `owner` is the human's. */
+export type ReferenceKind = "self" | "owner";
+
 /**
- * Where the photo lives: beside the config.
+ * The filename for each kind.
+ *
+ * Deliberately flat, beside the config rather than in a directory of their own:
+ * `EVA_CONFIG_PATH` can point the whole install elsewhere, and every path here
+ * derives from the config's own directory. One rule for both ends: the config's
+ * directory, or nothing.
+ */
+const REFERENCE_FILES: Record<ReferenceKind, string> = {
+  self: "reference.jpg",
+  owner: "owner.jpg",
+};
+
+/**
+ * Where a photo lives: beside the config.
  *
  * Beside, not in a directory of its own. `EVA_CONFIG_PATH` can point the whole
  * install elsewhere, and a photo that init wrote to `~/.eva` while the running
  * bot looked in `/etc/eva` is a photo that exists and is never seen. One rule
  * for both ends: the config's directory, or nothing.
  */
+export function referencePhotoPathFor(kind: ReferenceKind, configPath?: string): string {
+  return path.join(path.dirname(configPath ?? getConfigPath()), REFERENCE_FILES[kind]);
+}
+
+/** The bot's own face: the woman the selfie draws. */
 export function referencePhotoPath(configPath?: string): string {
-  return path.join(path.dirname(configPath ?? getConfigPath()), "reference.jpg");
+  return referencePhotoPathFor("self", configPath);
+}
+
+/** The owner's face, for the frame that has both of them in it. */
+export function ownerReferencePhotoPath(configPath?: string): string {
+  return referencePhotoPathFor("owner", configPath);
 }
 
 /** Whether there is a photo to use. */
-export function hasReferencePhoto(configPath?: string): boolean {
+export function hasReferencePhotoFor(kind: ReferenceKind, configPath?: string): boolean {
   try {
-    return fs.statSync(referencePhotoPath(configPath)).size > 0;
+    return fs.statSync(referencePhotoPathFor(kind, configPath)).size > 0;
   } catch {
     return false;
   }
+}
+
+/** Whether the bot's own photo is in place. */
+export function hasReferencePhoto(configPath?: string): boolean {
+  return hasReferencePhotoFor("self", configPath);
+}
+
+/** Whether the owner's photo is in place. */
+export function hasOwnerReferencePhoto(configPath?: string): boolean {
+  return hasReferencePhotoFor("owner", configPath);
 }
 
 /**
@@ -52,14 +95,22 @@ export function hasReferencePhoto(configPath?: string): boolean {
  * was. Two of those in a row looked like the tool ignoring him. Showing when it
  * was last written makes a stale one obvious on sight.
  */
-export function describeReferencePhoto(configPath?: string): string {
+export function describeReferencePhotoFor(kind: ReferenceKind, configPath?: string): string {
   try {
-    const st = fs.statSync(referencePhotoPath(configPath));
+    const st = fs.statSync(referencePhotoPathFor(kind, configPath));
     const when = st.mtime.toISOString().slice(0, 16).replace("T", " ");
-    return `${referencePhotoPath(configPath)} (${Math.round(st.size / 1024)} КБ, заменено ${when} UTC)`;
+    return `${referencePhotoPathFor(kind, configPath)} (${Math.round(st.size / 1024)} КБ, заменено ${when} UTC)`;
   } catch {
     return "нет";
   }
+}
+
+export function describeReferencePhoto(configPath?: string): string {
+  return describeReferencePhotoFor("self", configPath);
+}
+
+export function describeOwnerReferencePhoto(configPath?: string): string {
+  return describeReferencePhotoFor("owner", configPath);
 }
 
 /** Extensions we accept, judged by what the image actually is. */
@@ -73,9 +124,13 @@ export class ReferencePhotoError extends Error {
 }
 
 /** Where the previous photo is kept, so a swap is not a one-way door. */
+export function previousReferencePhotoPathFor(kind: ReferenceKind, configPath?: string): string {
+  const current = referencePhotoPathFor(kind, configPath);
+  return path.join(path.dirname(current), `${path.basename(current, path.extname(current))}.prev${path.extname(current)}`);
+}
+
 export function previousReferencePhotoPath(configPath?: string): string {
-  const current = referencePhotoPath(configPath);
-  return path.join(path.dirname(current), `reference.prev${path.extname(current)}`);
+  return previousReferencePhotoPathFor("self", configPath);
 }
 
 /**
@@ -90,14 +145,14 @@ export function previousReferencePhotoPath(configPath?: string): string {
  *
  * Returns where the photo went.
  */
-export function writeReferencePhoto(buffer: Buffer, configPath?: string): string {
+export function writeReferencePhotoFor(kind: ReferenceKind, buffer: Buffer, configPath?: string): string {
   if (buffer.length === 0) {
     throw new ReferencePhotoError("Файл пустой");
   }
-  const dest = referencePhotoPath(configPath);
+  const dest = referencePhotoPathFor(kind, configPath);
   try {
     if (fs.statSync(dest).size > 0) {
-      const previous = previousReferencePhotoPath(configPath);
+      const previous = previousReferencePhotoPathFor(kind, configPath);
       fs.copyFileSync(dest, previous);
       try {
         fs.chmodSync(previous, 0o600);
@@ -119,6 +174,15 @@ export function writeReferencePhoto(buffer: Buffer, configPath?: string): string
   return dest;
 }
 
+export function writeReferencePhoto(buffer: Buffer, configPath?: string): string {
+  return writeReferencePhotoFor("self", buffer, configPath);
+}
+
+/** Save the owner's photo. Same rules as hers — separate file, separate backup. */
+export function writeOwnerReferencePhoto(buffer: Buffer, configPath?: string): string {
+  return writeReferencePhotoFor("owner", buffer, configPath);
+}
+
 /**
  * Copy a photo into place.
  *
@@ -126,7 +190,7 @@ export function writeReferencePhoto(buffer: Buffer, configPath?: string): string
  * extension that is not an image — a wrong path is a typo the owner can fix,
  * and copying `~/.ssh/id_rsa` into `reference.jpg` on his word is not one.
  */
-export function saveReferencePhoto(source: string, configPath?: string): string {
+export function saveReferencePhotoFor(kind: ReferenceKind, source: string, configPath?: string): string {
   const src = path.resolve(source);
   let st: fs.Stats;
   try {
@@ -146,5 +210,13 @@ export function saveReferencePhoto(source: string, configPath?: string): string 
     );
   }
 
-  return writeReferencePhoto(fs.readFileSync(src), configPath);
+  return writeReferencePhotoFor(kind, fs.readFileSync(src), configPath);
+}
+
+export function saveReferencePhoto(source: string, configPath?: string): string {
+  return saveReferencePhotoFor("self", source, configPath);
+}
+
+export function saveOwnerReferencePhoto(source: string, configPath?: string): string {
+  return saveReferencePhotoFor("owner", source, configPath);
 }

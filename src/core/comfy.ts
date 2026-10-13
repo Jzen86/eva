@@ -18,6 +18,15 @@ export interface ComfyGraphOptions {
   seed?: number;
   /** Uploaded reference image name, as returned by /upload/image. */
   referenceName?: string;
+  /**
+   * A second uploaded reference, for a frame with two people in it.
+   *
+   * `TextEncodeQwenImageEditPlus` takes up to three images, and its whole point
+   * is multi-image editing: image 1 is the bot, image 2 is the owner, and the
+   * prompt says which face comes from which. One reference (the selfie) leaves
+   * this unset and the graph is exactly what it was.
+   */
+  referenceName2?: string;
   filenamePrefix?: string;
   /** Output size. Defaults to 1024×1024 (1:1). */
   width?: number;
@@ -94,6 +103,8 @@ export type ComfyGraph = Record<string, { class_type: string; inputs: Record<str
 /** The picture graph: text-to-image alone, or reference-editing when a photo is given. */
 export function buildWorkflow(opts: ComfyGraphOptions): ComfyGraph {
   const hasRef = Boolean(opts.referenceName);
+  const hasRef2 = Boolean(opts.referenceName2);
+  const anyRef = hasRef || hasRef2;
   const graph: ComfyGraph = {
     "1": { class_type: "UNETLoader", inputs: { unet_name: COMFY_UNET, weight_dtype: "default" } },
     "2": { class_type: "CLIPLoader", inputs: { clip_name: COMFY_CLIP, type: "qwen_image", device: "default" } },
@@ -112,10 +123,16 @@ export function buildWorkflow(opts: ComfyGraphOptions): ComfyGraph {
     //
     // Without a reference (image_gen) there is nothing to edit, so the 21-encoder
     // is the plain text-to-image path, negative prompt and all.
-    "5": hasRef
+    "5": anyRef
       ? {
           class_type: "TextEncodeQwenImageEditPlus",
-          inputs: { clip: ["2", 0], prompt: opts.prompt, vae: ["3", 0], image1: ["6", 0] },
+          inputs: {
+            clip: ["2", 0],
+            prompt: opts.prompt,
+            vae: ["3", 0],
+            ...(hasRef ? { image1: ["6", 0] } : {}),
+            ...(hasRef2 ? { image2: ["11", 0] } : {}),
+          },
         }
       : {
           class_type: "TextEncodeQwenImage21",
@@ -142,11 +159,11 @@ export function buildWorkflow(opts: ComfyGraphOptions): ComfyGraph {
         // same tail invents a crease across the belly and veins on the forearms:
         // measured at 768x1152, `simple` grew both, `linear_quadratic` on the same
         // seed and prompt had neither.
-        scheduler: hasRef ? "simple" : "linear_quadratic",
+        scheduler: anyRef ? "simple" : "linear_quadratic",
         positive: ["5", 0],
         // EditPlus has a single output; the 21-encoder has positive and negative.
         // cfg is 1, so the negative has no effect either way.
-        negative: hasRef ? ["5", 0] : ["5", 1],
+        negative: anyRef ? ["5", 0] : ["5", 1],
         latent_image: ["9", 0],
         denoise: 1,
       },
@@ -167,8 +184,14 @@ export function buildWorkflow(opts: ComfyGraphOptions): ComfyGraph {
   };
 
   if (opts.referenceName) {
-    // Node 6 is the reference photo; node 5 (built above) points its image1 here.
+    // Node 6 is the first reference; node 5 (built above) points its image1 here.
     graph["6"] = { class_type: "LoadImage", inputs: { image: opts.referenceName } };
+  }
+  if (opts.referenceName2) {
+    // Node 11 is the second reference — the owner, in a frame with both of them.
+    // The key stays flat (a nested `images: {image_1: …}` was silently ignored
+    // once and drew a stranger); image2 is the slot the prompt calls his.
+    graph["11"] = { class_type: "LoadImage", inputs: { image: opts.referenceName2 } };
   }
 
   return graph;

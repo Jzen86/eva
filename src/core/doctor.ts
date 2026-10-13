@@ -34,7 +34,7 @@ import {
 } from "./config.js";
 import type { ModelRef, ProviderRegistry } from "./llm/registry.js";
 import { counted, plural } from "./memory/stem-ru.js";
-import { hasReferencePhoto, describeReferencePhoto } from "./reference-photo.js";
+import { hasReferencePhoto, describeReferencePhoto, hasOwnerReferencePhoto, describeOwnerReferencePhoto } from "./reference-photo.js";
 import { voiceBackendAvailable } from "./tools/voice.js";
 
 export type Severity = "ok" | "warn" | "bad";
@@ -276,6 +276,13 @@ function configSection(configPath: string): DoctorSection {
       ? ok("config.photo", `фото есть: ${describeReferencePhoto(configPath)}`)
       : warn("config.photo", "фото не задано", "/persona спросит фото первым, /setphoto — в любой момент."),
   );
+
+  // The owner's face is optional, and one thing uses it: a frame with both of
+  // them in it. Absence is a fact, not a fault — a fresh install is not missing
+  // anything it was supposed to have, so there is nothing to warn about.
+  if (hasOwnerReferencePhoto(configPath)) {
+    checks.push(ok("config.photo_owner", `фото владельца: ${describeOwnerReferencePhoto(configPath)}`));
+  }
 
   const ownerBound = config.telegram?.owner_id !== undefined;
   checks.push(

@@ -20,7 +20,13 @@ import {
 } from "../../core/persona-quest.js";
 import fs from "node:fs";
 import path from "node:path";
-import { writeReferencePhoto, referencePhotoPath } from "../../core/reference-photo.js";
+import {
+  writeReferencePhoto,
+  writeOwnerReferencePhoto,
+  referencePhotoPath,
+  ownerReferencePhotoPath,
+  type ReferenceKind,
+} from "../../core/reference-photo.js";
 
 /** Max Telegram message length. */
 const MAX_MSG_LEN = 4096;
@@ -484,8 +490,14 @@ const TOOL_LABELS: Record<string, string> = {
 // Handler registration
 // ---------------------------------------------------------------------------
 
-/** Callback to update selfie reference photo URL. */
-export type SetReferencePhotoFn = (url: string) => void;
+/**
+ * Callback to record a reference photo that was just saved.
+ *
+ * `who` is not decoration: her face and the owner's are separate files, and a
+ * callback that could not tell them apart would quietly turn his photo into
+ * hers the moment he sent one.
+ */
+export type SetReferencePhotoFn = (url: string, who: ReferenceKind) => void;
 
 /** Callback when first user claims ownership. */
 export type OnOwnerClaimedFn = (chatId: number) => void;
@@ -499,7 +511,7 @@ export type OnOwnerClaimedFn = (chatId: number) => void;
  * difference was found by reading rather than by a failure. Returns where the
  * photo went, or null if Telegram would not give it up.
  */
-async function savePhotoFromTelegram(ctx: Context, token: string): Promise<string | null> {
+async function savePhotoFromTelegram(ctx: Context, token: string, who: ReferenceKind = "self"): Promise<string | null> {
   const photo = ctx.message?.photo;
   if (!photo?.length) return null;
   try {
@@ -511,15 +523,17 @@ async function savePhotoFromTelegram(ctx: Context, token: string): Promise<strin
     // The write belongs to reference-photo.ts: the destination, the empty check
     // and the rollback of the previous photo all live there. Writing the file
     // from here is what left `/setphoto` with no way back from a bad photo.
-    return writeReferencePhoto(Buffer.from(await res.arrayBuffer()));
+    const bytes = Buffer.from(await res.arrayBuffer());
+    return who === "owner" ? writeOwnerReferencePhoto(bytes) : writeReferencePhoto(bytes);
   } catch {
     return null;
   }
 }
 
 /** Send the reference photo that is actually installed, with its age. */
-async function sendCurrentReference(ctx: Context): Promise<void> {
-  const file = referencePhotoPath();
+async function sendCurrentReference(ctx: Context, who: ReferenceKind = "self"): Promise<void> {
+  const file = who === "owner" ? ownerReferencePhotoPath() : referencePhotoPath();
+  const whose = who === "owner" ? "Твоё фото" : "Её фото";
   let size = 0;
   let when = "неизвестно";
   try {
@@ -527,12 +541,12 @@ async function sendCurrentReference(ctx: Context): Promise<void> {
     size = st.size;
     when = st.mtime.toISOString().slice(0, 16).replace("T", " ");
   } catch {
-    await ctx.reply("Фото не задано. Скинь его с подписью /setphoto.");
+    await ctx.reply(`${whose} не задано. Скинь его с подписью ${who === "owner" ? "/setphoto me" : "/setphoto"}.`);
     return;
   }
   const { InputFile } = await import("grammy");
-  await ctx.replyWithPhoto(new InputFile(fs.readFileSync(file), "reference.jpg"), {
-    caption: `Текущее фото: ${Math.round(size / 1024)} КБ, заменено ${when} UTC`,
+  await ctx.replyWithPhoto(new InputFile(fs.readFileSync(file), who === "owner" ? "owner.jpg" : "reference.jpg"), {
+    caption: `Текущее фото (${whose.toLowerCase()}): ${Math.round(size / 1024)} КБ, заменено ${when} UTC`,
   });
 }
 
@@ -767,11 +781,17 @@ export function registerHandlers(
   // phone, which is the only place he is. A question about state has to be
   // answerable where it is asked.
   bot.command("photo", async (ctx) => {
-    await sendCurrentReference(ctx);
+    // `/photo` is her face; `/photo me` is the owner's — the one used only for a
+    // frame with both of them in it.
+    const who: ReferenceKind = (ctx.match ?? "").trim().toLowerCase() === "me" ? "owner" : "self";
+    await sendCurrentReference(ctx, who);
   });
 
   // /setphoto — set reference photo for selfie generation (saved locally)
   bot.command("setphoto", async (ctx) => {
+    // `/setphoto me` stores the owner's face, which is used for one thing only:
+    // a frame with both of them in it. Bare `/setphoto` is her face, as before.
+    const who: ReferenceKind = (ctx.match ?? "").trim().toLowerCase() === "me" ? "owner" : "self";
     const photo = ctx.message?.reply_to_message?.photo ?? ctx.message?.photo;
     if (!photo?.length) {
       // Called with nothing attached, which is what happens when the owner
@@ -779,13 +799,17 @@ export function registerHandlers(
       // that is in use answers the question he has and names the mistake, where
       // a bare instruction leaves him guessing.
       await ctx.reply("Фото не прикреплено, поэтому ничего не изменилось. Вот что сейчас стоит:");
-      await sendCurrentReference(ctx);
+      await sendCurrentReference(ctx, who);
       return;
     }
-    const saved = await savePhotoFromTelegram(ctx, bot.token);
+    const saved = await savePhotoFromTelegram(ctx, bot.token, who);
     if (saved) {
-      onSetReferencePhoto?.(saved);
-      await ctx.reply("✅ Фото сохранено — теперь это её лицо.");
+      onSetReferencePhoto?.(saved, who);
+      await ctx.reply(
+        who === "owner"
+          ? "✅ Твоё фото сохранено — теперь я смогу снять нас вдвоём."
+          : "✅ Фото сохранено — теперь это её лицо.",
+      );
     } else {
       await ctx.reply("Не удалось обработать фото");
     }
@@ -924,12 +948,17 @@ export function registerHandlers(
   bot.on("message:photo", async (ctx) => {
     const caption = ctx.message.caption?.trim();
 
-    // /setphoto — save reference photo
-    if (caption === "/setphoto") {
-      const saved = await savePhotoFromTelegram(ctx, bot.token);
+    // /setphoto — save reference photo; /setphoto me — the owner's own face.
+    if (caption === "/setphoto" || caption === "/setphoto me") {
+      const who: ReferenceKind = caption === "/setphoto me" ? "owner" : "self";
+      const saved = await savePhotoFromTelegram(ctx, bot.token, who);
       if (saved) {
-        onSetReferencePhoto?.(saved);
-        await ctx.reply("✅ Фото сохранено — теперь это её лицо.");
+        onSetReferencePhoto?.(saved, who);
+        await ctx.reply(
+          who === "owner"
+            ? "✅ Твоё фото сохранено — теперь я смогу снять нас вдвоём."
+            : "✅ Фото сохранено — теперь это её лицо.",
+        );
       } else {
         await ctx.reply("Не удалось обработать фото");
       }
@@ -951,12 +980,12 @@ export function registerHandlers(
       return;
     }
     if (quest) {
-      const saved = await savePhotoFromTelegram(ctx, bot.token);
+      const saved = await savePhotoFromTelegram(ctx, bot.token, "self");
       if (!saved) {
         await ctx.reply("Не получилось забрать фото — Telegram не отдал его. Попробуй ещё раз.");
         return;
       }
-      onSetReferencePhoto?.(saved);
+      onSetReferencePhoto?.(saved, "self");
       const turn = answerQuestPhoto(quest);
       await finishOrContinue(ctx, turn);
       return;

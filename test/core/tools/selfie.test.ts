@@ -17,11 +17,14 @@ describe("SelfieTool", () => {
   it("has correct name and parameters", () => {
     const tool = new SelfieTool({ openrouterApiKey: "k", referencePhotoUrl: "https://example.com/photo.jpg" });
     expect(tool.name).toBe("selfie");
-    expect(tool.parameters).toHaveLength(3);
+    expect(tool.parameters).toHaveLength(4);
     expect(tool.parameters[0].name).toBe("context");
     expect(tool.parameters[0].required).toBe(true);
     expect(tool.parameters[1].name).toBe("mode");
     expect(tool.parameters[1].required).toBe(false);
+    // with_owner is what turns a selfie into a frame with both of them in it.
+    expect(tool.parameters[3].name).toBe("with_owner");
+    expect(tool.parameters[3].type).toBe("boolean");
   });
 
   it("returns error when the OpenRouter key is missing", async () => {
@@ -304,6 +307,72 @@ describe("SelfieTool", () => {
     expect(result.output).toBeDefined();
 
     vi.unstubAllGlobals();
+  });
+
+  it("refuses a pair frame with no owner photo, and names the command that fixes it", async () => {
+    const generate = vi.fn();
+    const tool = new SelfieTool({
+      openrouterApiKey: "or-key",
+      referencePath: path.join(os.tmpdir(), "eva-no-her.jpg"),
+      ownerReferencePath: path.join(os.tmpdir(), `eva-no-owner-${Date.now()}.jpg`),
+      comfy: { upload: vi.fn(), generate } as unknown as ComfyClient,
+    });
+    const result = await tool.execute({ context: "обнимаемся", with_owner: true });
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("/setphoto me");
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("refuses a pair frame without ComfyUI — there is no cloud fallback for two real faces", async () => {
+    const owner = path.join(os.tmpdir(), `eva-owner-${Date.now()}.jpg`);
+    fs.writeFileSync(owner, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+    const tool = new SelfieTool({ openrouterApiKey: "or-key", ownerReferencePath: owner });
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const result = await tool.execute({ context: "стоим рядом", with_owner: true, format: "4:3" });
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("локально");
+    // The cloud is not even asked: the providers refuse a photo of a real
+    // person, and a pair frame is built on two of them.
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    fs.unlinkSync(owner);
+    vi.unstubAllGlobals();
+  });
+
+  it("puts both references into EditPlus — hers as image 1, his as image 2", async () => {
+    const her = path.join(os.tmpdir(), `eva-her-${Date.now()}.jpg`);
+    const owner = path.join(os.tmpdir(), `eva-owner-${Date.now()}.jpg`);
+    fs.writeFileSync(her, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+    fs.writeFileSync(owner, Buffer.from([0xff, 0xd8, 0xff, 0xe1]));
+    const upload = vi.fn().mockResolvedValueOnce("eva_ref.jpg").mockResolvedValueOnce("eva_owner.jpg");
+    const generate = vi.fn().mockResolvedValue("data:image/png;base64,AAAA");
+    const tool = new SelfieTool({
+      openrouterApiKey: "or-key",
+      referencePath: her,
+      ownerReferencePath: owner,
+      body: "A woman with a balanced figure",
+      comfy: { upload, generate } as unknown as ComfyClient,
+    });
+
+    const result = await tool.execute({ context: "обнимаемся в кафе", with_owner: true, format: "4:3" });
+    expect(result.success).toBe(true);
+    expect(result.mediaUrl).toBe("data:image/png;base64,AAAA");
+    expect(upload).toHaveBeenCalledTimes(2);
+
+    const graph = generate.mock.calls[0][0] as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+    expect(graph["5"].class_type).toBe("TextEncodeQwenImageEditPlus");
+    expect(graph["5"].inputs.image1).toEqual(["6", 0]);
+    expect(graph["5"].inputs.image2).toEqual(["11", 0]);
+    expect(graph["11"]).toEqual({ class_type: "LoadImage", inputs: { image: "eva_owner.jpg" } });
+    expect(String(graph["5"].inputs.prompt)).toContain("person from image 2");
+    expect(String(graph["5"].inputs.prompt)).toContain("A woman with a balanced figure");
+    // The requested frame reaches the local graph for a pair shot too.
+    expect(graph["9"].inputs).toMatchObject({ width: 1376, height: 1024 });
+
+    fs.unlinkSync(her);
+    fs.unlinkSync(owner);
   });
 
   it("sends the requested frame to the cloud fallback too", async () => {
