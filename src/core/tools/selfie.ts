@@ -154,7 +154,7 @@ export class SelfieTool implements Tool {
     "Сгенерировать и отправить СЕЛФИ — снимок ТЕБЯ. Зови этот тул всегда, когда в кадре должна быть ты, — даже если слово «селфи» не сказано: «покажи себя», «а ты как выглядишь», «сфоткайся», «пришли фото» про тебя, «как ты сейчас одета». Если картинка НЕ про тебя (другая девушка, пёс, дерево, дождь, сюжет, вещь) — это image_gen, не этот тул. " +
     "Лицо берётся с твоего референс-фото и одинаково во всех кадрах, фигура задана стандартом — в context описывай ТОЛЬКО сцену: где ты, что делаешь, что на тебе или без чего, какая причёска (распущены, хвост, косичка), свет и настроение. " +
     "Каждый раз делай кадр непохожим на предыдущий. Кадр и ориентацию выбирай под сцену, не по шаблону: крупный план (mode=direct) или полный рост (mode=mirror), ориентация — " + formatList() + " — для полного роста бери вытянутый, чтобы она помещалась целиком. " +
-    "ЕСЛИ В КАДРЕ ВЫ ВДВОЁМ — владелец просит «мы», «ты и я», «сфоткай нас», «обними меня», «покажи нас вместе» — поставь with_owner=true: тогда на кадре будете оба, его лицо берётся с его фото, и context описывает ТОЛЬКО сцену (где вы, что делаете — стоите рядом, обнимаетесь, целуетесь). Для общего плана вдвоём ставь format 4:3 или 1:1, чтобы оба помещались. Такой кадр рисуется только локально.";
+    "ЕСЛИ В КАДРЕ ВЫ ВДВОЁМ — владелец просит «мы», «ты и я», «сфоткай нас», «обними меня», «покажи нас вместе» — поставь with_owner=true: тогда на кадре будете оба, его лицо берётся с его фото, и context описывает ТОЛЬКО сцену (где вы, что делаете — стоите рядом, обнимаетесь, целуетесь). Кадр для двоих — квадрат (1:1) или горизонталь (4:3), выбери под сцену; вертикальный в паре не выйдет (станет квадратом). Такой кадр рисуется только локально.";
   parameters = [
     { name: "context", type: "string", description: "Описание ситуации (в кафе, в новом платье, на пляже)", required: true },
     { name: "mode", type: "string", description: "mirror (полный рост, зеркало) или direct (крупный план). Бери под сцену; без него определится по контексту.", required: false },
@@ -332,7 +332,14 @@ export class SelfieTool implements Tool {
     }
 
     const prompt = buildPairPrompt(context, this.config.body ?? "", this.config.ownerBody ?? "");
-    const { width, height } = sizeFor(format);
+    // A pair frame is square or landscape. Two people side by side want the
+    // width, and a requested portrait leaves one of them cropped or floating —
+    // so in a pair the square stands in for the vertical, and the scene picks
+    // between square and landscape. Solo keeps the full set; only this path
+    // narrows it. The owner ruled this: horizontal pair shots come out well, and
+    // the tall frames do not.
+    const asked = sizeFor(format);
+    const { width, height } = asked.height > asked.width ? sizeFor("1:1") : asked;
     try {
       const herName = await comfy.upload(fs.readFileSync(herFile), `eva_ref${path.extname(herFile) || ".jpg"}`, this.mimeOf(herFile));
       const ownerName = await comfy.upload(fs.readFileSync(ownerFile), `eva_owner${path.extname(ownerFile) || ".jpg"}`, this.mimeOf(ownerFile));

@@ -373,8 +373,13 @@ describe("SelfieTool", () => {
     // that once made the model inflate her chest and drop the man; see e5544ea.
     expect(String(graph["5"].inputs.prompt)).toContain("A woman with a balanced figure");
     expect(String(graph["5"].inputs.prompt)).toContain("The man's figure: a man of athletic build");
-    // The requested frame reaches the local graph for a pair shot too.
+    // The requested frame reaches the local graph for a pair shot too — but the
+    // pair narrows the set: landscape stays, and a portrait becomes a square.
     expect(graph["9"].inputs).toMatchObject({ width: 1376, height: 1024 });
+
+    await tool.execute({ context: "стоим в парке", with_owner: true, format: "3:4" });
+    const tall = generate.mock.calls[1][0] as Record<string, { inputs: Record<string, unknown> }>;
+    expect(tall["9"].inputs).toMatchObject({ width: 1024, height: 1024 });
 
     fs.unlinkSync(her);
     fs.unlinkSync(owner);
