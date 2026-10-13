@@ -567,6 +567,34 @@ export function registerHandlers(
   // owner: one bot, one owner, one half-built person at a time.
   let quest: Quest | null = null;
 
+  /**
+   * Set a face — hers or his — from a command or a photo caption.
+   *
+   * One handler for both, because two copies of this drifted apart once already
+   * (that is why `savePhotoFromTelegram` exists). Called with no photo it shows
+   * what is installed instead, which is what the owner meant when he ran the
+   * command with nothing attached.
+   */
+  const setReference = async (ctx: Context, who: ReferenceKind): Promise<void> => {
+    const photo = ctx.message?.reply_to_message?.photo ?? ctx.message?.photo;
+    if (!photo?.length) {
+      await ctx.reply("Фото не прикреплено, поэтому ничего не изменилось. Вот что сейчас стоит:");
+      await sendCurrentReference(ctx, who);
+      return;
+    }
+    const saved = await savePhotoFromTelegram(ctx, bot.token, who);
+    if (saved) {
+      onSetReferencePhoto?.(saved, who);
+      await ctx.reply(
+        who === "owner"
+          ? "✅ Твоё фото сохранено — теперь я смогу снять нас вдвоём."
+          : "✅ Фото сохранено — теперь это её лицо.",
+      );
+    } else {
+      await ctx.reply("Не удалось обработать фото");
+    }
+  };
+
   bot.use(async (ctx, next) => {
     const chatId = ctx.chat?.id;
     if (!chatId) return next();
@@ -792,27 +820,15 @@ export function registerHandlers(
     // `/setphoto me` stores the owner's face, which is used for one thing only:
     // a frame with both of them in it. Bare `/setphoto` is her face, as before.
     const who: ReferenceKind = (ctx.match ?? "").trim().toLowerCase() === "me" ? "owner" : "self";
-    const photo = ctx.message?.reply_to_message?.photo ?? ctx.message?.photo;
-    if (!photo?.length) {
-      // Called with nothing attached, which is what happens when the owner
-      // thinks a photo he already sent has been applied. Showing him the photo
-      // that is in use answers the question he has and names the mistake, where
-      // a bare instruction leaves him guessing.
-      await ctx.reply("Фото не прикреплено, поэтому ничего не изменилось. Вот что сейчас стоит:");
-      await sendCurrentReference(ctx, who);
-      return;
-    }
-    const saved = await savePhotoFromTelegram(ctx, bot.token, who);
-    if (saved) {
-      onSetReferencePhoto?.(saved, who);
-      await ctx.reply(
-        who === "owner"
-          ? "✅ Твоё фото сохранено — теперь я смогу снять нас вдвоём."
-          : "✅ Фото сохранено — теперь это её лицо.",
-      );
-    } else {
-      await ctx.reply("Не удалось обработать фото");
-    }
+    await setReference(ctx, who);
+  });
+
+  // `/myphoto` — the owner's face, by the same rules, as a command with no
+  // argument on purpose. Telegram's command menu cannot carry one, so
+  // `/setphoto me` works but is invisible there, and "нет команды" is exactly
+  // how a working instruction reads from a phone. This one appears in the menu.
+  bot.command("myphoto", async (ctx) => {
+    await setReference(ctx, "owner");
   });
 
   // /study
@@ -948,9 +964,13 @@ export function registerHandlers(
   bot.on("message:photo", async (ctx) => {
     const caption = ctx.message.caption?.trim();
 
-    // /setphoto — save reference photo; /setphoto me — the owner's own face.
-    if (caption === "/setphoto" || caption === "/setphoto me") {
-      const who: ReferenceKind = caption === "/setphoto me" ? "owner" : "self";
+    // A caption that sets a face. Hers: `/setphoto` or `/photo`. His:
+    // `/setphoto me`, `/photo me` or `/myphoto` — `/setphoto me` is invisible in
+    // the command menu, so the plain `/myphoto` is what a phone will show.
+    const ownerCaptions = ["/setphoto me", "/photo me", "/myphoto"];
+    const selfCaptions = ["/setphoto", "/photo"];
+    if (caption && (ownerCaptions.includes(caption) || selfCaptions.includes(caption))) {
+      const who: ReferenceKind = ownerCaptions.includes(caption) ? "owner" : "self";
       const saved = await savePhotoFromTelegram(ctx, bot.token, who);
       if (saved) {
         onSetReferencePhoto?.(saved, who);
