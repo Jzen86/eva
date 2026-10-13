@@ -206,13 +206,13 @@ describe("SelfieTool", () => {
 
     const graph = generate.mock.calls[0][0] as Record<string, { inputs: Record<string, unknown> }>;
     expect(graph["5"].inputs.prompt).toContain("Woman with a balanced figure, a flat stomach");
-    expect(graph["9"].inputs).toMatchObject({ width: 1376, height: 1024 });
+    expect(graph["9"].inputs).toMatchObject({ width: 1024, height: 768 });
 
     // A format later added to the table must survive here too: this whitelist went
     // stale once and silently dropped 2:3 back to 3:4.
     await tool.execute({ context: "в парке", format: "2:3", mode: "mirror" });
     const second = generate.mock.calls[1][0] as Record<string, { inputs: Record<string, unknown> }>;
-    expect(second["9"].inputs).toMatchObject({ width: 1024, height: 1536 });
+    expect(second["9"].inputs).toMatchObject({ width: 672, height: 1024 });
 
     fs.unlinkSync(file);
   });
@@ -375,7 +375,7 @@ describe("SelfieTool", () => {
     expect(String(graph["5"].inputs.prompt)).toContain("The man's figure: a man of athletic build");
     // The requested frame reaches the local graph for a pair shot too — but the
     // pair narrows the set: landscape stays, and a portrait becomes a square.
-    expect(graph["9"].inputs).toMatchObject({ width: 1376, height: 1024 });
+    expect(graph["9"].inputs).toMatchObject({ width: 1024, height: 768 });
 
     await tool.execute({ context: "стоим в парке", with_owner: true, format: "3:4" });
     const tall = generate.mock.calls[1][0] as Record<string, { inputs: Record<string, unknown> }>;

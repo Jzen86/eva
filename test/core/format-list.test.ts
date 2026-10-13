@@ -7,9 +7,9 @@ import { ImageGenTool } from "../../src/core/tools/image-gen.js";
  * The formats are written once, in the table.
  *
  * Twice this promise broke the same way. First the tools promised three formats
- * while the table held six (`619cbc1`); then, after the frames moved to a 1024
- * short side and 9:16 took 5:4's place, the descriptions kept offering
- * "5:4 (альбом)" and never mentioned 9:16 at all. `resolveFormat` asks the
+ * while the table held six (`619cbc1`); then, when 9:16 took 5:4's place, the
+ * descriptions kept offering "5:4 (альбом)" and never mentioned 9:16 at all.
+ * `resolveFormat` asks the
  * table, so a request for 5:4 fell silently back to the default frame, and
  * nobody asked for 9:16 because nothing said it existed. Eva found that one by
  * reading the file — and then proposed to fix it by hand, which is how the

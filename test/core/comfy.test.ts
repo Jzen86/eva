@@ -66,14 +66,15 @@ describe("buildWorkflow", () => {
 
   it("renders every format from the requested size", () => {
     const portrait = buildWorkflow({ prompt: "x", seed: 1, ...sizeFor("3:4") });
-    expect(portrait["9"].inputs).toMatchObject({ width: 1024, height: 1376 });
+    expect(portrait["9"].inputs).toMatchObject({ width: 768, height: 1024 });
     const landscape = buildWorkflow({ prompt: "x", seed: 1, ...sizeFor("4:3") });
-    expect(landscape["9"].inputs).toMatchObject({ width: 1376, height: 1024 });
-    // Every frame on the same 1024 short side, every side a multiple of 32.
-    expect(sizeFor("4:5")).toEqual({ width: 1024, height: 1280 });
-    expect(sizeFor("9:16")).toEqual({ width: 1024, height: 1824 });
+    expect(landscape["9"].inputs).toMatchObject({ width: 1024, height: 768 });
+    // Same 1024 long side, every side a multiple of 32, the short side follows
+    // the ratio.
+    expect(sizeFor("4:5")).toEqual({ width: 832, height: 1024 });
+    expect(sizeFor("9:16")).toEqual({ width: 576, height: 1024 });
     // The tallest frame, for a full body that should fill the shot.
-    expect(sizeFor("2:3")).toEqual({ width: 1024, height: 1536 });
+    expect(sizeFor("2:3")).toEqual({ width: 672, height: 1024 });
   });
 
   it("falls back to 1:1 on an unknown format", () => {

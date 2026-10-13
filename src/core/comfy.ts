@@ -36,10 +36,13 @@ export interface ComfyGraphOptions {
 }
 
 /**
- * Output formats on a 1024 base: the short side is 1024, the long side grows to
- * the ratio, every side a multiple of 32. Qwen-Image 2.1's own default is one
- * megapixel (1024x1024) and its native 2K is four; what carries the detail is the
- * short side, and 768 sat under it — the skin went soft and mottled there.
+ * Output formats on a 1024 long side: the long side is 1024, the short side
+ * follows the ratio, and every side is a multiple of 32. The long side is the
+ * cap — a 2:3 frame comes back narrower, not taller — which holds the pixel
+ * count (and so the render time) down. The owner moved here from a 1024 *short*
+ * side for exactly that: tall frames used to be 1024×1536 and 4:3 was 1376×1024,
+ * and paying for those pixels bought nothing on a phone screen. 1024 is where the
+ * detail lives anyway — Qwen-Image 2.1's own default is one megapixel (1024×1024).
  * 2:3 is the tallest frame, for a full body that should fill the shot; 9:16 fills
  * a phone screen; 3:4 the usual portrait; 4:5 the feed-shaped one that keeps a
  * little more in frame; 1:1 the close-up square; 4:3 when the scene needs width.
@@ -55,11 +58,11 @@ export interface ComfyGraphOptions {
  */
 export const FORMATS = {
   "1:1": { width: 1024, height: 1024, label: "квадрат" },
-  "2:3": { width: 1024, height: 1536, label: "высокий" },
-  "3:4": { width: 1024, height: 1376, label: "вертикаль" },
-  "4:5": { width: 1024, height: 1280, label: "портрет" },
-  "9:16": { width: 1024, height: 1824, label: "высокий, под телефон" },
-  "4:3": { width: 1376, height: 1024, label: "горизонталь" },
+  "2:3": { width: 672, height: 1024, label: "высокий" },
+  "3:4": { width: 768, height: 1024, label: "вертикаль" },
+  "4:5": { width: 832, height: 1024, label: "портрет" },
+  "9:16": { width: 576, height: 1024, label: "высокий, под телефон" },
+  "4:3": { width: 1024, height: 768, label: "горизонталь" },
 } as const;
 
 export type AspectFormat = keyof typeof FORMATS;
