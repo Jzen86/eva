@@ -60,19 +60,20 @@ function buildPrompt(context: string, mode: "mirror" | "direct", appearance = ""
  * first — hers is image 1, his is image 2 — and the scene (`context`) comes last,
  * so the words say what they are doing rather than who they are.
  *
- * No figure standard here, on purpose. `selfies.body` rides on the single
- * selfie, where it keeps the body from drifting frame to frame — but on a pair
- * frame it drags the model onto *her* body: measured on the live graph, the same
- * scene and seed with the canon gave an over-inflated chest on two of four
- * renders and dropped the man entirely on a third, while four of four without it
- * kept both people clean. Her body is in the reference photo; the words were
- * only ever needed when there was no second body to place.
+ * The figure standard (`selfies.body`) rides here too, exactly as on a lone
+ * selfie: the owner wants her proportions the same in every frame. It was pulled
+ * once (`e5544ea`) because a canon that spelled out areolas and nipples made the
+ * model inflate the chest and, on one seed, drop the man — but the fault was in
+ * those words, not in describing the figure at all. The owner's canon without
+ * them renders both people clean on 8 of 8 (4 lingerie, 4 nude, 4 seeds).
  */
 const PAIR_FACES =
   "Two people in one photo. The woman is the person from image 1: keep her exact face. The man is the person from image 2: keep his exact face. Do not swap, blend or merge the faces.";
 
-function buildPairPrompt(context: string): string {
-  return `${PAIR_FACES} ${context}. Photorealistic photo of the two of them together, both fully in frame, natural.`;
+function buildPairPrompt(context: string, body = "", ownerBody = ""): string {
+  const herFigure = body ? ` The woman's figure: ${body}.` : "";
+  const hisFigure = ownerBody ? ` The man's figure: ${ownerBody}.` : "";
+  return `${PAIR_FACES}${herFigure}${hisFigure} ${context}. Photorealistic photo of the two of them together, both fully in frame, natural.`;
 }
 
 export interface SelfieToolConfig {
@@ -126,6 +127,12 @@ export interface SelfieToolConfig {
    * innocent scene stays dressed.
    */
   body?: string;
+  /**
+   * The man's figure, in words — used only on a pair frame, so his build holds
+   * the same way hers does. Meant to be short: the reference photo already
+   * carries his body, and the words are a nudge, not a specification.
+   */
+  ownerBody?: string;
   /** Local ComfyUI, tried first. Any failure falls through to the hosted path. */
   comfy?: ComfyClient;
 }
@@ -324,7 +331,7 @@ export class SelfieTool implements Tool {
       return { success: false, output: "Нет моего референс-фото — сначала /setphoto с моим лицом." };
     }
 
-    const prompt = buildPairPrompt(context);
+    const prompt = buildPairPrompt(context, this.config.body ?? "", this.config.ownerBody ?? "");
     const { width, height } = sizeFor(format);
     try {
       const herName = await comfy.upload(fs.readFileSync(herFile), `eva_ref${path.extname(herFile) || ".jpg"}`, this.mimeOf(herFile));

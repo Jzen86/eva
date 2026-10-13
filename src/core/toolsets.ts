@@ -244,6 +244,14 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
    */
   const body = str(selfies.body) || str(imageCfg.body);
 
+  /**
+   * The man's figure, in words, used only on a pair frame (`with_owner`).
+   *
+   * Optional and short by design: the owner's photo already carries his body,
+   * and the words are there so his build reads the same way hers does.
+   */
+  const ownerBody = str(selfies.owner_body);
+
   const providerSpecs = registry?.toConfig().providers ?? {};
   const imageRoleRef = registry?.role("image");
   const chatRef = registry?.role("fast");
@@ -317,6 +325,7 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
         imageBaseUrl: baseFor(selfieSource) || undefined,
         ...(appearance ? { appearance } : {}),
         ...(body ? { body } : {}),
+        ...(ownerBody ? { ownerBody } : {}),
         ...(comfy ? { comfy } : {}),
       }),
       "keyed",

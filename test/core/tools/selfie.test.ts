@@ -353,6 +353,7 @@ describe("SelfieTool", () => {
       referencePath: her,
       ownerReferencePath: owner,
       body: "A woman with a balanced figure",
+      ownerBody: "a man of athletic build",
       comfy: { upload, generate } as unknown as ComfyClient,
     });
 
@@ -367,10 +368,11 @@ describe("SelfieTool", () => {
     expect(graph["5"].inputs.image2).toEqual(["11", 0]);
     expect(graph["11"]).toEqual({ class_type: "LoadImage", inputs: { image: "eva_owner.jpg" } });
     expect(String(graph["5"].inputs.prompt)).toContain("person from image 2");
-    // The figure standard rides on the single selfie, not on a pair frame: with
-    // it the model drags onto her body (over-inflated chest, and on one seed the
-    // man disappeared entirely) — measured on the live graph.
-    expect(String(graph["5"].inputs.prompt)).not.toContain("A woman with a balanced figure");
+    // The figure standard rides here too — the owner wants the same proportions
+    // in every frame. It was the canon's words (areolas/nipples), not the idea,
+    // that once made the model inflate her chest and drop the man; see e5544ea.
+    expect(String(graph["5"].inputs.prompt)).toContain("A woman with a balanced figure");
+    expect(String(graph["5"].inputs.prompt)).toContain("The man's figure: a man of athletic build");
     // The requested frame reaches the local graph for a pair shot too.
     expect(graph["9"].inputs).toMatchObject({ width: 1376, height: 1024 });
 
