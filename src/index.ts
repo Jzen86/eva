@@ -337,9 +337,21 @@ async function main() {
         if (result.wrote) {
           console.log("🧠 study: есть записи");
           await channels.get("telegram")?.send(ownerId, { text: result.report });
-        } else {
-          console.log("🧠 study: записей нет —", result.reason ?? "без причины");
+          return;
         }
+        // An empty session is the day's business and gets one line — except the
+        // one worth reading. When the checks refused what the model returned, the
+        // session did find something and our own guesses about vocabulary threw it
+        // away: that is a finding about the checks, not about the day. The report
+        // already names the refused string and the reason for it, and until now it
+        // was built in this very branch and then dropped on the floor — the
+        // journal said "отброшено фильтром" with nothing behind it, so the only
+        // way to see a rejected memory was to make the session happen again.
+        if (result.dropped?.length) {
+          console.log(`🧠 study:\n${result.report}`);
+          return;
+        }
+        console.log("🧠 study: записей нет —", result.reason ?? "без причины");
       } catch (err) {
         console.error("❌ study:", err instanceof Error ? err.message : err);
       }

@@ -138,6 +138,23 @@ describe("study: what a session may leave in the base", () => {
     expect(result.wrote).toBe(false);
     expect(rows()).toHaveLength(0);
     expect(result.report).toContain("правило, а не факт");
+    // And it leaves the runner as data, not only as prose: the caller decides
+    // whether the refusal is worth waking the owner up for, and it cannot decide
+    // by reading a sentence. The live case is the journal line — "отброшено
+    // фильтром" with nothing behind it answered no question.
+    expect(result.dropped).toHaveLength(1);
+    expect(result.dropped?.[0]).toContain("не стоит включать логику");
+    expect(result.dropped?.[0]).toContain("правило, а не факт");
+  });
+
+  it("leaves no refused rows behind when it refused nothing", async () => {
+    // The usual empty session: the model read new talk and had nothing to keep.
+    // There is nothing to name here, so there is nothing to report — this is the
+    // shape the journal is allowed to reduce to one line.
+    const { result } = await session(JSON.stringify({ facts: [] }));
+
+    expect(result.wrote).toBe(false);
+    expect(result.dropped).toBeUndefined();
   });
 
   it("keeps a case however much of it was filled in", async () => {

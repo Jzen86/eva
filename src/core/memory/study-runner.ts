@@ -139,6 +139,17 @@ export interface StudyRunResult {
   ran: boolean;
   wrote: boolean;
   reason?: string;
+  /**
+   * Rows the checks refused, each with the reason it gave — empty when the
+   * session's own checks threw nothing away.
+   *
+   * Carried out of the runner so the caller can tell one empty session from
+   * another: "nothing new to read" is the day's business, while "the model
+   * returned facts and every one was refused" is a finding about the checks
+   * themselves, and the checks are guesses about vocabulary. Absent for the
+   * same reason it is absent from the report: there is nothing to name.
+   */
+  dropped?: string[];
   /** Human-readable summary for the chat / log. */
   report: string;
   error?: string;
@@ -257,6 +268,7 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
         ran: true,
         wrote: false,
         reason: "всё, что вернула модель, отброшено фильтром",
+        ...(dropped.length ? { dropped } : {}),
         report:
           `📚 Сессия #${sessionCount}${window}: отброшено ${dropped.length}\n` +
           dropped.map((d) => `  · ${d}`).join("\n"),
@@ -329,6 +341,7 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
         ran: true,
         wrote: false,
         reason: "ничего нового",
+        ...(dropped.length ? { dropped } : {}),
         report:
           `📚 Сессия #${sessionCount}${window}: нового нет\n` +
           refused.map((r) => `  · ${r}`).join("\n"),
@@ -340,6 +353,7 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
     return finish({
       ran: true,
       wrote: true,
+      ...(dropped.length ? { dropped } : {}),
       report: [
         `📚 Сессия #${sessionCount}${window} · записано ${written.length} из ${facts.length}`,
         ...written.map((w) => {
