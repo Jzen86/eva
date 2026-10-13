@@ -59,13 +59,20 @@ function buildPrompt(context: string, mode: "mirror" | "direct", appearance = ""
  * has to be told which part of the picture comes from which. It names both faces
  * first — hers is image 1, his is image 2 — and the scene (`context`) comes last,
  * so the words say what they are doing rather than who they are.
+ *
+ * No figure standard here, on purpose. `selfies.body` rides on the single
+ * selfie, where it keeps the body from drifting frame to frame — but on a pair
+ * frame it drags the model onto *her* body: measured on the live graph, the same
+ * scene and seed with the canon gave an over-inflated chest on two of four
+ * renders and dropped the man entirely on a third, while four of four without it
+ * kept both people clean. Her body is in the reference photo; the words were
+ * only ever needed when there was no second body to place.
  */
 const PAIR_FACES =
   "Two people in one photo. The woman is the person from image 1: keep her exact face. The man is the person from image 2: keep his exact face. Do not swap, blend or merge the faces.";
 
-function buildPairPrompt(context: string, body = ""): string {
-  const figure = body ? ` The woman's figure: ${body}.` : "";
-  return `${PAIR_FACES}${figure} ${context}. Photorealistic photo of the two of them together, both fully in frame, natural.`;
+function buildPairPrompt(context: string): string {
+  return `${PAIR_FACES} ${context}. Photorealistic photo of the two of them together, both fully in frame, natural.`;
 }
 
 export interface SelfieToolConfig {
@@ -317,7 +324,7 @@ export class SelfieTool implements Tool {
       return { success: false, output: "Нет моего референс-фото — сначала /setphoto с моим лицом." };
     }
 
-    const prompt = buildPairPrompt(context, this.config.body ?? "");
+    const prompt = buildPairPrompt(context);
     const { width, height } = sizeFor(format);
     try {
       const herName = await comfy.upload(fs.readFileSync(herFile), `eva_ref${path.extname(herFile) || ".jpg"}`, this.mimeOf(herFile));
