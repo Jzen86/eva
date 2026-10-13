@@ -108,6 +108,24 @@ export function emptyReply(gender: "female" | "male" | "neutral" | undefined): s
   return list[Math.floor(Math.random() * list.length)] ?? EMPTY_REPLIES.neutral[0]!;
 }
 
+/**
+ * What a *service* turn says when the model answered nothing at all.
+ *
+ * A conversation keeps the filler above: somebody is on the other side, and a
+ * distracted "sorry, say that again" is the human shape of a missed beat. A
+ * service turn has no such reader — its text is the report the scheduler writes
+ * into `~/.eva/reports/<task>.md` and sends as the result of a check, and there
+ * the personal filler is a lie with a date on it. Verified live: on 13.10 the
+ * 10:31 `server_watch` entered the archive as "Прости, я прослушала" while no
+ * check had run at all, and the entry read exactly like a finished one.
+ *
+ * Silence would be the other lie, and the worse one: a check that never happened
+ * would look precisely like a check that found nothing. So the failure is said
+ * out loud, and named as a failure.
+ */
+const EMPTY_SERVICE_REPLY =
+  "⚠️ Плановое задание осталось без ответа: модель промолчала дважды. Проверки не было — отчёта нет, следующий заход по расписанию.";
+
 export interface EngineDeps {
   llm: { fast(): LLMClient; strong(): LLMClient; hasRole?(name: string): boolean };
   config: PromptConfig;
@@ -472,7 +490,10 @@ export class Engine {
             text = (retry.text ?? "").trim();
             if (!text) {
               console.log(JSON.stringify({ tag: "engine:empty", turn: turn + 1, retry: false }));
-              text = emptyReply(this.liveConfig().gender);
+              text =
+                msg.metadata?.scheduledTask === true
+                  ? EMPTY_SERVICE_REPLY
+                  : emptyReply(this.liveConfig().gender);
             }
           }
           history.push({ role: "assistant", content: text });
