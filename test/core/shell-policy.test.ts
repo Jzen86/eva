@@ -307,6 +307,16 @@ describe("git — history is readable, writes are not", () => {
     expect(allow("journalctl -u eva -n 5 | grep x; git log -1")).toBe(true);
     // The one she actually used: a read run from another directory.
     expect(allow("git -C /opt/eva status --short; git -C /opt/eva diff src/")).toBe(true);
+    // And the one her own task text now tells her to run, verbatim: a dated
+    // window instead of a fixed count, so a busy day cannot push her review of
+    // older commits out of sight. `--since` takes its value as a quoted
+    // argument, which is why this is written out rather than assumed — the
+    // verb is read before it either way, and the shape is hers, not this
+    // test's invention.
+    expect(
+      allow("git -C /opt/eva log --oneline -8; git -C /opt/eva log --since '13 hours ago' --stat"),
+    ).toBe(true);
+    expect(allow("journalctl -u eva --since '14 hours ago' | grep commit")).toBe(true);
   });
 
   it("leaves every writing verb parked", () => {
