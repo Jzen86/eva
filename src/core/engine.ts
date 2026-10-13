@@ -41,7 +41,27 @@ function historyChars(history: LLMMessage[]): number {
 const MAX_TURNS = 20;
 const MAX_HISTORY = 40;
 export const MAX_PROMPT_TOKENS = 128_000;
+/**
+ * How many calls of one tool a chat turn may make before it is wound up.
+ *
+ * A loop guard, not a plan: a weak model can call the same tool over and over,
+ * and the owner is on the other side, so stopping short costs one sentence and
+ * one "повтори".
+ */
 export const MAX_SAME_TOOL = 5;
+/**
+ * The same ceiling for a service turn — a scheduled job, not a conversation.
+ *
+ * Nobody is on the other side of these to ask again, so being cut off mid-way
+ * costs the whole report, and the job is longer than a chat turn by its own
+ * text: `self_watch` reads sixteen hours of log, then `git log`, then
+ * `git diff`, then the sources it names — all through `shell`, one command at a
+ * time. Five stopped it at the sixth call on 11.10 and again on 13.10, and the
+ * report ended with "про Задрота не успела — на меня свалился лимит на команды".
+ * Twelve leaves room for the job and still stops. The idle periods of the day
+ * are not what bounds this either — `MAX_TURNS` and the five-minute budget do.
+ */
+export const MAX_SAME_TOOL_SERVICE = 12;
 const PROCESS_TIMEOUT = 300_000; // 5 minutes — soft budget, triggers graceful wrap-up
 const MAX_TOOL_OUTPUT_CHARS = 8_000; // Truncate tool outputs to prevent history bloat
 
@@ -340,6 +360,11 @@ export class Engine {
     // Build tool definitions for the LLM
     const tools = this.buildToolDefinitions();
 
+    // A service turn is doing a job and its job is longer than a chat turn's —
+    // see MAX_SAME_TOOL_SERVICE.
+    const sameToolLimit =
+      msg.metadata?.scheduledTask === true ? MAX_SAME_TOOL_SERVICE : MAX_SAME_TOOL;
+
     try {
       let lastMediaUrl: string | undefined;
       let lastMediaPath: string | undefined;
@@ -533,13 +558,16 @@ export class Engine {
         }
 
         // Check 2: Per-tool limit (scoped to current process() call only)
-        const overused = [...toolCallCounts.entries()].find(([, count]) => count > MAX_SAME_TOOL);
+        const overused = [...toolCallCounts.entries()].find(([, count]) => count > sameToolLimit);
         if (overused) {
           console.log(JSON.stringify({
             tag: "engine:limit",
             reason: "tool_limit",
             tool: overused[0],
             count: overused[1],
+            // Which ceiling stopped it: a chat turn and a service turn have
+            // different ones, and without this the log cannot tell them apart.
+            limit: sameToolLimit,
           }));
           // Give LLM one final chance to summarize what it found (no tools)
           history.push({ role: "user", content: `Лимит использования инструмента "${overused[0]}" достигнут. Ответь на основе уже полученной информации.` });
