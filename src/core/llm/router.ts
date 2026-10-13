@@ -30,10 +30,18 @@ export interface RouterOptions {
 }
 
 const DEFAULTS = {
-  // First token has to arrive within this. A healthy flash model answers in
-  // about a second, so a longer wait only means the request has stalled and the
-  // user is sitting in silence while a fallback could already be answering.
-  perModelTimeoutMs: 20_000,
+  // First token has to arrive within this, reset on every streamed chunk. A
+  // healthy flash model answers in about a second, so a wait much past that
+  // means the request has stalled and a fallback could already be answering.
+  //
+  // This install's fast model is the exception. `google/gemini-3.5-flash-lite`
+  // over the OpenAI-compat endpoint routinely takes 10–19s to its first token —
+  // measured on the server: 14.2s and 18.9s on a one-line prompt, 9.6s on a
+  // 36k-token one, with the odd 503 — so a 20s ceiling cut off answers that were
+  // on their way, and the degradation banner read "недоступна" about a model
+  // that was merely slow. 30s covers the slow-but-alive case; past that the
+  // fallback (`gemini-3.1-flash-lite`, 2–3s) is the better answer anyway.
+  perModelTimeoutMs: 30_000,
   chainBudgetMs: 150_000,
   // How often to re-test the primary while degraded. Short, so a transient
   // stall costs a minute on the fallback rather than five.
