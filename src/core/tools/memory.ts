@@ -58,6 +58,7 @@ async function handleSave(
   embedding: EmbeddingEndpoint | null,
 ): Promise<ToolResult> {
   const insight = requireString(params, "content");
+  const kind = params.kind === "profile" ? "profile" : "episode";
   const topic =
     typeof params.topic === "string" && params.topic.trim()
       ? params.topic.trim()
@@ -128,6 +129,7 @@ async function handleSave(
         topic,
         insight,
         source: "memory_tool",
+        kind,
         her_move: herMove ?? undefined,
         context: context ?? undefined,
         his_reaction: hisReaction ?? undefined,
@@ -246,7 +248,17 @@ export function createMemoryTool(opts: MemoryToolOptions = {}): Tool {
       "'в ходе диалога', 'подтвердил, что' — the substance is what is worth the space. " +
       "Even a plain chat about nothing in particular has a subject, and this is " +
       "how you can bring it up yourself a week later.\n" +
-      "2) A fact about him or her: content alone ('не любит айфоны').\n" +
+      "2) A fact about him or her: content alone ('не любит айфоны'). Set kind=\"profile\" " +
+      "for these, and only for what stays true — ask yourself: if tomorrow were the " +
+      "opposite, would the line still be true? 'Пьёт энергетики' survives it; 'сегодня " +
+      "устал', 'с L-теанином', 'раз в день' do not, and those are episodes. A profile " +
+      "entry is one fact, in one line, with no 'сказал', 'уточнил', 'объяснил' and no " +
+      "cause and effect — it is read as a questionnaire, not as a retelling. Its topic " +
+      "comes from this list, exactly: 'работа', 'где живёт', 'тело и привычки', 'досуг', " +
+      "'люди', 'деньги и планы', 'вкусы'. If a sharper fact replaces an older one, pass " +
+      "the old entry's #ID in supersedes — the older line must not linger beside the new " +
+      "one and disagree with it. Everything else is kind=\"episode\" (the default): what " +
+      "happened, what was discussed or decided, with the subject as the topic.\n" +
       "3) A case, when he reacted to something you did: her_move = what you did, " +
       "context = the state he was in (busy, cheerful, in an argument, tired), " +
       "his_reaction = what he did about it. All three together — the context is not " +
@@ -260,7 +272,13 @@ export function createMemoryTool(opts: MemoryToolOptions = {}): Tool {
       { name: "action", type: "string", description: "One of: search, save, delete, list", required: true },
       { name: "query", type: "string", description: "Search query (required for action=search; results include the entry's #ID)" },
       { name: "content", type: "string", description: "Knowledge content to save (required for action=save)" },
-      { name: "topic", type: "string", description: "Topic tag for the entry (optional, default: general)" },
+      { name: "topic", type: "string", description: "Topic tag for the entry (optional, default: general). For kind=profile use one of the seven sections listed above" },
+      {
+        name: "kind",
+        type: "string",
+        description:
+          "profile — a fact about him that stays true (likes, dislikes, habits); episode — what happened (default)",
+      },
       {
         name: "her_move",
         type: "string",
