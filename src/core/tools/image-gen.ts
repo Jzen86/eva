@@ -252,7 +252,21 @@ export class ImageGenTool implements Tool {
     const { width, height } = sizeFor(String(params.format ?? ""));
     const local = await this.tryComfy(prompt, width, height);
     if (local) {
-      return { success: true, output: "Image generated successfully", mediaUrl: local };
+      // Says where the picture went, because there is no file to point at: the
+      // image travels as a data URL and the channel delivers it. The live
+      // failure was a model inventing a path — "/root/.cache/eva/images/<uuid>.png"
+      // — to send a captioned copy of what had already arrived. `send_file`
+      // refused it on a root check (read as "needs permission"), so she moved up
+      // to `shell cp`, the command parked, the owner tapped ✅, and `cp` failed
+      // on a file that never existed. Three taps and nothing sent, caused by a
+      // tool that answered "successfully generated" and nothing else.
+      return {
+        success: true,
+        output:
+          "Картинка готова и уже отправлена в чат. Файла на диске нет — " +
+          "отправлять её отдельно не нужно и нечем.",
+        mediaUrl: local,
+      };
     }
 
     // The cloud fallback cannot reach EmptyLatentImage, so the size travels as a
@@ -261,7 +275,13 @@ export class ImageGenTool implements Tool {
     const cloud = await this.callModel(prompt, cloudSizeFor({ width, height }));
     if (cloud.image) {
       console.log(`image_gen OK (${this.model})`);
-      return { success: true, output: "Image generated successfully", mediaUrl: cloud.image };
+      return {
+        success: true,
+        output:
+          "Картинка готова и уже отправлена в чат. Файла на диске нет — " +
+          "отправлять её отдельно не нужно и нечем.",
+        mediaUrl: cloud.image,
+      };
     }
     if (cloud.filter) {
       return {

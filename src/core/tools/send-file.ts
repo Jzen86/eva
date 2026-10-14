@@ -43,10 +43,22 @@ export class SendFileTool implements Tool {
 
     const verdict = classifyPath(expanded, this.policy);
     if (verdict.kind !== "allow") {
+      // Names the other possible cause, because a made-up path arrives here and
+      // reads as a permission problem: a model wanted to send a picture it had
+      // generated, guessed "/root/.cache/eva/images/<uuid>.png", got "вне
+      // разрешённых каталогов", and went up to `shell cp` to get around it — the
+      // command parked on /yes and then failed, since no such file ever existed.
+      // Generated images are delivered as data URLs and never touch the disk.
+      const exists = fs.existsSync(expanded);
       return {
         success: false,
         output: "",
-        error: `Не могу отправить этот файл: ${verdict.why}. Разрешённые каталоги: ${this.policy.roots.join(", ")}.`,
+        error:
+          `Не могу отправить этот файл: ${verdict.why}. Разрешённые каталоги: ${this.policy.roots.join(", ")}.` +
+          (exists
+            ? ""
+            : " И самого файла по этому пути нет: путь надо не угадывать, а брать у того, кто файл создал " +
+              "(картинки из image_gen и selfie уже отправлены в чат, файла у них нет вовсе)."),
       };
     }
 

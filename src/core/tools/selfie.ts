@@ -289,7 +289,7 @@ export class SelfieTool implements Tool {
 
     const local = await this.tryComfy(prompt, width, height);
     if (local) {
-      return { success: true, output: "Селфи сгенерировано", mediaUrl: local };
+      return { success: true, output: "Селфи отправлено в чат (файла нет — отдельно слать нечего)", mediaUrl: local };
     }
 
     return this.generateOpenRouter(prompt, mode, cloudSizeFor({ width, height }));
@@ -354,7 +354,7 @@ export class SelfieTool implements Tool {
         }),
       );
       console.log("📸 Парный кадр OK (comfy, qwen-image-2.1-turbo, +2 референса)");
-      return { success: true, output: "Парный кадр сгенерирован", mediaUrl: image };
+      return { success: true, output: "Парный кадр отправлен в чат (файла нет — отдельно слать нечего)", mediaUrl: image };
     } catch (err) {
       console.error(`📸 Парный кадр: comfy failed: ${err instanceof Error ? err.message : err}`);
       return {
