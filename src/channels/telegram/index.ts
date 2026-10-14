@@ -77,6 +77,7 @@ export class TelegramChannel implements Channel {
       { command: "help", description: "Что она умеет" },
       { command: "status", description: "Состояние: модель, память, задачи" },
       { command: "photo", description: "Показать фото, которое сейчас её лицо (/photo me — твоё)" },
+      { command: "profile", description: "Что она о тебе знает — её анкета" },
       { command: "setphoto", description: "Сменить её фото: скинь его с этой подписью" },
       { command: "myphoto", description: "Твоё фото — для кадров, где вы вдвоём (скинь с этой подписью)" },
       { command: "selfie", description: "Селфи (или спроси её словами)" },

@@ -6,6 +6,8 @@ import { transcribeVoice } from "./transcribe.js";
 import { sendVideoNote } from "./video.js";
 import { applyPending, discard, peek, describe } from "../../core/pending.js";
 import { loadConfig, patchConfig } from "../../core/config.js";
+import { profileKnowledge } from "../../core/memory/knowledge.js";
+import { renderProfileDossier, writeProfileDoc } from "../../core/profile-dossier.js";
 import {
   start as startQuest,
   answerText as answerQuestText,
@@ -829,6 +831,34 @@ export function registerHandlers(
   // how a working instruction reads from a phone. This one appears in the menu.
   bot.command("myphoto", async (ctx) => {
     await setReference(ctx, "owner");
+  });
+
+  // /profile — the dossier she keeps about the owner, holes included.
+  //
+  // Exists because a memory only one of them can read cannot be checked: the
+  // owner's description was "она должна составить анкету, автобиографию обо
+  // мне", and the point of a questionnaire is that its subject can read it and
+  // see what is missing. The empty sections are the to-do list — "работа — пока
+  // не знаю" is the honest state of the base, and hiding it would make a
+  // half-empty dossier look complete.
+  bot.command("profile", async (ctx) => {
+    const chatId = ctx.chat?.id;
+    if (chatId === undefined) return;
+    try {
+      const rows = profileKnowledge(200);
+      const text = renderProfileDossier(rows, {
+        offsetHours: loadConfig()?.agent?.timezone_offset_hours ?? 4,
+        includeHoles: true,
+      });
+      const where = writeProfileDoc(
+        `# Что я о нём знаю\n\n${text}\n\n_(обновлено ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC)\n`,
+      );
+      console.log(`📋 Анкета: ${rows.length} записей → ${where}`);
+      await ctx.reply(`Что я о нём знаю:\n\n${text}`);
+    } catch (err) {
+      console.error("⚠️ анкета не собралась:", err instanceof Error ? err.message : err);
+      await ctx.reply("Не получилось собрать анкету — посмотри журнал.");
+    }
   });
 
   // /study

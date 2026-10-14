@@ -13,6 +13,7 @@ import {
   type EvaConfig,
 } from "./config.js";
 import { searchKnowledge, renderKnowledge, KNOWLEDGE_PROMPT_LIMIT, profileKnowledge } from "./memory/knowledge.js";
+import { renderProfileDossier, PROFILE_RULE } from "./profile-dossier.js";
 import { saveMessage, loadHistory, extractText, previousLiveExchange, recentSeams } from "./memory/conversations.js";
 import { gapFacts, GAP_THRESHOLD_MIN, type GapFacts } from "./memory/time-words.js";
 import { compactHistory } from "./memory/compaction.js";
@@ -811,16 +812,9 @@ export class Engine {
     // is decoration.
     try {
       if (!reportTurn) {
-        const profile = renderKnowledge(profileKnowledge(), {
-          offsetHours: live.timezoneOffsetHours ?? 4,
-        });
+        const profile = renderProfileDossier(profileKnowledge());
         if (profile) {
-          prompt +=
-            `\n\n## Что я о нём знаю\n\n${profile}\n\n` +
-            `Это знания о нём, а не твои. Если он говорит о том, о чём здесь сказано, ` +
-            `опирайся на запись, а не на свой вкус: он любит не то же, что нравится тебе. ` +
-            `Если он предлагает то, что в записи ему не нравится, — скажи прямо, что он этого ` +
-            `не любит, и предложи то, что любит.`;
+          prompt += `\n\n## Что я о нём знаю\n\n${profile}\n\n${PROFILE_RULE}`;
         }
       }
     } catch {
