@@ -22,6 +22,7 @@ import { runDoctor, formatReport } from "./core/doctor.js";
 import { runInit, nextSteps, InitCancelled } from "./core/init.js";
 import { referencePhotoPath, ownerReferencePhotoPath, hasReferencePhoto, hasOwnerReferencePhoto } from "./core/reference-photo.js";
 import { archiveThenDeliver, isReportTask } from "./core/watch-reports.js";
+import { SILENCE_REPLY, saidNothing } from "./core/silence.js";
 import type { EmbeddingEndpoint } from "./core/memory/dedup.js";
 
 /**
@@ -391,6 +392,23 @@ async function main() {
           metadata: { scheduledTask: true },
         });
 
+        // A clean round says nothing, in the same shape the initiative uses:
+        // the answer is exactly `[тишина]`. Until this branch existed the
+        // instruction "если всё чисто — НИЧЕГО не пиши" was unfulfillable — a
+        // scheduled turn has no other way to produce no message, and an empty
+        // answer is read as a failed turn. The five reports in
+        // reports/server_watch.md are all text, every all-clear among them: the
+        // round could only ever answer, so it answered every time.
+        //
+        // Silence still leaves a line here. "Said nothing" and "never ran" must
+        // not look alike — the empty-answer bug was exactly that confusion, and
+        // without the line, shorter intervals would quietly become checks that
+        // never happened.
+        if (saidNothing(result.text)) {
+          console.log(`🕊 Плановая проверка "${task.name}": чисто — промолчала (ни сообщения, ни записи)`);
+          return;
+        }
+
         // The archive is a separate destination on purpose: the owner reads her
         // reports there, in order, without the ordinary conversation around
         // them — and it is written before the send, so a bad night for Telegram
@@ -451,7 +469,7 @@ async function main() {
             `${SCHEDULED_TURN_PREFIX} «инициатива».`,
             `Сейчас ${clock} — период «${due.instance.period.name}». Ты пишешь Жене сама, первой, без его запроса.`,
             `Реши сама: написать текстом, прислать селфи или голосовое (с подписью или без) — или не писать ничего, если момент не тот. Что и как — на твоё усмотрение; пусть будет по времени суток к месту.`,
-            `Одно короткое сообщение. Если решишь промолчать — ответь ровно [тишина].`,
+            `Одно короткое сообщение. Если решишь промолчать — ответь ровно ${SILENCE_REPLY}.`,
           ].join("\n");
 
           const result = await engine.process({
@@ -464,7 +482,7 @@ async function main() {
 
           // The moment is spent either way; only a real message resets the gap.
           const fired = (state.instanceId === due.instance.id ? state.fired : 0) + 1;
-          if (result.text.trim() === "[тишина]") {
+          if (saidNothing(result.text)) {
             saveState({ instanceId: due.instance.id, fired, lastSentAt: state.lastSentAt });
             console.log(`🕊 Инициатива: ${due.instance.period.name} — промолчала`);
             return;
