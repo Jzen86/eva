@@ -62,6 +62,24 @@ describe("profile dossier", () => {
     expect(withoutHoles).not.toContain("### досуг");
   });
 
+  it("prints the fact, not the story", () => {
+    // The owner read the first version of the dossier and said: "много воды и
+    // бесполезной инфы". The rows carried their own narration ("он уточнил,
+    // что…") and, for a case, the ending of one particular conversation — which
+    // is how a questionnaire turns into a retelling. A dossier line is a fact.
+    addKnowledge({
+      topic: "работа",
+      insight: "Работает на складе, ночная смена.",
+      source: "test",
+      kind: "profile",
+      conclusion: "Об этом говорили после смены.",
+    });
+
+    const text = renderProfileDossier(profileKnowledge(), { includeHoles: true });
+    expect(text).toContain("- Работает на складе, ночная смена.");
+    expect(text).not.toContain("Об этом говорили после смены");
+  });
+
   it("shows a fact whose topic is not one of the sections", () => {
     // A row that exists must never become invisible to the person reading the
     // dossier: the sections are a shape, not a filter.

@@ -102,11 +102,11 @@ export function renderProfileDossier(rows: KnowledgeRow[], opts: DossierOptions 
       lines.push(HOLE);
     } else {
       for (const f of facts) {
-        // No dates here on purpose: the dossier is about who he is, and "любит
-        // зелёный — 12.10" reads as if the preference expires. When it was
-        // learned belongs to the searched side of memory, where time matters.
-        const detail = [f.insight, f.conclusion].filter(Boolean).join(" ");
-        lines.push(`- ${detail}`);
+        // The fact only. `conclusion` and the case fields belong to the searched
+        // side: they say how one conversation ended, and a dossier line that
+        // carries "он уточнил, что…" is the water the owner read first and
+        // longest — a questionnaire is read for the fact, not for the story.
+        lines.push(`- ${f.insight.trim()}`);
       }
     }
     lines.push("");
