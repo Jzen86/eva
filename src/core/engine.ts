@@ -13,13 +13,8 @@ import {
   type EvaConfig,
 } from "./config.js";
 import { searchKnowledge, renderKnowledge, KNOWLEDGE_PROMPT_LIMIT, profileKnowledge, knowledgeOfKind } from "./memory/knowledge.js";
-import {
-  renderProfileDossier,
-  renderFlatBlock,
-  PROFILE_RULE,
-  RULES_RULE,
-  LESSON_RULE,
-} from "./profile-dossier.js";
+import { renderProfileDossier, renderFlatBlock, PROFILE_RULE, RULES_RULE, LESSON_RULE } from "./profile-dossier.js";
+import { previewImage } from "./image-preview.js";
 import { saveMessage, loadHistory, extractText, previousLiveExchange, recentSeams } from "./memory/conversations.js";
 import { gapFacts, GAP_THRESHOLD_MIN, type GapFacts } from "./memory/time-words.js";
 import { compactHistory } from "./memory/compaction.js";
@@ -656,17 +651,28 @@ export class Engine {
            * while it is being judged and not on every later message.
            */
           if (result.mediaUrl?.startsWith("data:image/")) {
-            const feedback: LLMMessage = {
-              role: "user",
-              content: [
-                { type: "text", text: "Вот что получилось на этом кадре — посмотри сама перед тем, как отвечать." },
-                { type: "image_url", image_url: { url: result.mediaUrl } },
-              ],
-            };
-            history.push(feedback);
-            const shown = this.imageFeedback.get(userId) ?? [];
-            shown.push(feedback);
-            this.imageFeedback.set(userId, shown);
+            const preview = await previewImage(result.mediaUrl);
+            if (preview) {
+              console.log(JSON.stringify({
+                tag: "engine:image_feedback",
+                tool: tc.name,
+                inBytes: result.mediaUrl.length,
+                outBytes: preview.dataUrl.length,
+                bytes: preview.bytes,
+                shrunk: !preview.original,
+              }));
+              const feedback: LLMMessage = {
+                role: "user",
+                content: [
+                  { type: "text", text: "Вот что получилось на этом кадре — посмотри сама перед тем, как отвечать." },
+                  { type: "image_url", image_url: { url: preview.dataUrl } },
+                ],
+              };
+              history.push(feedback);
+              const shown = this.imageFeedback.get(userId) ?? [];
+              shown.push(feedback);
+              this.imageFeedback.set(userId, shown);
+            }
           }
 
           onProgress?.({ type: "tool_end", tool: tc.name, turn: turn + 1, success: result.success });
