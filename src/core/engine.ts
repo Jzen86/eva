@@ -147,16 +147,18 @@ const EMPTY_SERVICE_REPLY =
  * broken picture is worse than admitting the generator missed, since the owner
  * then goes looking for the fault in himself.
  */
+/**
+ * What she is told when her own picture is put in front of her.
+ *
+ * Two sentences, on purpose. The first version listed the defects to look for and
+ * she recited them; the second listed the ones to ignore and was just as
+ * specific — the same mistake twice, both times mine. What has to be said is the
+ * task (does the picture show what he asked for) and who decides (he does), and
+ * neither needs an inventory of failure modes to be understood.
+ */
 export const IMAGE_FEEDBACK_NOTE =
-  "Вот что получилось на этом кадре. Это заметка себе, а не часть ответа.\n" +
-  "Смотри только на одно: о том ли кадр, чего просил он — та ли сцена, те ли люди, то ли " +
-  "действие. Анатомию и мелкие огрехи генератора НЕ оценивай: на этом ты ошибаешься. " +
-  "Триста раз проверено на живых кадрах — ты видишь скрюченные пальцы, смазанные кисти и " +
-  "лишние руки там, где их нет, и потом бурчишь на нормальную картинку.\n" +
-  "Свой кадр сама не переделывай — решает он. Переделывай, только если кадра не вышло " +
-  "вовсе или он не о том (одна, а просили вдвоём; пустой фон вместо комнаты).\n" +
-  "Отвечай обычно: без отчёта о проверке, без перечисления недостатков, без извинений " +
-  "за качество. Тебе кажется браком почти всегда нормальный кадр.";
+  "Вот что получилось на этом кадре. Смотри на одно: то ли на нём, что он просил. " +
+  "Переделывать или нет — решает он, не ты.";
 
 export interface EngineDeps {
   llm: {
