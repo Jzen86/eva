@@ -68,6 +68,11 @@ const EXPECTED_ROLES: Array<{ role: string; required: boolean; note: string }> =
   { role: "fast", required: true, note: "ежедневная болтовня — без неё я молчу вообще" },
   { role: "strong", required: true, note: "сложные задачи и работа с инструментами" },
   { role: "study", required: false, note: "фоновое обучение — без него память не растёт" },
+  {
+    role: "checks",
+    required: false,
+    note: "плановые проверки (сервер, свой лог) — без неё они идут на strong, как обычный тулзовый ход",
+  },
   { role: "embed", required: false, note: "эмбеддинги — без них дедуп только лексический, это режим, а не поломка" },
 ];
 

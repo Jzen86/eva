@@ -135,6 +135,20 @@ export class LLMRouter {
   }
 
   /**
+   * A client for any named role, with the same fallback chain as fast/strong.
+   *
+   * `role()` above is the opposite choice on purpose: it returns exactly the
+   * configured model and lets the caller see the failure, which is right for
+   * study and embeddings, where a silent switch to another model would mean
+   * quietly learning on a different brain. Service turns want the other
+   * behaviour — a check that dies because one model is unavailable is a check
+   * that did not happen, and the owner would never learn why.
+   */
+  proxied(name: string): LLMClient {
+    return this.roleProxy(name);
+  }
+
+  /**
    * A client for any named role. Non-fallback: the caller gets exactly the
    * configured model and sees its errors. Used by study and embeddings, where
    * silently switching to a different model would be wrong.

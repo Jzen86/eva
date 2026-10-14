@@ -389,7 +389,7 @@ async function main() {
           userId: task.chatId,
           text: prompt,
           timestamp: Date.now(),
-          metadata: { scheduledTask: true },
+          metadata: { scheduledTask: true, reportTask: isReportTask(task.schedule) },
         });
 
         // A clean round says nothing, in the same shape the initiative uses:

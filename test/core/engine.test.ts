@@ -217,6 +217,92 @@ describe("Engine", () => {
     expect(res.text).not.toMatch(/прослушала|отвлеклась|задумалась|повтори/);
   });
 
+  it("runs a check on its own role, and does not lift it to strong", async () => {
+    // A check's whole job is heavy: it runs `shell` on its first turn and keeps
+    // running it. So the ordinary lift would hand every check to `strong` and
+    // the dedicated role would never be used — which is the point of having one:
+    // the work is narrow (read a log, read a diff, write a report), not a
+    // conversation.
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const tools = new ToolRegistry();
+      tools.register({
+        name: "shell",
+        description: "shell",
+        parameters: [],
+        async execute() { return { success: true, output: "ok" }; },
+      });
+      const checksChat = vi.fn()
+        .mockResolvedValueOnce({
+          text: "",
+          stopReason: "tool_use",
+          toolCalls: [{ id: "c1", name: "shell", arguments: { command: "uptime" } }],
+        })
+        .mockResolvedValueOnce({ text: "отчёт", stopReason: "end_turn" });
+      const fastChat = vi.fn().mockResolvedValue({ text: "чат", stopReason: "end_turn" });
+      const strongChat = vi.fn().mockResolvedValue({ text: "сильный", stopReason: "end_turn" });
+      const llm = {
+        fast: () => ({ chat: fastChat }),
+        strong: () => ({ chat: strongChat }),
+        proxied: (name: string) => (name === "checks" ? { chat: checksChat } : { chat: strongChat }),
+        hasRole: (n: string) => n === "strong" || n === "checks",
+      };
+      const engine = new Engine({ llm, config: testConfig, tools });
+      const res = await engine.process({
+        channelName: "test",
+        userId: "checks-user",
+        text: "обход сервера",
+        timestamp: Date.now(),
+        metadata: { scheduledTask: true, reportTask: true },
+      });
+
+      expect(res.text).toBe("отчёт");
+      expect(checksChat).toHaveBeenCalledTimes(2);
+      expect(strongChat).not.toHaveBeenCalled();
+      expect(fastChat).not.toHaveBeenCalled();
+      // And the journal says which role answered, so "почему это стоило столько"
+      // is answerable from the log alone.
+      const tiers = spy.mock.calls
+        .map((c) => { try { return JSON.parse(String(c[0])); } catch { return null; } })
+        .filter((o): o is { tag: string; tier: string } => Boolean(o) && o.tag === "engine")
+        .map((o) => o.tier);
+      expect(tiers).toEqual(["checks", "checks"]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("keeps a one-shot scheduled message on the usual roles", async () => {
+    // A reminder is not a check: it is her voice in a message, so it runs where
+    // a conversation runs. The scheduler marks the difference (`reportTask`).
+    const tools = new ToolRegistry();
+    tools.register({
+      name: "shell",
+      description: "shell",
+      parameters: [],
+      async execute() { return { success: true, output: "ok" }; },
+    });
+    const checksChat = vi.fn().mockResolvedValue({ text: "отчёт", stopReason: "end_turn" });
+    const fastChat = vi.fn().mockResolvedValue({ text: "доброе утро", stopReason: "end_turn" });
+    const llm = {
+      fast: () => ({ chat: fastChat }),
+      strong: () => ({ chat: fastChat }),
+      proxied: () => ({ chat: checksChat }),
+      hasRole: () => true,
+    };
+    const engine = new Engine({ llm, config: testConfig, tools });
+    const res = await engine.process({
+      channelName: "test",
+      userId: "reminder-user",
+      text: "будильник",
+      timestamp: Date.now(),
+      metadata: { scheduledTask: true, reportTask: false },
+    });
+
+    expect(res.text).toBe("доброе утро");
+    expect(checksChat).not.toHaveBeenCalled();
+  });
+
   it("handles LLM errors gracefully", async () => {
     const llm = {
       fast: () => ({

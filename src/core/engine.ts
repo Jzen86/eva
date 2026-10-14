@@ -134,7 +134,18 @@ const EMPTY_SERVICE_REPLY =
   "⚠️ Плановое задание осталось без ответа: модель промолчала дважды. Проверки не было — отчёта нет, следующий заход по расписанию.";
 
 export interface EngineDeps {
-  llm: { fast(): LLMClient; strong(): LLMClient; hasRole?(name: string): boolean };
+  llm: {
+    fast(): LLMClient;
+    strong(): LLMClient;
+    hasRole?(name: string): boolean;
+    /**
+     * A role's client with the fallback chain, like `fast()`/`strong()`.
+     *
+     * Optional so a test can hand in a two-role fake; the engine checks for its
+     * presence before using it, exactly as it does with `hasRole`.
+     */
+    proxied?(name: string): LLMClient;
+  };
   config: PromptConfig;
   tools: ToolRegistry;
   encryptionKey?: string;
@@ -313,7 +324,6 @@ export class Engine {
   }
 
   private async processLocked(msg: IncomingMessage, onProgress?: ProgressCallback): Promise<OutgoingMessage> {
-    let llm = this.deps.llm.fast();
     /**
      * Which role answers right now, for the turn log.
      *
@@ -322,10 +332,31 @@ export class Engine {
      * only guessed at. The tier is what the routing decision actually is, so it
      * is written down where the decision is made.
      */
-    let tier: "fast" | "strong" = "fast";
+    let tier: "fast" | "strong" | "checks" = "fast";
     // Only upgrade to the strong role when it is configured. A tool turn would
     // otherwise ask a role that resolves to nothing and fail.
     const strongAvailable = this.deps.llm.hasRole?.("strong") ?? false;
+    /**
+     * A report turn — a scheduled check writing what it found — runs on its own
+     * role, and stays there.
+     *
+     * The role is optional: with no `models.checks` in the config the turn runs
+     * exactly as it did before, on `fast` and lifting to `strong` like any other
+     * tool turn. That keeps the base installable with one provider, and it is
+     * why the checks role is a role rather than a new mechanism.
+     *
+     * The lift is deliberately switched off here. A check's whole job is heavy —
+     * it runs `shell` on its first turn and keeps running it — so the ordinary
+     * rule would lift every check turn to `strong` and the dedicated role would
+     * never be used. Which is also the honest reason the role can exist at all:
+     * on this turn the model is doing one narrow kind of work (read a log, read
+     * a diff, write a report), not holding a conversation.
+     */
+    const checksTurn =
+      msg.metadata?.reportTask === true &&
+      (this.deps.llm.proxied !== undefined && (this.deps.llm.hasRole?.("checks") ?? false));
+    let llm = checksTurn ? this.deps.llm.proxied!("checks") : this.deps.llm.fast();
+    if (checksTurn) tier = "checks";
     const userId = msg.userId;
 
     // Wait for any in-flight compaction to finish before proceeding
@@ -514,10 +545,14 @@ export class Engine {
         // note — leaves the rest of the turn on the chat model; a heavy one
         // lifts it. `llm` is never put back down, so once a heavy step has
         // raised the turn it stays raised to its end. See tool-tiers.ts.
+        //
+        // A report turn is excluded: it was already started on its own role
+        // because everything it does is heavy, and lifting it here would hand
+        // the check straight back to `strong` on the first `shell` call.
         const needsStrong = response.toolCalls.some((tc) =>
           isHeavyToolCall(tc.name, tc.arguments),
         );
-        if (needsStrong && strongAvailable) {
+        if (needsStrong && strongAvailable && !checksTurn) {
           llm = this.deps.llm.strong();
           tier = "strong";
         }
