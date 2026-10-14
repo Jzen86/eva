@@ -390,6 +390,7 @@ export class Engine {
       msg.timestamp,
       msg.metadata?.scheduledTask === true,
       history.length % 3 !== 0,
+      msg.metadata?.reportTask === true,
     );
 
     // Add user message (with reply context and/or images if present)
@@ -772,6 +773,18 @@ export class Engine {
      * silence does not reset it to the same value every time.
      */
     engage: boolean,
+    /**
+     * This turn is a planned *check*, not a message to him.
+     *
+     * Such a turn reads a log and a diff and writes a report; the memory of what
+     * he likes and what they decided is not input to that work. Worse than
+     * useless, it is an invitation: twelve lines of personal history in front of
+     * a code review is how a report about a regression ends up mentioning how
+     * they felt about it. The initiative keeps its memory — it *is* writing to
+     * him — so the two service turns are told apart by `reportTask`, the same
+     * flag that picks the model for the turn.
+     */
+    reportTurn = false,
   ): string {
     let connectedServiceNames: string[] = [];
     if (this.deps.encryptionKey) {
@@ -793,13 +806,17 @@ export class Engine {
     // knowledge.ts so a case can never reach the prompt stripped of the state it
     // happened in — and never without the date it happened on — the same shaping
     // is used by the memory tool's own search.
+    //
+    // Not on a check turn: see the `reportTurn` note above.
     try {
-      const hits = searchKnowledge(userMessage, KNOWLEDGE_PROMPT_LIMIT);
-      const rendered = renderKnowledge(hits, {
-        offsetHours: live.timezoneOffsetHours ?? 4,
-      });
-      if (rendered) {
-        prompt += `\n\n## Что было раньше\n\n${rendered}`;
+      if (!reportTurn) {
+        const hits = searchKnowledge(userMessage, KNOWLEDGE_PROMPT_LIMIT);
+        const rendered = renderKnowledge(hits, {
+          offsetHours: live.timezoneOffsetHours ?? 4,
+        });
+        if (rendered) {
+          prompt += `\n\n## Что было раньше\n\n${rendered}`;
+        }
       }
     } catch {
       // Memory not initialized yet — skip
