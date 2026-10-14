@@ -90,6 +90,53 @@ describe("memory in the prompt", () => {
     expect(String(system)).not.toContain("шампиньоны");
   });
 
+  it("shows her the picture she just made — for that turn only", async () => {
+    // She generated blind: the picture went to the channel, and the model that
+    // wrote the prompt never saw it. Live: the same request produced both hands
+    // on her chest in one frame and her own hand there a minute later, and only
+    // someone looking at the result can tell which is which.
+    const tools = new ToolRegistry();
+    tools.register({
+      name: "selfie",
+      description: "selfie",
+      parameters: [],
+      async execute() {
+        return { success: true, output: "Селфи отправлено в чат", mediaUrl: "data:image/png;base64,AAAA" };
+      },
+    });
+    const chat = vi.fn()
+      .mockResolvedValueOnce({
+        text: "",
+        stopReason: "tool_use",
+        toolCalls: [{ id: "c1", name: "selfie", arguments: {} }],
+      })
+      .mockResolvedValue({ text: "готово", stopReason: "end_turn" });
+    const llm = { fast: () => ({ chat }), strong: () => ({ chat }), hasRole: () => false };
+    const engine = new Engine({ llm, config: testConfig, tools });
+
+    await engine.process({
+      channelName: "test",
+      userId: "eyes",
+      text: "сделай кадр",
+      timestamp: Date.now(),
+    });
+
+    // The request that follows the tool call carries the picture itself.
+    expect(JSON.stringify(chat.mock.calls[1]?.[0])).toContain("data:image/png;base64,AAAA");
+
+    chat.mockClear();
+    await engine.process({
+      channelName: "test",
+      userId: "eyes",
+      text: "ага",
+      timestamp: Date.now(),
+    });
+
+    // And the next turn does not: it is there to be judged, not to be paid for
+    // on every message of the session.
+    expect(JSON.stringify(chat.mock.calls[0]?.[0])).not.toContain("base64,AAAA");
+  });
+
   it("puts his profile in front of a chat turn, with the rule that it wins", async () => {
     // The always-on block. A preference is true whatever the topic is, so it is
     // not searched for — and the sentence after the list is the part the live

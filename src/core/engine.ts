@@ -164,6 +164,13 @@ export class Engine {
   private summaries: Map<string, string> = new Map();
   private compactionInFlight: Map<string, Promise<void>> = new Map();
   /**
+   * The "here is what you made" messages pushed during the current turn, per
+   * user, so the next turn can take them back out. See the push in the tool
+   * loop: a generated picture should be visible while it is being judged, not
+   * on every message afterwards.
+   */
+  private imageFeedback: Map<string, LLMMessage[]> = new Map();
+  /**
    * One turn at a time per user.
    *
    * `process()` mutates the shared history array across awaits: it pushes an
@@ -377,6 +384,16 @@ export class Engine {
       this.hydrateUser(userId);
     }
     let history = this.histories.get(userId)!;
+
+    // Drop the pictures shown to her during the previous turn. They exist so she
+    // can judge what she just generated; keeping them would charge image tokens
+    // on every later message of the session. See the feedback push below.
+    const previousFeedback = this.imageFeedback.get(userId);
+    if (previousFeedback?.length) {
+      history = history.filter((m) => !previousFeedback.includes(m));
+      this.histories.set(userId, history);
+      this.imageFeedback.delete(userId);
+    }
 
     // The window is full: fold what falls out of it into the digest before the
     // cut, so the oldest thing the model can still see does not simply stop
@@ -619,6 +636,38 @@ export class Engine {
             toolCallId: tc.id,
           });
           saveMessage(userId, msg.channelName, "tool", resultText, tc.id);
+
+          /**
+           * Show her what she just made.
+           *
+           * The picture goes out to the channel as a data URL, and the model that
+           * wrote the prompt never saw it: she generated blind, the owner said
+           * "не то", and she rewrote the words with no idea which part was wrong.
+           * Measured on the live install: the same request produced a frame with
+           * both hands on her chest and, one minute later, a frame with her hand
+           * there and his lower — the model follows "touching" loosely, and only
+           * whoever looks at the result can tell. So the image travels back to her
+           * as an image part she can see.
+           *
+           * It is a synthetic user message, and deliberately not saved: it is not
+           * something the owner said, and it must not enter the archive as a turn
+           * of the conversation. It also lives for one turn only — the engine drops
+           * these at the start of the next one, so a picture costs image tokens
+           * while it is being judged and not on every later message.
+           */
+          if (result.mediaUrl?.startsWith("data:image/")) {
+            const feedback: LLMMessage = {
+              role: "user",
+              content: [
+                { type: "text", text: "Вот что получилось на этом кадре — посмотри сама перед тем, как отвечать." },
+                { type: "image_url", image_url: { url: result.mediaUrl } },
+              ],
+            };
+            history.push(feedback);
+            const shown = this.imageFeedback.get(userId) ?? [];
+            shown.push(feedback);
+            this.imageFeedback.set(userId, shown);
+          }
 
           onProgress?.({ type: "tool_end", tool: tc.name, turn: turn + 1, success: result.success });
         }
