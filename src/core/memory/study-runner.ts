@@ -47,8 +47,9 @@ import {
   trimKnowledge,
   type KnowledgeRow,
 } from "./knowledge.js";
+import { BLOCK_LABELS as BLOCK_LABELS_FROM_DOSSIER } from "../profile-dossier.js";
 import { findLexicalDuplicate, learnInsight, type EmbeddingEndpoint } from "./dedup.js";
-import { retireKnowledge } from "./knowledge.js";
+import { retireKnowledge, type KnowledgeKind } from "./knowledge.js";
 import {
   extractText,
   loadSummary,
@@ -319,7 +320,7 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
           // would make "мы говорили об этом вчера" a falsehood the base tells
           // about itself.
           timestamp: generated.coveredAt,
-          kind: f.kind === "profile" ? "profile" : "episode",
+          kind: normalizeKind(f.kind),
           ...(f.conclusion ? { conclusion: f.conclusion } : {}),
           ...(c.her_move ? { her_move: c.her_move } : {}),
           ...(c.context ? { context: c.context } : {}),
@@ -343,7 +344,7 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
             retireKnowledge(old.id, outcome.id);
           }
         }
-        written.push({ topic: f.topic, fact: f.fact, kind: f.kind === "profile" ? "profile" : "episode", c });
+        written.push({ topic: f.topic, fact: f.fact, kind: normalizeKind(f.kind), c });
       } else {
         refused.push(`«${truncate(f.fact, 60)}» — ${outcome.reason}`);
       }
@@ -493,6 +494,11 @@ function buildStudyMessages(
     "  \"episode\" — что было: о чём говорили, что решили, о чём спорили, чем кончилось.",
     "              Такое ищется по теме разговора, поэтому пиши конкретные слова — имена,",
     "              названия («в Battlefield», «дота», «боевики»), иначе запись не найдётся.",
+    "  \"rules\" — как с тобой работать: что он требует, что запрещает, в каком формате ждёт",
+    "              результат. Это не про него, а про твою работу, и висит перед тобой всегда.",
+    "  \"lesson\" — чему он тебя научил: что значит его слово, как понимать его выражение,",
+    "              где привычное значение не подходит («„моё“ — как „моя школа“: гордость,",
+    "              а не собственность»). Пиши его словами, это меняет понимание, а не факты.",
     "Сомневаешься — \"episode\".",
     "",
     "Пиши то, что важно помнить: факты о нём и о ней, события — что было и чем",
@@ -764,12 +770,16 @@ function keepNewest(text: string, max: number): string {
  * with where the record went, because he asked for exactly that —
  * "добавь в скобках блок куда сохранилось, например (💾профиль)", so that two
  * similar rows landing in different blocks are readable at a glance instead of
- * being a surprise months later.
+ * being a surprise months later. The words live in profile-dossier.ts, since the
+ * prompt and `/profile` name the same blocks.
  */
-const BLOCK_LABELS: Record<string, string> = {
-  profile: "профиль",
-  episode: "события",
-};
+const BLOCK_LABELS = BLOCK_LABELS_FROM_DOSSIER;
+
+/** One of the four kinds, whatever the model happened to write in the field. */
+function normalizeKind(value: unknown): KnowledgeKind {
+  return value === "profile" || value === "rules" || value === "lesson" ? value : "episode";
+}
+
 
 /** One thing to store: a fact about a person, or a case with all three fields. */
 export interface StudyFact {
@@ -924,7 +934,7 @@ function parseStudyJson(
     facts.push({
       topic,
       fact,
-      kind: str("kind") === "profile" ? "profile" : "episode",
+      kind: normalizeKind(str("kind")),
       replaces: str("replaces"),
       her_move: str("her_move"),
       context: str("context"),

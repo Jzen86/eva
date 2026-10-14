@@ -4,10 +4,12 @@ import os from "node:os";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import { getDB, closeDB } from "../../src/core/memory/db.js";
-import { addKnowledge, profileKnowledge } from "../../src/core/memory/knowledge.js";
+import { addKnowledge, profileKnowledge, knowledgeOfKind } from "../../src/core/memory/knowledge.js";
 import {
   PROFILE_SECTIONS,
+  BLOCK_LABELS,
   renderProfileDossier,
+  renderFlatBlock,
   profileDocPath,
   writeProfileDoc,
 } from "../../src/core/profile-dossier.js";
@@ -102,5 +104,31 @@ describe("profile dossier", () => {
     // The study prompt tells the writer to choose from this list. If it grows,
     // the writer has to guess, and guessing is how the topics drifted apart.
     expect(PROFILE_SECTIONS.length).toBeLessThanOrEqual(8);
+  });
+
+  it("renders rules and lessons as their own blocks, not as sections", () => {
+    // They have no questionnaire shape: a requirement and an explanation are
+    // each their own line. But they are always in front of her for the same
+    // reason a preference is — a rule applies to every kind of work, and a word
+    // of his means the same thing in every conversation.
+    addKnowledge({ topic: "правки", insight: "Новых файлов не создавать.", source: "test", kind: "rules" });
+    addKnowledge({ topic: "его слова", insight: "«Моё» — как «моя школа»: гордость, а не собственность.", source: "test", kind: "lesson" });
+    addKnowledge({ topic: "работа", insight: "Работает на складе.", source: "test", kind: "profile" });
+
+    const rules = knowledgeOfKind("rules");
+    const lessons = knowledgeOfKind("lesson");
+    expect(renderFlatBlock(rules)).toBe("- Новых файлов не создавать.");
+    expect(renderFlatBlock(lessons)).toContain("как «моя школа»");
+
+    // And they stay out of the profile sections: mixing them back in is how the
+    // questionnaire fills up with work instructions instead of the person.
+    const profile = renderProfileDossier(profileKnowledge(), { includeHoles: true });
+    expect(profile).not.toContain("Новых файлов");
+    expect(profile).not.toContain("моя школа");
+  });
+
+  it("names all four blocks in the owner's language", () => {
+    expect(Object.keys(BLOCK_LABELS).sort()).toEqual(["episode", "lesson", "profile", "rules"]);
+    expect(BLOCK_LABELS.lesson).toBe("чему он меня научил");
   });
 });

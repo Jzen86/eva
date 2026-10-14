@@ -6,8 +6,8 @@ import { transcribeVoice } from "./transcribe.js";
 import { sendVideoNote } from "./video.js";
 import { applyPending, discard, peek, describe } from "../../core/pending.js";
 import { loadConfig, patchConfig } from "../../core/config.js";
-import { profileKnowledge } from "../../core/memory/knowledge.js";
-import { renderProfileDossier, writeProfileDoc } from "../../core/profile-dossier.js";
+import { profileKnowledge, knowledgeOfKind } from "../../core/memory/knowledge.js";
+import { renderProfileDossier, renderFlatBlock, writeProfileDoc } from "../../core/profile-dossier.js";
 import {
   start as startQuest,
   answerText as answerQuestText,
@@ -846,14 +846,21 @@ export function registerHandlers(
     if (chatId === undefined) return;
     try {
       const rows = profileKnowledge(200);
-      const text = renderProfileDossier(rows, {
-        offsetHours: loadConfig()?.agent?.timezone_offset_hours ?? 4,
-        includeHoles: true,
-      });
+      const rules = knowledgeOfKind("rules", 200);
+      const lessons = knowledgeOfKind("lesson", 200);
+      const parts = [
+        renderProfileDossier(rows, {
+          offsetHours: loadConfig()?.agent?.timezone_offset_hours ?? 4,
+          includeHoles: true,
+        }),
+      ];
+      if (rules.length) parts.push(`## Как с ним работать\n\n${renderFlatBlock(rules)}`);
+      if (lessons.length) parts.push(`## Чему он меня научил\n\n${renderFlatBlock(lessons)}`);
+      const text = parts.join("\n\n");
       const where = writeProfileDoc(
         `# Что я о нём знаю\n\n${text}\n\n_(обновлено ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC)\n`,
       );
-      console.log(`📋 Анкета: ${rows.length} записей → ${where}`);
+      console.log(`📋 Анкета: ${rows.length} записей, правил ${rules.length}, уроков ${lessons.length} → ${where}`);
       await ctx.reply(`Что я о нём знаю:\n\n${text}`);
     } catch (err) {
       console.error("⚠️ анкета не собралась:", err instanceof Error ? err.message : err);

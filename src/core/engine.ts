@@ -12,8 +12,14 @@ import {
   loadConfig,
   type EvaConfig,
 } from "./config.js";
-import { searchKnowledge, renderKnowledge, KNOWLEDGE_PROMPT_LIMIT, profileKnowledge } from "./memory/knowledge.js";
-import { renderProfileDossier, PROFILE_RULE } from "./profile-dossier.js";
+import { searchKnowledge, renderKnowledge, KNOWLEDGE_PROMPT_LIMIT, profileKnowledge, knowledgeOfKind } from "./memory/knowledge.js";
+import {
+  renderProfileDossier,
+  renderFlatBlock,
+  PROFILE_RULE,
+  RULES_RULE,
+  LESSON_RULE,
+} from "./profile-dossier.js";
 import { saveMessage, loadHistory, extractText, previousLiveExchange, recentSeams } from "./memory/conversations.js";
 import { gapFacts, GAP_THRESHOLD_MIN, type GapFacts } from "./memory/time-words.js";
 import { compactHistory } from "./memory/compaction.js";
@@ -815,6 +821,14 @@ export class Engine {
         const profile = renderProfileDossier(profileKnowledge());
         if (profile) {
           prompt += `\n\n## Что я о нём знаю\n\n${profile}\n\n${PROFILE_RULE}`;
+        }
+        const rules = renderFlatBlock(knowledgeOfKind("rules"));
+        if (rules) {
+          prompt += `\n\n## Как с ним работать\n\n${rules}\n\n${RULES_RULE}`;
+        }
+        const lessons = renderFlatBlock(knowledgeOfKind("lesson"));
+        if (lessons) {
+          prompt += `\n\n## Чему он меня научил\n\n${lessons}\n\n${LESSON_RULE}`;
         }
       }
     } catch {

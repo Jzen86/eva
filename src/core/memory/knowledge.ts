@@ -165,7 +165,7 @@ export interface AddKnowledgeInput {
  */
 
 /** The two kinds of memory the base holds. See db.ts for the split. */
-export type KnowledgeKind = "profile" | "episode";
+export type KnowledgeKind = "profile" | "rules" | "lesson" | "episode";
 
 /**
  * Add a knowledge entry to the database.
@@ -269,21 +269,32 @@ export function searchKnowledge(query: string, limit = 5): KnowledgeRow[] {
  * about him.
  */
 export function profileKnowledge(limit = 24): KnowledgeRow[] {
+  return knowledgeOfKind("profile", limit);
+}
+
+/**
+ * Every active row of one block, newest first.
+ *
+ * Used for the blocks that are always in front of her: `profile`, `rules`,
+ * `lesson`. The searched side does not come through here — it is found by
+ * `searchKnowledge`, which is the other half of the same table.
+ */
+export function knowledgeOfKind(kind: KnowledgeKind, limit = 24): KnowledgeRow[] {
   const db = getDB();
   try {
     const rows = db
       .prepare(
         `SELECT ${SELECT_COLUMNS} FROM knowledge
-          WHERE superseded_at IS NULL AND kind = 'profile'
+          WHERE superseded_at IS NULL AND kind = ?
           ORDER BY id DESC
           LIMIT ?`,
       )
-      .all(limit) as KnowledgeRow[];
+      .all(kind, limit) as KnowledgeRow[];
     if (rows.length > 0) touchKnowledge(rows.map((r) => r.id));
     return rows;
   } catch (err) {
     console.warn(
-      `⚠️ Профиль не прочитан (${err instanceof Error ? err.message : err}), пропускаю`,
+      `⚠️ Блок "${kind}" не прочитан (${err instanceof Error ? err.message : err}), пропускаю`,
     );
     return [];
   }

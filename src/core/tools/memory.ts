@@ -29,6 +29,17 @@ function optionalString(
   return typeof val === "string" && val.trim() ? val.trim() : null;
 }
 
+/**
+ * The four blocks, as the tool takes them; anything else is an episode.
+ *
+ * The same narrowing the study runner does, for the same reason: the value comes
+ * from a model, and a kind the table does not know would make the row invisible
+ * to every block that renders by kind.
+ */
+function normalizeKindParam(value: unknown): "profile" | "rules" | "lesson" | "episode" {
+  return value === "profile" || value === "rules" || value === "lesson" ? value : "episode";
+}
+
 function handleSearch(params: Record<string, unknown>): ToolResult {
   const query = requireString(params, "query");
   const limit =
@@ -58,7 +69,7 @@ async function handleSave(
   embedding: EmbeddingEndpoint | null,
 ): Promise<ToolResult> {
   const insight = requireString(params, "content");
-  const kind = params.kind === "profile" ? "profile" : "episode";
+  const kind = normalizeKindParam(params.kind);
   const topic =
     typeof params.topic === "string" && params.topic.trim()
       ? params.topic.trim()
@@ -259,6 +270,11 @@ export function createMemoryTool(opts: MemoryToolOptions = {}): Tool {
       "the old entry's #ID in supersedes — the older line must not linger beside the new " +
       "one and disagree with it. Everything else is kind=\"episode\" (the default): what " +
       "happened, what was discussed or decided, with the subject as the topic.\n" +
+      "kind=\"rules\" is how he wants you to work — a requirement, a prohibition, a format " +
+      "he asked for ('новых файлов не создавать', 'не придумай, а найди в интернете'). " +
+      "kind=\"lesson\" is what he taught you about meaning — what his word stands for, " +
+      "where the usual sense does not fit ('его „моё“ — как „моя школа“: гордость, а не " +
+      "собственность'). Both are always in front of you, so write them in his words.\n" +
       "3) A case, when he reacted to something you did: her_move = what you did, " +
       "context = the state he was in (busy, cheerful, in an argument, tired), " +
       "his_reaction = what he did about it. All three together — the context is not " +
@@ -277,7 +293,9 @@ export function createMemoryTool(opts: MemoryToolOptions = {}): Tool {
         name: "kind",
         type: "string",
         description:
-          "profile — a fact about him that stays true (likes, dislikes, habits); episode — what happened (default)",
+          "profile — a fact about him that stays true (likes, dislikes, habits); " +
+          "rules — how he wants you to work; lesson — what he taught you a word means; " +
+          "episode — what happened (default)",
       },
       {
         name: "her_move",

@@ -123,6 +123,50 @@ export function writeProfileDoc(text: string, configPath?: string): string {
 }
 
 /**
+ * One name per block, in his language, in the one place.
+ *
+ * Three readers depend on this vocabulary: the session report says where each
+ * record went (`💾профиль`), the prompt says which block it is putting in front
+ * of her, and `/profile` names them for the owner. A second copy of these words
+ * is how "события" starts being called "эпизоды" in one place and not the other.
+ */
+export const BLOCK_LABELS: Record<string, string> = {
+  profile: "профиль",
+  rules: "правила",
+  lesson: "чему он меня научил",
+  episode: "события",
+};
+
+/**
+ * A block without sections: rules and lessons.
+ *
+ * They have no questionnaire shape — a requirement and an explanation are each
+ * their own line — but they are always in front of her for the same reason a
+ * preference is: a rule about how to work applies to every kind of work, and a
+ * word of his means the same thing in every conversation.
+ */
+export function renderFlatBlock(rows: KnowledgeRow[]): string {
+  return rows.map((r) => `- ${r.insight.trim()}`).join("\n");
+}
+
+/**
+ * The two always-on blocks that are not about who he is.
+ *
+ * `rules` is how to work with him, `lesson` is what his words mean. Both are
+ * instructions rather than facts, and they get their own framing in the prompt —
+ * see RULES_RULE and LESSON_RULE. Kept here so the dossier and the prompt read
+ * the same text about the same block.
+ */
+export const RULES_RULE =
+  "Это его требования к твоей работе. Выполняй их без напоминаний; если он просит " +
+  "сделать наоборот — скажи, что у тебя записано иначе, и спроси, поменялось ли правило.";
+
+export const LESSON_RULE =
+  "Это то, чему он тебя научил: что значит его слово, как понимать то, что он говорит. " +
+  "Опирайся на это, а не на своё понимание, и пиши так, как он объяснил, — даже если " +
+  "привычное значение другое.";
+
+/**
  * The instruction she is given with the block, and the only place the two
  * responsibilities are stated: follow the entry rather than her own taste, and
  * fill a hole with a question when the conversation is at that hole.
