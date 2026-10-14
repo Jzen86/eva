@@ -24,6 +24,8 @@ export interface KnowledgeRow {
   /** Set when a newer entry replaced this one. Retired rows stay in the table. */
   superseded_at: number | null;
   superseded_by: number | null;
+  /** `profile` (knowledge about him) or `episode` (what happened). See db.ts. */
+  kind: string;
   /**
    * What she was in the middle of, for a row that records a case. Empty on a
    * statement about a person, which is not a case and needs no context.
@@ -84,7 +86,7 @@ const QUERY_STOPWORDS = new Set([
 ]);
 
 const SELECT_COLUMNS =
-  "id, topic, insight, source, confidence, timestamp, access_count, last_used, superseded_at, superseded_by, her_move, context, his_reaction, conclusion";
+  "id, topic, insight, source, confidence, timestamp, access_count, last_used, superseded_at, superseded_by, her_move, context, his_reaction, conclusion, kind";
 
 /**
  * Build a safe FTS5 MATCH expression from free text.
@@ -147,12 +149,23 @@ export interface AddKnowledgeInput {
   /** Pre-computed semantic vector, when an embedding endpoint is configured. */
   embedding?: Buffer | null;
   confidence?: number;
+  /**
+   * Which kind of memory this is: knowledge about him, or what happened.
+   *
+   * Defaults to `episode` — the safer side, because an episode that reaches the
+   * always-on block only wastes space there, while a preference left out of it
+   * is a preference she does not have. See db.ts for why the two are split.
+   */
+  kind?: KnowledgeKind;
 }
 
 /**
  * Everything a row is searchable by is assembled in knowledge-text.ts, so that
  * db.ts can reindex an old row into exactly the same shape a live write makes.
  */
+
+/** The two kinds of memory the base holds. See db.ts for the split. */
+export type KnowledgeKind = "profile" | "episode";
 
 /**
  * Add a knowledge entry to the database.
@@ -164,8 +177,8 @@ export function addKnowledge(entry: AddKnowledgeInput, confidence = entry.confid
   const result = db
     .prepare(
       `INSERT INTO knowledge (topic, insight, source, confidence, timestamp, stems, embedding,
-                              her_move, context, his_reaction, conclusion)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                              her_move, context, his_reaction, conclusion, kind)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       entry.topic,
@@ -179,6 +192,7 @@ export function addKnowledge(entry: AddKnowledgeInput, confidence = entry.confid
       entry.context ?? "",
       entry.his_reaction ?? "",
       entry.conclusion ?? "",
+      entry.kind ?? "episode",
     );
   return Number(result.lastInsertRowid);
 }
@@ -227,8 +241,7 @@ export function searchKnowledge(query: string, limit = 5): KnowledgeRow[] {
   }
 }
 
-/** Record that these memories were pulled into a conversation. */
-export function touchKnowledge(ids: number[]): void {
+/** Record that these memories were pulled into a conversation. */export function touchKnowledge(ids: number[]): void {
   if (ids.length === 0) return;
   const db = getDB();
   const stmt = db.prepare(
@@ -238,6 +251,42 @@ export function touchKnowledge(ids: number[]): void {
   db.transaction(() => {
     for (const id of ids) stmt.run(now, id);
   })();
+}
+
+/**
+ * What she knows about him, for the block that is always in front of her.
+ *
+ * No search here, on purpose. A preference is true whatever the conversation is
+ * about — "не любит зелёный" answers a question about a shirt, a film and a
+ * game alike — so looking it up by the message's words was the wrong tool: the
+ * live measurements showed a preference losing its place to rows that merely
+ * shared a word form. These rows are simply always there.
+ *
+ * Ordered by id, newest last modified first, and nothing dynamic: the block
+ * changes only when a row is written, which keeps it stable between turns (a
+ * prompt that reshuffles itself costs cache hits and reads like noise), and it
+ * keeps the ordering explainable — the list is what she most recently learned
+ * about him.
+ */
+export function profileKnowledge(limit = 24): KnowledgeRow[] {
+  const db = getDB();
+  try {
+    const rows = db
+      .prepare(
+        `SELECT ${SELECT_COLUMNS} FROM knowledge
+          WHERE superseded_at IS NULL AND kind = 'profile'
+          ORDER BY id DESC
+          LIMIT ?`,
+      )
+      .all(limit) as KnowledgeRow[];
+    if (rows.length > 0) touchKnowledge(rows.map((r) => r.id));
+    return rows;
+  } catch (err) {
+    console.warn(
+      `⚠️ Профиль не прочитан (${err instanceof Error ? err.message : err}), пропускаю`,
+    );
+    return [];
+  }
 }
 
 /**

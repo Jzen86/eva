@@ -5,7 +5,7 @@
  * but the comparison it calls is ordinary logic and deserves its own tests.
  */
 import { stemsOfFiltered } from "./stem-ru.js";
-import type { KnowledgeRow } from "./knowledge.js";
+import type { KnowledgeRow, KnowledgeKind } from "./knowledge.js";
 import { cosineSimilarity, generateEmbedding, bufferToEmbedding } from "../../services/embeddings.js";
 
 import { getDB } from "./db.js";
@@ -266,6 +266,8 @@ export interface LearnInput extends DedupSubject {
   source: string;
   /** When it happened, when the caller knows better than "now". See AddKnowledgeInput. */
   timestamp?: number;
+  /** `profile` or `episode` — carried through to the row. See AddKnowledgeInput. */
+  kind?: KnowledgeKind;
 }
 
 export type LearnOutcome =

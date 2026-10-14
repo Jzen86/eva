@@ -318,6 +318,7 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
           // would make "мы говорили об этом вчера" a falsehood the base tells
           // about itself.
           timestamp: generated.coveredAt,
+          kind: f.kind === "profile" ? "profile" : "episode",
           ...(f.conclusion ? { conclusion: f.conclusion } : {}),
           ...(c.her_move ? { her_move: c.her_move } : {}),
           ...(c.context ? { context: c.context } : {}),
@@ -451,7 +452,16 @@ function buildStudyMessages(
     "Жёсткие правила:",
     "",
     "Отвечай ТОЛЬКО валидным JSON, без пояснений и обёрток:",
-    '{"facts": [{"topic": "тема", "fact": "что было", "conclusion": null}]}',
+    '{"facts": [{"topic": "тема", "fact": "что было", "kind": "episode", "conclusion": null}]}',
+    "",
+    "У каждой записи поставь kind — от него зависит, как она попадёт к тебе в следующий раз:",
+    "  \"profile\" — знание О НЁМ: что он любит и что не любит, что ему нравится и не нравится,",
+    "              привычки, вкусы, пристрастия. Такое висит перед тобой всегда, потому что",
+    "              верно в любом разговоре.",
+    "  \"episode\" — что было: о чём говорили, что решили, о чём спорили, чем кончилось.",
+    "              Такое ищется по теме разговора, поэтому пиши конкретные слова — имена,",
+    "              названия («в Battlefield», «дота», «боевики»), иначе запись не найдётся.",
+    "Сомневаешься — \"episode\".",
     "",
     "Пиши то, что важно помнить: факты о нём и о ней, события — что было и чем",
     "кончилось, темы разговоров. Своими словами, одно-два предложения, конкретно —",
@@ -691,6 +701,13 @@ function keepNewest(text: string, max: number): string {
 export interface StudyFact {
   topic: string;
   fact: string;
+  /**
+   * `profile` (knowledge about him) or `episode` (what happened).
+   *
+   * Read from the model's answer, and absent means `episode`: the model is told
+   * to choose, and a missing choice falls to the side that costs less if wrong.
+   */
+  kind?: string | null;
   her_move: string | null;
   context: string | null;
   his_reaction: string | null;
@@ -824,6 +841,7 @@ function parseStudyJson(
     facts.push({
       topic,
       fact,
+      kind: str("kind") === "profile" ? "profile" : "episode",
       her_move: str("her_move"),
       context: str("context"),
       his_reaction: str("his_reaction"),

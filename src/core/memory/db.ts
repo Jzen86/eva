@@ -165,6 +165,7 @@ export function getDB(dbPath?: string): Database.Database {
 
   migrateKnowledgeSchema();
   migrateKnowledgeIndex();
+  migrateKnowledgeKinds();
 
   db.exec(`CREATE TABLE IF NOT EXISTS service_tokens (
     service_id    TEXT NOT NULL,
@@ -339,6 +340,22 @@ function migrateKnowledgeSchema(): void {
   add("context", "TEXT NOT NULL DEFAULT ''");
   add("his_reaction", "TEXT NOT NULL DEFAULT ''");
   add("conclusion", "TEXT NOT NULL DEFAULT ''");
+  /**
+   * Which of the two kinds of memory this row is.
+   *
+   * `profile` is knowledge about him — what he likes and does not like, habits,
+   * tastes. `episode` is what happened between them: what they discussed,
+   * decided, argued about. They are not two flavours of the same thing, because
+   * they are needed in different places: a preference is true whatever the topic
+   * is, so it belongs in front of her on every turn, while an episode is
+   * relevant only when the conversation comes near it and has to be searched
+   * for. Measured before the split: with one flat list, the preference competed
+   * for the same twelve slots as everything else and lost — a question about
+   * films pulled "BF6 опять не пускал" and left his own taste out.
+   *
+   * Existing rows default to `episode` and are classified once below.
+   */
+  add("kind", "TEXT NOT NULL DEFAULT 'episode'");
 
   if (added.length > 0) {
     console.log(`🗄 Схема памяти: добавлены колонки ${added.join(", ")}`);
@@ -359,9 +376,59 @@ function migrateKnowledgeSchema(): void {
 }
 
 /**
- * Bring the knowledge search index up to the current layout.
+ * Sort the rows written before the split into the two kinds, once.
  *
- * The original index held the raw `topic`/`insight` text, which made the memory
+ * A preference is recognisable by how it is phrased about *him* — likes,
+ * dislikes, habits — and that is the only signal available for rows nobody
+ * labelled. The patterns are deliberately narrow: a row classified `profile` by
+ * mistake pushes a useful episode out of the always-on block, and the block has
+ * a ceiling, so being wrong here costs the block its value. Anything the
+ * patterns miss stays an episode, which is where it was anyway.
+ *
+ * Guarded by a meta flag rather than by "rows still unlabelled": the labels are
+ * allowed to be edited afterwards — by the study prompt, or by hand after
+ * reading them — and a migration that re-decides every boot would undo that.
+ */
+function migrateKnowledgeKinds(): void {
+  const conn = db;
+  if (!conn) return;
+  if (readMeta("knowledge_kind_version") === "1") return;
+
+  const patterns = [
+    "%люб%", "%нравит%", "%предпочита%", "%терпеть не могу%", "%не перенос%",
+    "%обожа%", "%привык%", "%боит%", "%равнодуш%",
+  ];
+  const where = patterns.map(() => "lower(insight) LIKE ?").join(" OR ");
+  const result = conn
+    .prepare(`UPDATE knowledge SET kind = 'profile' WHERE kind = 'episode' AND (${where})`)
+    .run(...patterns);
+
+  // Her own conclusions about how the bot works are not knowledge about him,
+  // however they are phrased — the live base had eight rows of "самоанализ",
+  // "селфи", "правила продажи энергетиков" in a row, and a profile block filled
+  // with those is worse than an empty one.
+  const apparatus = conn
+    .prepare(
+      `UPDATE knowledge SET kind = 'episode'
+        WHERE kind = 'profile' AND (
+          lower(topic) LIKE '%самоанализ%' OR lower(topic) LIKE '%селфи%' OR
+          lower(topic) LIKE '%тестов%' OR lower(topic) LIKE '%сервер%' OR
+          lower(topic) LIKE '%модул%' OR lower(topic) LIKE '%комфи%' OR
+          lower(insight) LIKE '%лога%' OR lower(insight) LIKE '%коммит%' OR
+          lower(insight) LIKE '%тулз%' OR lower(insight) LIKE '%конфиг%'
+        )`,
+    )
+    .run();
+
+  writeMeta("knowledge_kind_version", "1");
+  console.log(
+    `🗄 Схема памяти: класс записи — profile у ${result.changes}, обратно в episode ${apparatus.changes}`,
+  );
+}
+
+/**
+ * Bring the knowledge search index up to the current layout.
+ * * The original index held the raw `topic`/`insight` text, which made the memory
  * useless in Russian: FTS5's default tokenizer has no notion of inflection, so
  * an entry about "кот был рыжим" could not be found by "котом", "коты" or
  * "котов" — and raw user text handed straight to MATCH threw SQLite syntax

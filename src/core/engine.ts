@@ -12,7 +12,7 @@ import {
   loadConfig,
   type EvaConfig,
 } from "./config.js";
-import { searchKnowledge, renderKnowledge, KNOWLEDGE_PROMPT_LIMIT } from "./memory/knowledge.js";
+import { searchKnowledge, renderKnowledge, KNOWLEDGE_PROMPT_LIMIT, profileKnowledge } from "./memory/knowledge.js";
 import { saveMessage, loadHistory, extractText, previousLiveExchange, recentSeams } from "./memory/conversations.js";
 import { gapFacts, GAP_THRESHOLD_MIN, type GapFacts } from "./memory/time-words.js";
 import { compactHistory } from "./memory/compaction.js";
@@ -801,6 +801,31 @@ export class Engine {
     const live = this.liveConfig();
     const gap = scheduledTurn ? null : this.gapFor(chatId, incomingAt, live);
     let prompt = buildSystemPrompt(live, undefined, chatId, connectedServiceNames, undefined, engage);
+
+    // What he is like, always in front of her — see profileKnowledge for why
+    // this one is not a search. The instruction after the list is the part the
+    // measurements asked for: on every live run where the fact contradicted her
+    // own taste, she read it and answered from her taste anyway ("я в зелёной
+    // футболке" against a row saying he dislikes green drew praise for green,
+    // twice). A fact that does not outrank her own preference is not memory, it
+    // is decoration.
+    try {
+      if (!reportTurn) {
+        const profile = renderKnowledge(profileKnowledge(), {
+          offsetHours: live.timezoneOffsetHours ?? 4,
+        });
+        if (profile) {
+          prompt +=
+            `\n\n## Что я о нём знаю\n\n${profile}\n\n` +
+            `Это знания о нём, а не твои. Если он говорит о том, о чём здесь сказано, ` +
+            `опирайся на запись, а не на свой вкус: он любит не то же, что нравится тебе. ` +
+            `Если он предлагает то, что в записи ему не нравится, — скажи прямо, что он этого ` +
+            `не любит, и предложи то, что любит.`;
+        }
+      }
+    } catch {
+      // Memory not initialized yet — skip
+    }
 
     // What she has seen before, for this exact kind of moment. Rendered by
     // knowledge.ts so a case can never reach the prompt stripped of the state it

@@ -89,4 +89,28 @@ describe("memory in the prompt", () => {
     expect(String(system)).not.toContain("Что было раньше");
     expect(String(system)).not.toContain("шампиньоны");
   });
+
+  it("puts his profile in front of a chat turn, with the rule that it wins", async () => {
+    // The always-on block. A preference is true whatever the topic is, so it is
+    // not searched for — and the sentence after the list is the part the live
+    // runs asked for: with the fact merely present, she read "he dislikes green"
+    // and praised a green shirt, twice.
+    addKnowledge({ topic: "вкусы", insight: "Не любит зелёный цвет.", source: "test", kind: "profile" });
+
+    const engine = new Engine({ llm: captureLlm(), config: testConfig, tools: new ToolRegistry() });
+    await engine.process({
+      channelName: "test",
+      userId: "mem-profile",
+      text: "чем заняться вечером?",
+      timestamp: Date.now(),
+    });
+
+    const system = String(captured[0]?.[0]?.content);
+    expect(system).toContain("Что я о нём знаю");
+    expect(system).toContain("Не любит зелёный цвет");
+    expect(system).toMatch(/опирайся на запись, а не на свой вкус/);
+    // An episode is not part of the always-on block: it is looked up when the
+    // conversation comes near it.
+    expect(system).not.toContain("мы любим шампиньоны");
+  });
 });
