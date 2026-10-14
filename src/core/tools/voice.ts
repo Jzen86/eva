@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { Tool, ToolResult } from "./types.js";
 import { synthesizeVoiceOgg } from "../../channels/telegram/voice.js";
+import { checkVoiceBudget, noteVoiceSent, VOICE_PER_DAY } from "../voice-budget.js";
 
 export interface VoiceToolConfig {
   voiceConfig: Record<string, unknown>;
@@ -83,13 +84,37 @@ export class VoiceTool implements Tool {
     }
     const tone = String(params.tone ?? "").trim();
 
+    // Her own voice is rationed; his request is not. See voice-budget.ts for why
+    // the gap is the part that holds and a daily ceiling alone does not.
+    const requested = params._voiceRequested === true;
+    const budget = checkVoiceBudget(requested);
+    if (!budget.allow) {
+      return {
+        success: false,
+        output: budget.reason,
+        error: budget.reason,
+      };
+    }
+
     const ogg = await synthesizeVoiceOgg(text, this.config.voiceConfig, this.config.falApiKey, tone || undefined);
     if (!ogg) {
       return { success: false, output: "Не удалось синтезировать голос (проверь ключ/модель TTS)." };
     }
 
+    noteVoiceSent();
+
     const file = path.join(os.tmpdir(), `eva-voice-${Date.now()}.ogg`);
     fs.writeFileSync(file, ogg);
-    return { success: true, output: "Голосовое готово и отправлено.", mediaPath: file, mediaText: text };
+    // The state of the budget goes back with the result, because that is the
+    // moment she is deciding about the next one: a number she never sees is a
+    // number that changes nothing, and the refusal alone would teach her only
+    // where the wall is.
+    const after = checkVoiceBudget(false);
+    return {
+      success: true,
+      output: `Голосовое готово и отправлено. Осталось сегодня: ${after.remaining} из ${VOICE_PER_DAY}.`,
+      mediaPath: file,
+      mediaText: text,
+    };
   }
 }

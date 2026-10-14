@@ -443,7 +443,20 @@ async function downloadFile(ctx: Context, fileId: string, botToken: string): Pro
 }
 
 /** Convert a grammY Context into a channel-neutral IncomingMessage. */
-async function toIncoming(ctx: Context, text: string, botToken: string): Promise<IncomingMessage> {
+async function toIncoming(
+  ctx: Context,
+  text: string,
+  botToken: string,
+  /**
+   * He sent a voice note rather than typing.
+   *
+   * Carried into the turn because it is the one request for a spoken answer that
+   * cannot be read off any words — a transcript says what he said, not that he
+   * said it with his voice. The voice budget exempts these (see voice-budget.ts):
+   * asked for is asked for, whichever way he asked.
+   */
+  voiceNote = false,
+): Promise<IncomingMessage> {
   const reply = ctx.message?.reply_to_message;
   const replyToText = reply?.text ?? reply?.caption;
 
@@ -470,6 +483,7 @@ async function toIncoming(ctx: Context, text: string, botToken: string): Promise
       fromUsername: ctx.from?.username,
       firstName: ctx.from?.first_name,
       ...(replyToText && { replyToText }),
+      ...(voiceNote && { voiceNote: true }),
     },
     ...(images.length && { images }),
   };
@@ -675,6 +689,8 @@ export function registerHandlers(
     ctx: Context,
     text: string,
     modeOverride?: OutgoingMessage["mode"],
+    /** He spoke rather than typed — see toIncoming. */
+    voiceNote = false,
   ): Promise<void> {
     const stopTyping = startTyping(ctx);
     const chatId = ctx.chat!.id;
@@ -745,7 +761,7 @@ export function registerHandlers(
     };
 
     try {
-      const response = await handler(await toIncoming(ctx, text, bot.token), onProgress);
+      const response = await handler(await toIncoming(ctx, text, bot.token, voiceNote), onProgress);
       stopTyping();
       if (draftTimer) clearTimeout(draftTimer);
 
@@ -1095,7 +1111,7 @@ export function registerHandlers(
       return;
     }
 
-    await handleWithTyping(ctx, transcript);
+    await handleWithTyping(ctx, transcript, undefined, true);
   });
 }
 

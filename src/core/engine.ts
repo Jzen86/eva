@@ -383,6 +383,19 @@ export class Engine {
     const checksTurn =
       msg.metadata?.reportTask === true &&
       (this.deps.llm.proxied !== undefined && (this.deps.llm.hasRole?.("checks") ?? false));
+
+    /**
+     * Did he ask to be answered with a voice?
+     *
+     * Asked for is asked for, and the voice budget exempts it (voice-budget.ts) —
+     * a budget that made her refuse the owner would be worse than any number of
+     * voice messages. Two ways to ask: he sent a voice note (the channel marks it,
+     * because a transcript says what he said, not that he said it aloud), or he
+     * said so in words.
+     */
+    const voiceRequested =
+      msg.metadata?.voiceNote === true ||
+      /(голосов|озвуч|голосом|вслух)/i.test(msg.text ?? "");
     let llm = checksTurn ? this.deps.llm.proxied!("checks") : this.deps.llm.fast();
     if (checksTurn) tier = "checks";
     const userId = msg.userId;
@@ -609,7 +622,7 @@ export class Engine {
           onProgress?.({ type: "tool_start", tool: tc.name, turn: turn + 1 });
 
           const toolStart = Date.now();
-          const result = await this.executeTool(tc.name, tc.arguments, userId);
+          const result = await this.executeTool(tc.name, tc.arguments, userId, voiceRequested);
           const toolMs = Date.now() - toolStart;
 
           let resultText = result.success
@@ -1019,14 +1032,22 @@ export class Engine {
   }
 
   /** Execute a single tool by name. Returns full ToolResult. */
-  private async executeTool(name: string, args: Record<string, unknown>, userId?: string): Promise<ToolResult> {
+  private async executeTool(
+    name: string,
+    args: Record<string, unknown>,
+    userId?: string,
+    /** The turn's request was for a spoken answer — see voice-budget.ts. */
+    voiceRequested = false,
+  ): Promise<ToolResult> {
     const tool = this.deps.tools.get(name);
     if (!tool) {
       return { success: false, output: "", error: `unknown tool "${name}"` };
     }
 
     try {
-      const params = userId ? { ...args, _userId: userId } : args;
+      const params = userId
+        ? { ...args, _userId: userId, _voiceRequested: voiceRequested }
+        : { ...args, _voiceRequested: voiceRequested };
       return await tool.execute(params);
     } catch (err) {
       return { success: false, output: "", error: err instanceof Error ? err.message : String(err) };
