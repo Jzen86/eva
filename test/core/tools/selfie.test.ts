@@ -107,7 +107,10 @@ describe("SelfieTool", () => {
     // A string body, not the parts array: no photo goes with it.
     expect(typeof body.messages[0].content).toBe("string");
     expect(body.messages[0].content).toContain("A 25-year-old woman, warm olive skin");
-    expect(body.messages[0].content).toContain("close-up selfie");
+    expect(body.messages[0].content).toContain("realistic photo of her");
+    // The pose is hers to choose now: the owner's complaint was that asking for a
+    // photo of her always produced the arm's-length selfie pose.
+    expect(body.messages[0].content).not.toContain("arm's length");
 
     fs.unlinkSync(file);
     vi.unstubAllGlobals();
@@ -252,7 +255,7 @@ describe("SelfieTool", () => {
     await tool.execute({ context: "в новом платье" });
 
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-    expect(body.messages[0].content[0].text).toContain("mirror selfie");
+    expect(body.messages[0].content[0].text).toContain("in front of a mirror");
 
     vi.unstubAllGlobals();
   });
@@ -265,7 +268,7 @@ describe("SelfieTool", () => {
     await tool.execute({ context: "в кафе с кофе" });
 
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-    expect(body.messages[0].content[0].text).toContain("close-up selfie");
+    expect(body.messages[0].content[0].text).toContain("realistic photo of her");
 
     vi.unstubAllGlobals();
   });
@@ -289,7 +292,7 @@ describe("SelfieTool", () => {
     await tool.execute({ context: "просто так", mode: "mirror" });
 
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-    expect(body.messages[0].content[0].text).toContain("mirror selfie");
+    expect(body.messages[0].content[0].text).toContain("in front of a mirror");
 
     vi.unstubAllGlobals();
   });

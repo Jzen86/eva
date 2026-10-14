@@ -47,9 +47,13 @@ function buildPrompt(context: string, mode: "mirror" | "direct", appearance = ""
   // over it, so an innocent scene stays dressed.
   const figure = body ? ` ${body}` : "";
   if (mode === "mirror") {
-    return `${opener}${figure} She is taking a mirror selfie, ${context}. Full body visible in the mirror, realistic photo.`;
+    return `${opener}${figure} A photo of her in front of a mirror, ${context}. Full figure visible in the mirror, realistic photo.`;
   }
-  return `${opener}${figure} A close-up selfie taken by herself, ${context}, direct eye contact with the camera, looking straight into the lens, phone held at arm's length, face fully visible, natural and casual, realistic photo.`;
+  // No "selfie" phrasing and no outstretched arm: the owner's complaint was exact
+  // — he asks for a photo of her and gets the arm's-length pose, because the code
+  // said so, not because he wanted it. The pose and the framing come from the
+  // scene she wrote (lying, sitting, standing, portrait or full length).
+  return `${opener}${figure} A realistic photo of her, ${context}, natural pose, face fully visible.`;
 }
 
 /**
@@ -155,6 +159,7 @@ export class SelfieTool implements Tool {
     "Лицо берётся с твоего референс-фото и одинаково во всех кадрах, фигура задана стандартом — в context описывай ТОЛЬКО сцену, и описывай её подробно, тремя частями: ЧТО НА ТЕБЕ (или что снято — платье, топ, белье, полотенце; вплоть до ткани и цвета), ПОЗА и что ты делаешь (сидишь, откинулась, стоишь боком, тянешься), ФОН и обстановка (комната, кухня, кафе, постель, свет из окна). Плюс причёска (распущены, хвост, косичка) и настроение. Короткое «сижу на диване» даёт пустой кадр: генератору нечего рисовать, и он сам придумывает одежду и обстановку. " +
     "Его просьбу не пересказывай общими словами: если он назвал вещь, действие или место — бери ИХ формулировку, а не своё «что-то красивое». Чего он не назвал (поза, фон, что на тебе) — додумай по разговору, времени суток и тому, что ты о нём знаешь, а не спрашивай по мелочи. " +
     "Каждый раз делай кадр непохожим на предыдущий. Кадр и ориентацию выбирай под сцену, не по шаблону: крупный план (mode=direct) или полный рост (mode=mirror), ориентация — " + formatList() + " — для полного роста бери вытянутый, чтобы она помещалась целиком. " +
+    "«Селфи», «фото», «покажи себя» — это просто снимок тебя, и позу выбираешь ТЫ: лежишь, сидишь, стоишь, обернулась — по сцене. Вытянутая рука с телефоном и взгляд в объектив не обязательны: это только один из ракурсов, и он надоел. Зеркало — только если сцена про зеркало, примерку или полный рост. " +
     "ЕСЛИ В КАДРЕ ВЫ ВДВОЁМ — владелец просит «мы», «ты и я», «сфоткай нас», «обними меня», «покажи нас вместе» — поставь with_owner=true: тогда на кадре будете оба, его лицо берётся с его фото, и context описывает ТОЛЬКО сцену (где вы, что делаете — стоите рядом, обнимаетесь, целуетесь). Кадр для двоих — квадрат (1:1) или горизонталь (4:3), выбери под сцену; вертикальный в паре не выйдет (станет квадратом). Такой кадр рисуется только локально.";
   parameters = [
     { name: "context", type: "string", description: "Описание ситуации (в кафе, в новом платье, на пляже)", required: true },
