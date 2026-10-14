@@ -39,7 +39,8 @@ export class SwitchModelTool implements Tool {
   description =
     "Switch which LLM model Eva uses, or inspect what is configured. " +
     "Roles: 'fast' (everyday chatter), 'strong' (hard thinking, tool use), " +
-    "'study' (background learning), 'embed' (embeddings). " +
+    "'study' (background learning), 'checks' (the scheduled server and self " +
+    "reviews), 'embed' (embeddings) — and any other role the config defines. " +
     "action=current — what is in use now. " +
     "action=providers — which endpoints are configured. " +
     "action=available — which models a provider offers (needs provider). " +

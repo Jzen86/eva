@@ -165,7 +165,21 @@ async function main() {
       }
     });
     llm = new LLMRouter(registry);
-    console.log("✅ LLM подключён:", ["fast", "strong", "study", "embed"]
+    // Taken from the registry, not typed out here. A hand-written list was one
+    // role behind the moment `models.checks` appeared: the log showed the check
+    // running on its own role while this line still named four, and the first
+    // thing anyone reads at boot is this line — so "did my new role apply?"
+    // looked unanswered when it was answered. The familiar names come first for
+    // readability; anything a config adds later is appended rather than dropped.
+    const roleOrder = ["fast", "strong", "study", "checks", "embed", "image"];
+    const configured = Object.keys(registry.rolesList()).sort(
+      (a, b) => {
+        const ia = roleOrder.indexOf(a);
+        const ib = roleOrder.indexOf(b);
+        return (ia < 0 ? roleOrder.length : ia) - (ib < 0 ? roleOrder.length : ib);
+      },
+    );
+    console.log("✅ LLM подключён:", configured
       .filter((r) => llm!.hasRole(r))
       .map((r) => llm!.describe(r))
       .join("  |  "));
