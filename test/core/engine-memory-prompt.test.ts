@@ -122,9 +122,14 @@ describe("memory in the prompt", () => {
     });
 
     // The request that follows the tool call carries the picture itself, and the
-    // note that tells her to check it rather than admire it.
+    // note that tells her to look at it quietly — the first version of this note
+    // turned every photo into an inspection with a written report, so the test now
+    // pins the two parts that were wrong: a gross defect still triggers a retry,
+    // and trivia must not be reported.
     expect(JSON.stringify(chat.mock.calls[1]?.[0])).toContain("data:image/png;base64,AAAA");
-    expect(JSON.stringify(chat.mock.calls[1]?.[0])).toContain("лишняя рука");
+    expect(JSON.stringify(chat.mock.calls[1]?.[0])).toContain("те ли люди");
+    expect(JSON.stringify(chat.mock.calls[1]?.[0])).toContain("НЕ оценивай");
+    expect(JSON.stringify(chat.mock.calls[1]?.[0])).toContain("без отчёта о проверке");
 
     chat.mockClear();
     await engine.process({
