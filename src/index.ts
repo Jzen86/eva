@@ -21,7 +21,7 @@ import { describeBrowserInstall } from "./core/tools/browser.js";
 import { runDoctor, formatReport } from "./core/doctor.js";
 import { runInit, nextSteps, InitCancelled } from "./core/init.js";
 import { referencePhotoPath, ownerReferencePhotoPath, hasReferencePhoto, hasOwnerReferencePhoto } from "./core/reference-photo.js";
-import { archiveThenDeliver } from "./core/watch-reports.js";
+import { archiveThenDeliver, isReportTask } from "./core/watch-reports.js";
 import type { EmbeddingEndpoint } from "./core/memory/dedup.js";
 
 /**
@@ -395,6 +395,22 @@ async function main() {
         // reports there, in order, without the ordinary conversation around
         // them — and it is written before the send, so a bad night for Telegram
         // cannot take the record with it. See watch-reports.ts.
+        //
+        // A one-shot scheduled message is not one of those reports: the wake-up
+        // call landed in reports/14_10.md next to the server checks, and noise
+        // in the reading place is what makes a finding get skimmed past. It is
+        // still sent, still in `conversations`, still in Telegram — only the
+        // third copy is skipped.
+        if (!isReportTask(task.schedule)) {
+          try {
+            await channel.send(task.chatId, result);
+            console.log(`✅ Scheduler: delivered "${task.name}" (сообщение, без архива)`);
+          } catch (err) {
+            console.error(`⚠️ Scheduler "${task.name}": ${err instanceof Error ? err.message : err}`);
+          }
+          return;
+        }
+
         const outcome = await archiveThenDeliver(task.name, result.text, () =>
           channel.send(task.chatId, result),
         );

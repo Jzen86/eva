@@ -89,6 +89,33 @@ export interface ReportOutcome {
 }
 
 /**
+ * Whether a scheduled delivery is an observation at all.
+ *
+ * The archive exists for reports — the third destination meant to be *read*, so
+ * a finding can be found again after the conversation that carried it has been
+ * scrolled past. Not every scheduled turn is that: a one-shot reminder is a
+ * message, and on 14.10 the wake-up call ("Доброе утро, соня") landed in
+ * `reports/14_10.md` beside the server checks. Noise in the reading place is not
+ * harmless — it is exactly what makes a real finding get skimmed past.
+ *
+ * The split is by schedule, not by name: a name is written by whoever set the
+ * task up, and hard-coding the watch tasks here would make this file know its
+ * callers. A one-shot (`kind: "at"`) is a message and gets only delivered; every
+ * periodic form is kept. The rule is deliberately one-sided — a kind this code
+ * has never heard of is archived, because losing a check's record is worse than
+ * keeping a message's, and an unreadable schedule is kept for the same reason
+ * (the scheduler skips such a task, so the branch is unreachable anyway).
+ */
+export function isReportTask(schedule: string): boolean {
+  try {
+    const parsed = JSON.parse(schedule) as { kind?: string } | null;
+    return parsed?.kind !== "at";
+  } catch {
+    return true;
+  }
+}
+
+/**
  * Keep the report, then deliver it — in that order, and on purpose.
  *
  * Sending used to come first, so the archive only ran on the way back, and a

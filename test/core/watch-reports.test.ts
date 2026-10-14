@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
-import { reportsDir, reportPath, appendReport, archiveThenDeliver } from "../../src/core/watch-reports.js";
+import { reportsDir, reportPath, appendReport, archiveThenDeliver, isReportTask } from "../../src/core/watch-reports.js";
 
 /**
  * The archive exists so her reports can be read later without digging through
@@ -87,6 +87,23 @@ describe("appendReport", () => {
   it("writes nothing for a blank report — silence is not an empty entry", () => {
     expect(appendReport("self_watch", "   \n  ", when, configPath)).toBeNull();
     expect(fs.existsSync(reportPath("self_watch", configPath))).toBe(false);
+  });
+});
+
+describe("isReportTask", () => {
+  it("keeps the periodic checks and skips the one-shot messages", () => {
+    // The wake-up call of 14.10 landed in reports/14_10.md beside the server
+    // checks, and noise in the reading place is what makes a finding get
+    // skimmed past. A one-shot is a message, not an observation.
+    expect(isReportTask(JSON.stringify({ kind: "at", at: 1791945300000 }))).toBe(false);
+    expect(isReportTask(JSON.stringify({ kind: "every", everyMs: 43_200_000 }))).toBe(true);
+    expect(isReportTask(JSON.stringify({ kind: "cron", expr: "0 6 * * *" }))).toBe(true);
+  });
+
+  it("keeps the record when it cannot tell — a lost check is worse than a kept message", () => {
+    expect(isReportTask(JSON.stringify({ kind: "daily" }))).toBe(true);
+    expect(isReportTask("{битый json")).toBe(true);
+    expect(isReportTask("null")).toBe(true);
   });
 });
 
