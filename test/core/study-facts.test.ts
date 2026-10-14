@@ -5,6 +5,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { getDB, closeDB } from "../../src/core/memory/db.js";
 import { runStudy } from "../../src/core/memory/study-runner.js";
+import { addKnowledge } from "../../src/core/memory/knowledge.js";
 import {
   saveMessage,
   studyCursor,
@@ -271,8 +272,52 @@ describe("study: what a session may leave in the base", () => {
     expect(result.report).toContain("пересказ, а не факт");
   });
 
-  it("keeps a fact of the same session when it fits in a sentence", async () => {
-    // The cap is on length, not on length of the session: what he said in a dull
+  it("lets a sharper fact replace the older one instead of sitting beside it", async () => {
+    // His job, which the live base had no row for at all: records were built
+    // from events ("написал, что давно на работе"), and a standing fact said in
+    // passing was not one. When the sharper version arrives, the older row has
+    // to go — "работает" and "работает на складе в ночную" side by side is how
+    // "где он работает" becomes a question again.
+    const first = addKnowledge({ topic: "работа", insight: "Работает.", source: "test", kind: "profile" });
+
+    const { result } = await session(JSON.stringify({
+      facts: [{
+        topic: "работа",
+        fact: "Работает на складе в ночную смену.",
+        kind: "profile",
+        replaces: "работа",
+      }],
+    }));
+
+    expect(result.wrote).toBe(true);
+    const current = getDB()
+      .prepare("select id, insight, superseded_at, superseded_by from knowledge order by id")
+      .all() as Array<{ id: number; insight: string; superseded_at: number | null; superseded_by: number | null }>;
+    expect(current).toHaveLength(2);
+    const replaced = current.find((r) => r.id === first)!;
+    const kept = current.find((r) => r.id !== first)!;
+    expect(replaced.superseded_at).not.toBeNull();
+    expect(replaced.superseded_by).toBe(kept.id);
+    expect(kept.insight).toContain("ночную");
+  });
+
+  it("keeps one fact per row — the prompt asks for the dossier, not a summary", async () => {
+    // Read from the prompt, because that is where the extraction is decided: the
+    // live base knew he goes to work and did not know where or in what schedule,
+    // and no amount of searching finds a fact that was never written down.
+    const { prompt } = await session("{}");
+    expect(prompt).toContain("работа — где, кем");
+    expect(prompt).toContain("где живёт");
+    expect(prompt).toContain("Одна запись — один факт");
+    expect(prompt).toContain("replaces");
+    // Her own interpretations were the loudest class in the live base: rituals,
+    // formulas, patterns — eight rows of "самоанализ" and "ритуал последнего
+    // фото перед работой" while the fact that he has a job was missing.
+    expect(prompt).toContain("Не пиши свои выводы о закономерностях");
+    expect(prompt).toContain("ритуал последнего фото");
+  });
+
+  it("keeps a fact of the same session when it fits in a sentence", async () => {    // The cap is on length, not on length of the session: what he said in a dull
     // stretch is still worth keeping, and it is short.
     const { result } = await session(JSON.stringify({
       facts: [{ topic: "стиль", fact: "запретил описывать свои действия со стороны" }],

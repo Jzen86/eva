@@ -48,6 +48,7 @@ import {
   type KnowledgeRow,
 } from "./knowledge.js";
 import { findLexicalDuplicate, learnInsight, type EmbeddingEndpoint } from "./dedup.js";
+import { retireKnowledge } from "./knowledge.js";
 import {
   extractText,
   loadSummary,
@@ -328,6 +329,20 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
       );
 
       if (outcome.written) {
+        // A fact that supersedes an earlier one must not lie beside it. The
+        // profile block shows the newest, but the searched side has no such
+        // rule: two rows about his job, one saying "работает" and one saying
+        // "работает на складе в ночную", is how "где он работает" becomes a
+        // question again. The model names the row it supersedes by its topic —
+        // matched exactly, because a guessed match would retire a fact nobody
+        // asked to replace.
+        if (f.replaces) {
+          const wanted = f.replaces.trim().toLowerCase();
+          const old = known.find((k) => k.topic.trim().toLowerCase() === wanted);
+          if (old && old.id !== outcome.id) {
+            retireKnowledge(old.id, outcome.id);
+          }
+        }
         written.push({ topic: f.topic, fact: f.fact, c });
       } else {
         refused.push(`«${truncate(f.fact, 60)}» — ${outcome.reason}`);
@@ -469,6 +484,31 @@ function buildStudyMessages(
     "Если был обмен: что она сделала, в каком он был состоянии, как он ответил — можно",
     "добавить полями her_move, context, his_reaction. Не обязательно, пиши как удобно.",
     "Дату система проставит сама.",
+    "",
+    "ОТДЕЛЬНО и обязательно — то, из чего складывается знание о нём самом. Это не события, а",
+    "постоянные факты, и их надо вытаскивать даже из мимоходом брошенной фразы: «надо бежать,",
+    "я на смене» — уже факт. Смотри по этим дыркам и заполняй их, когда он что-то сказал:",
+    "  работа — где, кем, что за работа, график, смены, отпуск, начальство, проекты;",
+    "  где живёт — город, квартира или дом, с кем, кто рядом;",
+    "  тело и привычки — здоровье, сон, спорт, еда, напитки, кофе, курение;",
+    "  техника и досуг — игры (какие именно), кино, музыка, книги, машина, железо;",
+    "  люди и имена — коты, родные, друзья, кто кому кто;",
+    "  деньги и планы — что покупает, куда собирается, на чём экономит;",
+    "  что любит и что не любит — это профиль (kind \"profile\", см. выше).",
+    "Одна запись — один факт; «работает и любит кофе» одной строкой не пиши: следующее",
+    "уточнение про работу такую запись дополнить не сможет.",
+    "Не пиши свои выводы о закономерностях: «ритуал последнего фото перед работой», «формула",
+    "завершения работы», «переключение с отладки на личный запрос» — это твоя интерпретация, а",
+    "не то, что он сказал. Пиши, что было: «перед уходом на работу попросил фото». Правило,",
+    "которое он сам назвал, — факт («его „моя девочка“ — про гордость»), а узор, который",
+    "увидела ты, — не факт, даже если он красивый. Проживёт трижды и он сам это назовёт —",
+    "тогда и запишешь.",
+    "Если сказанное сейчас ДОПОЛНЯЕТ или ПОПРАВЛЯЕТ известное — пиши полную, уточнённую",
+    "версию и в поле replaces назови тему старой записи ровно так, как она написана в списке",
+    "того, что ты уже знаешь. Тогда старая уйдёт в исправленные, а не будет лежать рядом и",
+    "спорить с новой. Пример: была тема «работа», он сказал, что работает на складе в ночную",
+    "смену — пишешь topic «работа», полный факт, replaces: \"работа\". Уточнил вскользь, а факта",
+    "ещё нет — заводи с коротким topic, дополнится потом.",
     "",
     "Дороже всего — то, чему он тебя научил: что значит его слово, о чём вы договорились,",
     "чем он поправил твоё понимание. Такую запись пиши точно и по возможности его словами,",
@@ -713,6 +753,15 @@ export interface StudyFact {
   his_reaction: string | null;
   /** How the conversation or the moment ended, when it ended in something. */
   conclusion: string | null;
+  /**
+   * Topic of an earlier row this one supersedes, as the model wrote it.
+   *
+   * The enrichment path: a fact about him gets sharper over months ("работает" →
+   * "работает на складе в ночную"), and the sharper row has to replace the older
+   * one rather than sit beside it. Matched by exact topic and nothing fuzzier —
+   * a wrong match retires a fact nobody asked to replace.
+   */
+  replaces?: string | null;
 }
 
 /**
@@ -842,6 +891,7 @@ function parseStudyJson(
       topic,
       fact,
       kind: str("kind") === "profile" ? "profile" : "episode",
+      replaces: str("replaces"),
       her_move: str("her_move"),
       context: str("context"),
       his_reaction: str("his_reaction"),
