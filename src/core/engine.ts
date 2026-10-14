@@ -135,6 +135,25 @@ export function emptyReply(gender: "female" | "male" | "neutral" | undefined): s
 const EMPTY_SERVICE_REPLY =
   "⚠️ Плановое задание осталось без ответа: модель промолчала дважды. Проверки не было — отчёта нет, следующий заход по расписанию.";
 
+/**
+ * What she is told when her own picture is put in front of her.
+ *
+ * Two jobs, and the second is the one the live install needed: not only "look at
+ * what you made" but "check it for the defects this generator actually makes".
+ * The owner sent back a frame with three hands — she had looked straight at it
+ * and praised the picture instead, because the instruction asked her to describe,
+ * not to judge. One retry is allowed on her own (with a changed prompt), and if
+ * the second frame is flawed too she shows it and says so plainly: praising a
+ * broken picture is worse than admitting the generator missed, since the owner
+ * then goes looking for the fault in himself.
+ */
+export const IMAGE_FEEDBACK_NOTE =
+  "Вот что получилось на этом кадре — посмотри сама перед тем, как отвечать. " +
+  "Проверь его на дефекты генерации: лишняя рука или палец, лишние конечности, " +
+  "сросшиеся тела, искажённое лицо. Если дефект есть — сделай ещё один кадр, " +
+  "изменив промпт так, чтобы этого не было, и посмотри на второй. Если и он с " +
+  "дефектом — покажи его и скажи прямо, что не вышло, а не хвали.";
+
 export interface EngineDeps {
   llm: {
     fast(): LLMClient;
@@ -664,7 +683,7 @@ export class Engine {
               const feedback: LLMMessage = {
                 role: "user",
                 content: [
-                  { type: "text", text: "Вот что получилось на этом кадре — посмотри сама перед тем, как отвечать." },
+                  { type: "text", text: IMAGE_FEEDBACK_NOTE },
                   { type: "image_url", image_url: { url: preview.dataUrl } },
                 ],
               };

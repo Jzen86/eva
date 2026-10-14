@@ -121,8 +121,10 @@ describe("memory in the prompt", () => {
       timestamp: Date.now(),
     });
 
-    // The request that follows the tool call carries the picture itself.
+    // The request that follows the tool call carries the picture itself, and the
+    // note that tells her to check it rather than admire it.
     expect(JSON.stringify(chat.mock.calls[1]?.[0])).toContain("data:image/png;base64,AAAA");
+    expect(JSON.stringify(chat.mock.calls[1]?.[0])).toContain("лишняя рука");
 
     chat.mockClear();
     await engine.process({
