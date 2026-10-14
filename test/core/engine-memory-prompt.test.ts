@@ -127,7 +127,7 @@ describe("memory in the prompt", () => {
     // pins the two parts that were wrong: a gross defect still triggers a retry,
     // and trivia must not be reported.
     expect(JSON.stringify(chat.mock.calls[1]?.[0])).toContain("data:image/png;base64,AAAA");
-    expect(JSON.stringify(chat.mock.calls[1]?.[0])).toContain("то ли на нём");
+    expect(JSON.stringify(chat.mock.calls[1]?.[0])).toContain("анатомических дефектов");
     expect(JSON.stringify(chat.mock.calls[1]?.[0])).toContain("решает он");
 
     chat.mockClear();

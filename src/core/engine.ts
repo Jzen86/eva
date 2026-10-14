@@ -157,8 +157,8 @@ const EMPTY_SERVICE_REPLY =
  * neither needs an inventory of failure modes to be understood.
  */
 export const IMAGE_FEEDBACK_NOTE =
-  "Вот что получилось на этом кадре. Смотри на одно: то ли на нём, что он просил. " +
-  "Переделывать или нет — решает он, не ты.";
+  "Вот что получилось на этом кадре. Смотри: то ли на нём, что он просил, и нет ли " +
+  "анатомических дефектов. Переделывать или нет — решает он, не ты.";
 
 export interface EngineDeps {
   llm: {
