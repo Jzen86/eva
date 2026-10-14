@@ -286,7 +286,7 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
     // only against what was there before the session started. A false positive
     // only wastes one cheap session; a false negative permanently pollutes every
     // future prompt.
-    const written: Array<{ topic: string; fact: string; c: CaseFields }> = [];
+    const written: Array<{ topic: string; fact: string; kind: string; c: CaseFields }> = [];
     const refused: string[] = [];
     for (const { f, c } of accepted) {
       // The case fields go into the check, not only the sentence. Without them a
@@ -343,7 +343,7 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
             retireKnowledge(old.id, outcome.id);
           }
         }
-        written.push({ topic: f.topic, fact: f.fact, c });
+        written.push({ topic: f.topic, fact: f.fact, kind: f.kind === "profile" ? "profile" : "episode", c });
       } else {
         refused.push(`«${truncate(f.fact, 60)}» — ${outcome.reason}`);
       }
@@ -374,9 +374,15 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
         `📚 Сессия #${sessionCount}${window} · записано ${written.length} из ${facts.length}`,
         ...written.map((w) => {
           const head = `· ${w.topic}: ${w.fact}`;
-          if (!w.c.her_move) return head;
-          const state = w.c.context || "состояние не названо";
-          return `${head}\n    она: ${w.c.her_move} · ${state} → он: ${w.c.his_reaction}`;
+          const entry = w.c.her_move
+            ? `${head}\n    она: ${w.c.her_move} · ${w.c.context || "состояние не названо"} → он: ${w.c.his_reaction}`
+            : head;
+          // Where the record went, at the end of the record. The owner asked for
+          // this as the way he reads the report: "просто для меня так будет
+          // понятнее, проще понимать и отслеживать по ходу" — two lines can be
+          // nearly identical and land in different blocks, and then "почему это
+          // висит у неё перед глазами, а то нет" has no answer in the text.
+          return `${entry} (💾${BLOCK_LABELS[w.kind] ?? w.kind})`;
         }),
         ...refused.map((r) => `  (отброшено) ${r}`),
         ...dropped.map((d) => `  (отброшено) ${d}`),
@@ -750,6 +756,20 @@ function truncate(text: string, max: number): string {
 function keepNewest(text: string, max: number): string {
   return text.length <= max ? text : `…${text.slice(-max)}`;
 }
+
+/**
+ * How each block is called in the report the owner reads.
+ *
+ * The kinds are named in code, the blocks in his language: a report line ends
+ * with where the record went, because he asked for exactly that —
+ * "добавь в скобках блок куда сохранилось, например (💾профиль)", so that two
+ * similar rows landing in different blocks are readable at a glance instead of
+ * being a surprise months later.
+ */
+const BLOCK_LABELS: Record<string, string> = {
+  profile: "профиль",
+  episode: "события",
+};
 
 /** One thing to store: a fact about a person, or a case with all three fields. */
 export interface StudyFact {

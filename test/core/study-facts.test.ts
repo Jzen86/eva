@@ -317,6 +317,23 @@ describe("study: what a session may leave in the base", () => {
     expect(prompt).toContain("ритуал последнего фото");
   });
 
+  it("names the block each record went to", async () => {
+    // The owner reads the session report, and asked for the destination at the
+    // end of each record: "просто для меня так будет понятнее, проще понимать и
+    // отслеживать по ходу". Two nearly identical lines can land in different
+    // blocks, and then the text itself has to say why one of them is always in
+    // front of her and the other is not.
+    const { result } = await session(JSON.stringify({
+      facts: [
+        { topic: "работа", fact: "Работает на складе.", kind: "profile" },
+        { topic: "обед", fact: "Обедал в середине дня.", kind: "episode" },
+      ],
+    }));
+
+    expect(result.report).toContain("(💾профиль)");
+    expect(result.report).toContain("(💾события)");
+  });
+
   it("keeps a fact of the same session when it fits in a sentence", async () => {    // The cap is on length, not on length of the session: what he said in a dull
     // stretch is still worth keeping, and it is short.
     const { result } = await session(JSON.stringify({
