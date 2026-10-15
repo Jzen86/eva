@@ -24,6 +24,46 @@ const PREVIEW_MAX_SIDE = 640;
 /** Below this the original is already cheap — no point converting. */
 const ALREADY_SMALL_BYTES = 200 * 1024;
 
+/**
+ * Is this a picture we hold as bytes, rather than a link to someone else's?
+ *
+ * The one condition under which a frame can be put in front of her: the engine
+ * attaches an image part only for an inline data URL (see engine.ts) and only
+ * then can this module shrink it, because a link would make the provider fetch
+ * an external address. Two callers and three places ask the same question, and a
+ * second copy of the condition is how a generator ends up promising a picture
+ * the engine never showed.
+ */
+export function isInlineImage(url: string | null | undefined): url is string {
+  return typeof url === "string" && /^data:image\//i.test(url.trim());
+}
+
+/**
+ * What a generator adds to its answer when the frame will be put in front of her.
+ *
+ * The sentence lives beside the tool rather than only in the engine, and that is
+ * not a duplicate — it is the same fact stated where it is read. The engine's
+ * attach happens one module away and is invisible from a generator, so a tool
+ * saying only "отправлено в чат (файла нет)" reads as "you never see it". She read
+ * exactly that line in selfie.ts, concluded she worked blind, and wrote the
+ * conclusion into her memory as a rule — switching off the very thing this
+ * feedback was built for. A tool's text has to be the truth about the whole
+ * turn, including the part the engine does.
+ */
+export const FRAME_SHOWN_NOTE =
+  " Кадр приложен к этому же ходу — посмотри на него, прежде чем отвечать.";
+
+/**
+ * The clause a generator appends to its answer, or nothing when the frame is a
+ * link and she will not see it.
+ *
+ * The choice is made by the same condition the engine attaches by, so the tool's
+ * sentence cannot promise a picture the engine left as a URL.
+ */
+export function frameNote(url: string | null | undefined): string {
+  return isInlineImage(url) ? FRAME_SHOWN_NOTE : "";
+}
+
 export interface PreviewResult {
   dataUrl: string;
   /** Bytes of the payload, before base64, so the log can say what it cost. */
@@ -81,6 +121,7 @@ function runFfmpeg(input: Buffer): Promise<Buffer | null> {
  * Returns null when the input is not an inline image at all.
  */
 export async function previewImage(dataUrl: string): Promise<PreviewResult | null> {
+  if (!isInlineImage(dataUrl)) return null;
   const match = /^data:image\/[a-z+]+;base64,(.+)$/i.exec(dataUrl.trim());
   if (!match) return null;
   const bytes = Buffer.from(match[1]!, "base64");

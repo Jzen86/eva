@@ -97,4 +97,32 @@ describe("ImageGenTool", () => {
 
     vi.unstubAllGlobals();
   });
+
+  it("says the frame is in front of her when it is bytes, and stays quiet when it is a link", async () => {
+    // Same reason as in the selfie: the attach lives in the engine, and a tool
+    // that answers only "отправлено в чат" reads as "you never see it" to anyone
+    // reading this file — which is how she concluded she worked blind.
+    const generate = vi.fn().mockResolvedValue("data:image/png;base64,AAAA");
+    const local = new ImageGenTool({ apiKey: "k", comfy: { generate } as unknown as ComfyClient });
+    const shown = await local.execute({ prompt: "a red vintage car" });
+    expect(shown.output).toContain("приложен к этому же ходу");
+
+    const cloud = new ImageGenTool({ apiKey: "k" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve(JSON.stringify({
+        choices: [{
+          message: { images: [{ image_url: { url: "https://cdn.example/car.png" } }] },
+          finish_reason: "stop",
+        }],
+      })),
+    }));
+    const linked = await cloud.execute({ prompt: "a red vintage car" });
+    expect(linked.success).toBe(true);
+    expect(linked.mediaUrl).toBe("https://cdn.example/car.png");
+    expect(linked.output).not.toContain("приложен к этому же ходу");
+    expect(cloud.description).toContain("приходит к тебе в этом же ходу");
+
+    vi.unstubAllGlobals();
+  });
 });

@@ -363,6 +363,8 @@ describe("SelfieTool", () => {
     const result = await tool.execute({ context: "обнимаемся в кафе", with_owner: true, format: "4:3" });
     expect(result.success).toBe(true);
     expect(result.mediaUrl).toBe("data:image/png;base64,AAAA");
+    // A pair frame is local-only, so it always comes back to her as bytes.
+    expect(result.output).toContain("приложен к этому же ходу");
     expect(upload).toHaveBeenCalledTimes(2);
 
     const graph = generate.mock.calls[0][0] as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
@@ -415,6 +417,48 @@ describe("SelfieTool", () => {
     expect(result.success).toBe(true);
     const imagesCall = calls.find((c) => c.url.endsWith("/images/generations"));
     expect(imagesCall?.body.size).toBe("1024x1536");
+
+    vi.unstubAllGlobals();
+  });
+
+  it("says the frame is in front of her when it is bytes, and stays quiet when it is a link", async () => {
+    // She read this tool's answer — "отправлено в чат (файла нет)" — decided she
+    // never saw her own frames, and wrote that into her memory as a rule. The
+    // attach itself happens in the engine, a module away and invisible from here,
+    // so the sentence has to be in the tool too. The condition is the engine's
+    // own: only an inline image is put in front of her, never a link.
+    const upload = vi.fn().mockResolvedValue("eva_ref.jpg");
+    const generate = vi.fn().mockResolvedValue("data:image/png;base64,AAAA");
+    const local = new SelfieTool({
+      openrouterApiKey: "or-key",
+      referencePhotoUrl: "https://example.com/photo.jpg",
+      comfy: { upload, generate } as unknown as ComfyClient,
+    });
+    const shown = await local.execute({ context: "в кафе" });
+    expect(shown.output).toContain("приложен к этому же ходу");
+
+    const cloud = new SelfieTool({
+      openrouterApiKey: "or-key",
+      openrouterModel: "vendor/image",
+      referencePhotoUrl: "https://example.com/photo.jpg",
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        choices: [{
+          message: { images: [{ image_url: { url: "https://cdn.example/frame.png" } }] },
+          finish_reason: "stop",
+        }],
+      }),
+    }));
+    const linked = await cloud.execute({ context: "в кафе" });
+    expect(linked.success).toBe(true);
+    expect(linked.mediaUrl).toBe("https://cdn.example/frame.png");
+    expect(linked.output).not.toContain("приложен к этому же ходу");
+
+    // And the description says it too: that is the file anyone reads to find out
+    // whether she sees her own work.
+    expect(cloud.description).toContain("приходит к тебе в этом же ходу");
 
     vi.unstubAllGlobals();
   });

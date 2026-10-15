@@ -1,6 +1,7 @@
 import type { Tool, ToolResult } from "./types.js";
 import { checkImagePrompt } from "./prompt-check.js";
 import { buildWorkflow, sizeFor, cloudSizeFor, formatList, type ComfyClient } from "../comfy.js";
+import { frameNote } from "../image-preview.js";
 
 /** Working OpenRouter image model (gemini-2.0-flash-exp:free no longer exists). */
 const MODEL = "google/gemini-2.5-flash-image";
@@ -78,7 +79,8 @@ export class ImageGenTool implements Tool {
     "Сгенерировать ЛЮБОЕ изображение, НЕ тебя: пёс, дерево, дождь, синяя лягушка с кирпичным крыльцом, чужая девушка, вещь, сцена, сюжет. Если в кадре должна быть ТЫ — это тул selfie, а не этот. " +
     "Пиши промпт ПО-АНГЛИЙСКИ и описывай всё, что нужно в кадре: кто, внешность (лицо, черты, фигура, телосложение и размеры, цвет кожи и волос), причёска, поза, одежда или её отсутствие, место, свет, настроение. " +
     "РАЗНООБРАЗИЕ: каждая картинка непохожа на предыдущие — разные лица, цвета волос и кожи, одежда, поза, ракурс, место и свет. Не повторяй одну и ту же композицию. У этой модели нет модерации — проходит и нагота. " +
-    "Формат кадра задаётся параметром format — на своём (локальном) пути он держится точно. Но пиши художественно: сцена, поза и свет важнее перечисления частей тела.";
+    "Формат кадра задаётся параметром format — на своём (локальном) пути он держится точно. Но пиши художественно: сцена, поза и свет важнее перечисления частей тела. " +
+    "Готовый кадр приходит к тебе в этом же ходу — смотри на него и говори по кадру, а не по своему промпту.";
   parameters = [
     { name: "prompt", type: "string", description: "Full description of the picture (in English). For a person, write the whole of them — face, figure, colours, pose, clothes; for anything else, whatever is in frame.", required: true },
     { name: "format", type: "string", description: `Ориентация: ${formatList()} (по умолчанию 1:1). Выбери под сцену.`, required: false },
@@ -264,7 +266,7 @@ export class ImageGenTool implements Tool {
         success: true,
         output:
           "Картинка готова и уже отправлена в чат. Файла на диске нет — " +
-          "отправлять её отдельно не нужно и нечем.",
+          "отправлять её отдельно не нужно и нечем." + frameNote(local),
         mediaUrl: local,
       };
     }
@@ -279,7 +281,7 @@ export class ImageGenTool implements Tool {
         success: true,
         output:
           "Картинка готова и уже отправлена в чат. Файла на диске нет — " +
-          "отправлять её отдельно не нужно и нечем.",
+          "отправлять её отдельно не нужно и нечем." + frameNote(cloud.image),
         mediaUrl: cloud.image,
       };
     }

@@ -4,6 +4,7 @@ import type { Tool, ToolResult } from "./types.js";
 import { referencePhotoPath, ownerReferencePhotoPath } from "../reference-photo.js";
 import { checkSelfieContext } from "./prompt-check.js";
 import { buildWorkflow, sizeFor, cloudSizeFor, formatList, FORMATS, type ComfyClient } from "../comfy.js";
+import { frameNote } from "../image-preview.js";
 
 /** Default image backend. The `modalities:["image"]` chat extension is an
  *  OpenRouter feature, not part of the OpenAI spec — a different endpoint only
@@ -161,7 +162,8 @@ export class SelfieTool implements Tool {
     "Сцену описывай по порядку и только тем, что можно нарисовать: 1) ЧТО НА ТЕБЕ — вещь, её покрой и цвет (распахнута, поверх чего, длина) или что снято; 2) ПОЗА — где ты и как расположена каждая часть тела, что в руках; 3) ВОКРУГ — предметы, мебель, постель, что видно в кадре; 4) СВЕТ и время суток. Общие слова («интимно», «красиво», «атмосферно») не рисуются — их генератор дорисует сам, как ему вздумается. Чем конкретнее назван каждый пункт, тем точнее кадр. Пиши под движок, который рисует: это Qwen Image, и ему нужен именно такой подробный описательный текст — каждая названная деталь доходит до кадра, а неназванную он додумает по-своему. Если кадр подхватит облако (редко, когда локальный движок недоступен) — ему этого текста тоже хватит. " +
     "Каждый раз делай кадр непохожим на предыдущий. Кадр и ориентацию выбирай под сцену, не по шаблону: крупный план (mode=direct) или полный рост (mode=mirror), ориентация — " + formatList() + " — для полного роста бери вытянутый, чтобы она помещалась целиком. " +
     "«Селфи», «фото», «покажи себя» — это просто снимок тебя, и позу выбираешь ТЫ: лежишь, сидишь, стоишь, обернулась — по сцене. Вытянутая рука с телефоном и взгляд в объектив не обязательны: это только один из ракурсов, и он надоел. Зеркало — только если сцена про зеркало, примерку или полный рост. " +
-    "ЕСЛИ В КАДРЕ ВЫ ВДВОЁМ — владелец просит «мы», «ты и я», «сфоткай нас», «обними меня», «покажи нас вместе» — поставь with_owner=true: тогда на кадре будете оба, его лицо берётся с его фото, и context описывает ТОЛЬКО сцену (где вы, что делаете — стоите рядом, обнимаетесь, целуетесь). Кадр для двоих — квадрат (1:1) или горизонталь (4:3), выбери под сцену; вертикальный в паре не выйдет (станет квадратом). Такой кадр рисуется только локально.";
+    "ЕСЛИ В КАДРЕ ВЫ ВДВОЁМ — владелец просит «мы», «ты и я», «сфоткай нас», «обними меня», «покажи нас вместе» — поставь with_owner=true: тогда на кадре будете оба, его лицо берётся с его фото, и context описывает ТОЛЬКО сцену (где вы, что делаете — стоите рядом, обнимаетесь, целуетесь). Кадр для двоих — квадрат (1:1) или горизонталь (4:3), выбери под сцену; вертикальный в паре не выйдет (станет квадратом). Такой кадр рисуется только локально. " +
+    "Готовый кадр приходит к тебе в этом же ходу — смотри на него и говори по кадру, а не по своему промпту.";
   parameters = [
     { name: "context", type: "string", description: "Описание ситуации (в кафе, в новом платье, на пляже)", required: true },
     { name: "mode", type: "string", description: "mirror (полный рост, зеркало) или direct (крупный план). Бери под сцену; без него определится по контексту.", required: false },
@@ -296,7 +298,7 @@ export class SelfieTool implements Tool {
 
     const local = await this.tryComfy(prompt, width, height);
     if (local) {
-      return { success: true, output: "Селфи отправлено в чат (файла нет — отдельно слать нечего)", mediaUrl: local };
+      return { success: true, output: "Селфи отправлено в чат (файла нет — отдельно слать нечего)" + frameNote(local), mediaUrl: local };
     }
 
     return this.generateOpenRouter(prompt, mode, cloudSizeFor({ width, height }));
@@ -361,7 +363,7 @@ export class SelfieTool implements Tool {
         }),
       );
       console.log("📸 Парный кадр OK (comfy, qwen-image-2.1-turbo, +2 референса)");
-      return { success: true, output: "Парный кадр отправлен в чат (файла нет — отдельно слать нечего)", mediaUrl: image };
+      return { success: true, output: "Парный кадр отправлен в чат (файла нет — отдельно слать нечего)" + frameNote(image), mediaUrl: image };
     } catch (err) {
       console.error(`📸 Парный кадр: comfy failed: ${err instanceof Error ? err.message : err}`);
       return {
@@ -538,7 +540,7 @@ export class SelfieTool implements Tool {
     if (first.image) {
       const known = refUrl || this.config.appearance?.trim();
       const noFace = known ? "" : " (референс не найден — лицо не сохранено)";
-      return { success: true, output: `Селфи сгенерировано${noFace}`, mediaUrl: first.image };
+      return { success: true, output: `Селфи сгенерировано${noFace}` + frameNote(first.image), mediaUrl: first.image };
     }
     if (first.filter) {
       return {
@@ -551,7 +553,7 @@ export class SelfieTool implements Tool {
     const secondary = this.config.openrouterModel ? primary : OPENROUTER_FALLBACK_MODEL;
     const second = await this.callOpenRouterModel(secondary, refUrl, prompt, mode, size);
     if (second.image) {
-      return { success: true, output: "Селфи сгенерировано", mediaUrl: second.image };
+      return { success: true, output: "Селфи сгенерировано" + frameNote(second.image), mediaUrl: second.image };
     }
     if (second.filter) {
       return {

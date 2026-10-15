@@ -14,7 +14,7 @@ import {
 } from "./config.js";
 import { searchKnowledge, renderKnowledge, KNOWLEDGE_PROMPT_LIMIT, profileKnowledge, knowledgeOfKind } from "./memory/knowledge.js";
 import { renderProfileDossier, renderFlatBlock, PROFILE_RULE, RULES_RULE, LESSON_RULE } from "./profile-dossier.js";
-import { previewImage } from "./image-preview.js";
+import { previewImage, isInlineImage } from "./image-preview.js";
 import { saveMessage, loadHistory, extractText, previousLiveExchange, recentSeams } from "./memory/conversations.js";
 import { gapFacts, GAP_THRESHOLD_MIN, type GapFacts } from "./memory/time-words.js";
 import { compactHistory } from "./memory/compaction.js";
@@ -688,7 +688,7 @@ export class Engine {
            * these at the start of the next one, so a picture costs image tokens
            * while it is being judged and not on every later message.
            */
-          if (result.mediaUrl?.startsWith("data:image/")) {
+          if (isInlineImage(result.mediaUrl)) {
             const preview = await previewImage(result.mediaUrl);
             if (preview) {
               console.log(JSON.stringify({
