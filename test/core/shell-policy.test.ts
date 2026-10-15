@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { classify, shapeOf, leadingBinary, approvalSummary } from "../../src/core/shell-policy.js";
 import { getConfigPath } from "../../src/core/config.js";
@@ -386,16 +388,37 @@ describe("secrets are the one thing shell may not read on its own", () => {
   });
 
   it("parks credentials by their name, wherever they live", () => {
+    // The suffix ones are real files: a `.pem` that does not exist is a word,
+    // not a key, and `grep -rn api_key ~/src` must not be mistaken for one.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "eva-secrets-"));
+    for (const name of ["cert.pem", "server.key", "auth.json", ".env.local"]) {
+      fs.writeFileSync(path.join(dir, name), "x");
+    }
+    try {
+      expect(allow(`cat ${path.join(dir, "cert.pem")}`)).toBe(false);
+      expect(allow(`cat ${path.join(dir, "server.key")}`)).toBe(false);
+      expect(allow(`cat ${path.join(dir, "auth.json")}`)).toBe(false);
+      expect(allow(`cat ${path.join(dir, ".env.local")}`)).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+
     for (const bad of [
       "cat /root/.ssh/id_rsa",
       "head -3 /root/.ssh/authorized_keys",
-      "cat /srv/app/.env.local",
       "cat /etc/shadow",
+      "cat /srv/app/.env.local",
       "cat /srv/app/auth.json",
-      "cat /srv/tls/cert.pem",
     ]) {
       expect(allow(bad), bad).toBe(false);
     }
+  });
+
+  it("lets her search her own sources for a word that looks like a key", () => {
+    // The regression this pins: `api_key` ends in `_key`, her sources are full
+    // of it, and the first version of this rule parked the search.
+    expect(allow("grep -rn api_key /opt/eva/src")).toBe(true);
+    expect(allow("grep -rn \"api_key\" /opt/eva/src/core/config.ts")).toBe(true);
   });
 
   it("leaves the memory database readable, on purpose", () => {

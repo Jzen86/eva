@@ -29,6 +29,7 @@
  * it is not a decision someone made once and forgot.
  */
 
+import fs from "node:fs";
 import path from "node:path";
 import { defaultPathPolicy, expandHome, realPath, type PathPolicy } from "./path-policy.js";
 
@@ -450,7 +451,13 @@ function secretPathIn(token: string, policy: PathPolicy, contentsOnly: boolean):
 
   const resolved = realPath(expandHome(cleaned));
   const base = path.basename(resolved);
-  if (SECRET_BASENAME.test(base) || SECRET_SUFFIX.test(base)) return base;
+  if (SECRET_BASENAME.test(base)) return base;
+  // A suffix is only a file when there is a file: `grep -rn api_key` in her own
+  // sources names a word, not a key, and `_key` matched it — searching her
+  // sources is exactly the self-check this layer is meant to keep open. A path
+  // that does not exist cannot be read, and the exact names above park whether
+  // it exists or not.
+  if (SECRET_SUFFIX.test(base) && fs.existsSync(resolved)) return base;
   if (/(^|[\\/])\.ssh([\\/]|$)/.test(resolved)) return ".ssh";
 
   for (const file of policy.deniedFiles) {
