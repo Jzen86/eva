@@ -28,6 +28,30 @@ export function describeEmptyPage(text: string): string | null {
   return null;
 }
 
+/**
+ * Does this request belong to that service's own host?
+ *
+ * By host and path, not by the prefix of the string. Every base URL in
+ * `catalog.ts` has no trailing slash, so `url.startsWith(baseUrl)` answered yes
+ * to `https://api.github.com.attacker.tld/x` — and the answer to that question
+ * is the service's Bearer token in a request header. Any page she reads could
+ * have asked for it: the token is attached by URL, and the URL is the model's to
+ * choose.
+ */
+export function belongsToService(url: string, baseUrl: string): boolean {
+  let requested: URL;
+  let service: URL;
+  try {
+    requested = new URL(url);
+    service = new URL(baseUrl);
+  } catch {
+    return false;
+  }
+  if (requested.origin !== service.origin) return false;
+  const path = service.pathname.replace(/\/+$/, "");
+  return path === "" || requested.pathname === path || requested.pathname.startsWith(path + "/");
+}
+
 export interface HttpToolConfig {
   encryptionKey?: string;
 }
@@ -127,7 +151,7 @@ export class HttpTool implements Tool {
     const services = listServices();
     for (const svc of services) {
       for (const baseUrl of Object.values(svc.baseUrls)) {
-        if (url.startsWith(baseUrl)) {
+        if (belongsToService(url, baseUrl)) {
           const store = new TokenStore(this.encryptionKey);
           const token = store.get(svc.id, userId);
           if (token && !token.isExpired()) {

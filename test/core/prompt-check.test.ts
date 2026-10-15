@@ -51,6 +51,26 @@ describe("picture prompt check", () => {
     expect(objection).toContain("два света сразу");
   });
 
+  it("does not read a colour as a light", () => {
+    // Live, 15.10, and the reason this test exists: the check refused six calls
+    // in two minutes on this shape — "dark" hair, "dark" eyes, a "dark" skirt,
+    // and a sunny day. She rewrote the prompt five ways, every rewrite kept the
+    // hair, the sixth call hit the tool ceiling, and the owner got an account of
+    // the engine being on strike instead of a picture.
+    expect(
+      checkImagePrompt(
+        "Full body shot of a young slim woman with long thick wavy dark brown hair, " +
+          "dark expressive brown eyes, wearing a white shirt tucked into a dark pencil skirt, " +
+          "holding a dark flat folder, on a bright sunny day",
+        false,
+      ),
+    ).toBeNull();
+    // And the honest conflict still fires, with the same words in it.
+    expect(
+      checkImagePrompt("the bedroom at night, candlelit, with morning light through the window", false),
+    ).toContain("два света сразу");
+  });
+
   it("reports one problem, not a list of them", () => {
     // A prompt with two defects is rewritten whole anyway; a list of complaints
     // reads as a scolding rather than as an edit.

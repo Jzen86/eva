@@ -84,4 +84,18 @@ describe("defaultPathPolicy", () => {
     const p = defaultPathPolicy(path.join(outside, "config.yaml"), [path.join(root, "work")]);
     expect(p.roots).toEqual([path.join(root, "work")]);
   });
+
+  it("refuses the config's own rotations and the .env family by prefix", () => {
+    // `resolved === file` read `config.yaml.bak.1` as an ordinary file in the
+    // root, and `send_file` has no gate — only this deny list. `rotateConfigBackups`
+    // keeps five copies of the same keys beside the config.
+    const cfg = path.join(root, "config.yaml");
+    const policy = defaultPathPolicy(cfg, [root]);
+    expect(classifyPath(`${cfg}.bak-20261015-104432`, policy).kind).toBe("deny");
+    expect(classifyPath(path.join(root, ".env.local"), policy).kind).toBe("deny");
+    expect(classifyPath(path.join(root, "auth.json"), policy).kind).toBe("deny");
+    expect(classifyPath(path.join(root, "server.pem"), policy).kind).toBe("deny");
+    // And the ordinary file next to it stays readable.
+    expect(classifyPath(path.join(root, "notes.md"), policy).kind).toBe("allow");
+  });
 });

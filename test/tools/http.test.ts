@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest"
-import { HttpTool, describeEmptyPage } from "../../src/core/tools/http.js"
+import { HttpTool, describeEmptyPage, belongsToService } from "../../src/core/tools/http.js"
 import { TokenStore } from "../../src/services/tokens.js"
 import { getDB, closeDB } from "../../src/core/memory/db.js"
 import path from "node:path"
@@ -66,5 +66,19 @@ describe("describeEmptyPage", () => {
     // 200k of script can be a real app, and calling that empty would be worse
     // than useless.
     expect(describeEmptyPage("x".repeat(200_001))).toBeNull();
+  })
+
+  describe("belongsToService", () => {
+    it("does not hand a token to a domain that merely starts the same way", () => {
+      // Every base URL in catalog.ts has no trailing slash, so the old
+      // `url.startsWith(baseUrl)` said yes to this, and the yes is what decides
+      // whether the service's Bearer token goes in the request header.
+      expect(belongsToService("https://api.github.com/user", "https://api.github.com")).toBe(true)
+      expect(belongsToService("https://api.github.com.evil.tld/user", "https://api.github.com")).toBe(false)
+      expect(belongsToService("https://api.github.com/x", "https://api.github.com/")).toBe(true)
+      expect(belongsToService("http://api.github.com/user", "https://api.github.com")).toBe(false)
+      expect(belongsToService("https://api.github.com:8443/x", "https://api.github.com")).toBe(false)
+      expect(belongsToService("не url", "https://api.github.com")).toBe(false)
+    })
   })
 })

@@ -59,8 +59,21 @@ const APPEARANCE_WORDS = [
 const STANDING = /\b(standing|stands|stand up|upright)\b/i;
 const LYING = /\b(lying|lying down|reclining|reclines|lounging|sprawled)\b/i;
 
-/** Light that cannot both be true of one room at one moment. */
-const NIGHT_LIGHT = /\b(dimly lit|dim|dark|darkness|night|moonlit|candlelit|midnight)\b/i;
+/**
+ * Light that cannot both be true of one room at one moment — and only light.
+ *
+ * `dark` used to be in this list and it is what broke the live install on
+ * 15.10: the prompt read "dark brown hair … dark expressive brown eyes … dark
+ * pencil skirt, bright sunny day", the check took a colour for a light, and
+ * refused. Six calls in two minutes, five rewrites, every rewrite kept her hair
+ * dark, the sixth hit the tool ceiling — and the owner got a paragraph about
+ * "the engine going on strike" instead of a picture. A colour is not a light:
+ * `darkness`, `at night` and `candlelit` cannot be true of a sunlit room, and
+ * "dark brown hair" can. `dim` left with it — same mistake, waiting for a prompt
+ * about a dimmer switch.
+ */
+const NIGHT_LIGHT =
+  /\b(dimly lit|in the dark|darkness|night|nighttime|at night|by night|moonlit|candlelit|by candlelight|midnight)\b/i;
 const DAY_LIGHT = /\b(daylight|broad daylight|bright|sunny|sunlight|sunlit|morning light)\b/i;
 
 function find(text: string, words: string[]): string | null {

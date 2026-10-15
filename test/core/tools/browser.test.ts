@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { BrowserTool } from "../../../src/core/tools/browser.js";
+import { BrowserTool, refuseNonWebUrl } from "../../../src/core/tools/browser.js";
 
 describe("BrowserTool", () => {
   it("has correct name and parameters", () => {
@@ -31,5 +31,16 @@ describe("BrowserTool", () => {
     } finally {
       await tool.dispose();
     }
+  });
+
+  it("refuses anything that is not the web", () => {
+    // Playwright opens `file://` as happily as a page, and this tool has no path
+    // policy of its own: `get_text url=file:///root/.eva/config.yaml` would have
+    // put the install's keys in the chat in one call.
+    expect(refuseNonWebUrl("file:///root/.eva/config.yaml")?.success).toBe(false);
+    expect(refuseNonWebUrl("data:text/html,<b>x</b>")?.success).toBe(false);
+    expect(refuseNonWebUrl(undefined)?.success).toBe(false);
+    expect(refuseNonWebUrl("https://example.com/x")).toBeNull();
+    expect(refuseNonWebUrl("http://127.0.0.1:8188/")).toBeNull();
   });
 });

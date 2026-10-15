@@ -108,6 +108,26 @@ const PARAMETERS: ToolParam[] = [
   { name: "script", type: "string", description: "JavaScript to evaluate on the page" },
 ];
 
+/**
+ * Only the web, for anything that navigates.
+ *
+ * Playwright opens `file:///root/.eva/config.yaml` as happily as a page, and
+ * this tool has no path policy of its own — `get_text url=file://…` would have
+ * put the install's keys in the chat in one call. `about:` and `data:` are out
+ * for the same reason: this tool fetches pages, it does not read the machine.
+ */
+export function refuseNonWebUrl(url: string | undefined): ToolResult | null {
+  if (!url) return { success: false, output: "", error: "Missing required parameter: url" };
+  if (!/^https?:\/\//i.test(url.trim())) {
+    return {
+      success: false,
+      output: "",
+      error: "только http(s): локальные файлы и другие схемы этот тул не открывает",
+    };
+  }
+  return null;
+}
+
 export class BrowserTool implements Tool {
   readonly name = "browser";
   readonly description = "Browse websites with a real browser (Playwright). Use when the 'web' tool can't access a site, or for interactive tasks like clicking and filling forms.";
@@ -195,8 +215,9 @@ export class BrowserTool implements Tool {
   }
 
   private async getText(page: Page, url: string | undefined): Promise<ToolResult> {
-    if (!url) return { success: false, output: "", error: "Missing required parameter: url" };
-    await page.goto(url, { timeout: TIMEOUT, waitUntil: "load" });
+    const refusal = refuseNonWebUrl(url);
+    if (refusal) return refusal;
+    await page.goto(url as string, { timeout: TIMEOUT, waitUntil: "load" });
     // Wait a bit for JS-rendered content (SPAs like Wildberries)
     await page.waitForTimeout(2000);
     const text = await page.textContent("body") ?? "";
@@ -205,8 +226,9 @@ export class BrowserTool implements Tool {
   }
 
   private async screenshot(page: Page, url: string | undefined): Promise<ToolResult> {
-    if (!url) return { success: false, output: "", error: "Missing required parameter: url" };
-    await page.goto(url, { timeout: TIMEOUT, waitUntil: "load" });
+    const refusal = refuseNonWebUrl(url);
+    if (refusal) return refusal;
+    await page.goto(url as string, { timeout: TIMEOUT, waitUntil: "load" });
     await page.waitForTimeout(2000);
     const buffer = await page.screenshot({ fullPage: true });
     return { success: true, output: buffer.toString("base64") };

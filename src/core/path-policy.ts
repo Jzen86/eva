@@ -35,16 +35,35 @@ export interface PathPolicy {
 /** Directories nothing may touch, whoever asks. */
 const DENIED_PREFIXES = ["/proc", "/sys", "/dev", "/boot", "/etc", "/run", "/var/run"];
 
-/** Basenames that are credentials wherever they live. */
+/**
+ * Basenames that are credentials wherever they live.
+ *
+ * `.env` is matched by prefix — `.env.local`, `.env.production` are the same
+ * file with the same purpose, and the exact-name check read them as ordinary
+ * files. `auth.json` and `credentials.json` are what the tool this project is
+ * built alongside calls its key store, and a private key in a chat is not a
+ * capability anyone needs: the suffix list covers `.pem`, `.key`, `.p12`.
+ */
 const DENIED_BASENAMES = new Set([
-  ".env",
   "id_rsa",
   "id_ed25519",
   "id_ecdsa",
   "authorized_keys",
   ".htpasswd",
   ".netrc",
+  "auth.json",
+  "credentials.json",
 ]);
+
+/** Suffixes that name a private key or a certificate store. */
+const DENIED_SUFFIXES = [".pem", ".key", ".p12", ".pfx"];
+
+function looksLikeCredential(base: string): boolean {
+  const lower = base.toLowerCase();
+  if (DENIED_BASENAMES.has(lower)) return true;
+  if (lower === ".env" || lower.startsWith(".env.")) return true;
+  return DENIED_SUFFIXES.some((s) => lower.endsWith(s));
+}
 
 export function expandHome(p: string): string {
   if (p === "~") return os.homedir();
@@ -110,14 +129,18 @@ export function classifyPath(raw: string, policy: PathPolicy): PathVerdict {
       return { kind: "deny", path: resolved, why: `системный путь ${prefix}` };
     }
   }
-  if (DENIED_BASENAMES.has(path.basename(resolved).toLowerCase())) {
+  if (looksLikeCredential(path.basename(resolved))) {
     return { kind: "deny", path: resolved, why: "похоже на файл с секретами" };
   }
   if (/\.db(-wal|-shm)?$/i.test(resolved)) {
     return { kind: "deny", path: resolved, why: "база памяти, а не файл для чтения или отправки" };
   }
   for (const file of policy.deniedFiles) {
-    if (resolved === file) {
+    // The config and the rotations `rotateConfigBackups` keeps beside it: five
+    // copies of the same keys, and `resolved === file` let `config.yaml.bak.1`
+    // through as an ordinary file in the root — `send_file` would have put the
+    // whole config in the chat.
+    if (resolved === file || resolved.startsWith(file + ".")) {
       return { kind: "deny", path: resolved, why: "файл конфигурации — в нём секреты" };
     }
   }
