@@ -2,7 +2,7 @@
 import { randomUUID } from "node:crypto";
 import type { Tool, ToolResult } from "./types.js";
 import type { SchedulerStore, ScheduledTaskRow } from "./scheduler-store.js";
-import { parseAtTime, parseEveryDuration } from "./scheduler-parse.js";
+import { parseAtTime, parseEveryDuration, parseTimesOfDay } from "./scheduler-parse.js";
 
 // ---------------------------------------------------------------------------
 // Cron parser (kept from original)
@@ -138,6 +138,28 @@ export function nextCronRun(expr: string, afterMs: number, offsetHours: number):
     `Invalid cron expression "${expr}": no match within a year. ` +
       `Check the day and the month — 29 February, for one, is further away than that.`,
   );
+}
+
+/**
+ * The next of several fixed times of day, on the owner's clock.
+ *
+ * `minutes` are minutes since his midnight, sorted; the answer is the first one
+ * strictly after `now`, which is today's remaining times or tomorrow's first. The
+ * arithmetic is the wall-clock trick again: shift into his day, find the minute, shift
+ * back out. Times before today's first (or after the last) land on tomorrow, so a list
+ * that spans midnight needs nothing special.
+ */
+export function nextTimesRun(minutes: number[], afterMs: number, offsetHours: number): number {
+  if (minutes.length === 0) throw new Error("no times to run at");
+  const offsetMs = offsetHours * 3_600_000;
+  const wall = afterMs + offsetMs;
+  const dayStart = Math.floor(wall / 86_400_000) * 86_400_000;
+
+  for (const minute of minutes) {
+    const candidate = dayStart + minute * 60_000;
+    if (candidate > wall) return candidate - offsetMs;
+  }
+  return dayStart + 86_400_000 + minutes[0]! * 60_000 - offsetMs;
 }
 
 // ---------------------------------------------------------------------------
@@ -394,6 +416,10 @@ export class SchedulerService {
     if (schedule.kind === "cron") {
       return nextCronRun(String(schedule.expr), now, this.ownerOffset());
     }
+    if (schedule.kind === "times") {
+      const raw = Array.isArray(schedule.times) ? schedule.times.join(", ") : String(schedule.times ?? "");
+      return nextTimesRun(parseTimesOfDay(raw), now, this.ownerOffset());
+    }
     throw new Error(`unknown schedule kind "${String(schedule.kind)}"`);
   }
 
@@ -428,7 +454,8 @@ export class SchedulerService {
         "Планировщик задач (напоминания, повторяющиеся задачи). " +
         'schedule_type="at" + at="+5m" для одноразовых, ' +
         'schedule_type="every" + every="30m" для интервалов, ' +
-        'schedule_type="cron" + cron_expression="0 20 * * *" для расписаний. ' +
+        'schedule_type="cron" + cron_expression="0 20 * * *" для расписаний, ' +
+        'schedule_type="times" + times="09:15, 15:00, 21:15, 03:00" для нескольких времён в сутках. ' +
         "Время считается по твоим часам (та же зона, что в промпте). Расписание, которое не сработает никогда, будет отклонено с ошибкой. " +
         "action=add создаёт задачу, action=remove удаляет по имени, action=list показывает все.",
       parameters: [
@@ -437,6 +464,7 @@ export class SchedulerService {
         { name: "schedule_type", type: "string", description: 'at, every, or cron (default: cron)' },
         { name: "cron_expression", type: "string", description: 'Cron expression for schedule_type=cron, e.g. "0 20 * * *" — по твоим часам' },
         { name: "at", type: "string", description: 'Time for schedule_type=at: "+5m", "+2h", or ISO datetime (без зоны читается по твоим часам)' },
+        { name: "times", type: "string", description: 'Times of day for schedule_type=times, e.g. "09:15, 15:00, 21:15, 03:00" — по твоим часам' },
         { name: "every", type: "string", description: 'Interval for schedule_type=every: "30s", "5m", "2h"' },
         { name: "command", type: "string", description: "What to do when the task fires (prompt for the LLM)" },
       ],
@@ -504,6 +532,16 @@ export class SchedulerService {
           nextRunAt = nextCronRun(expr, now, this.ownerOffset());
           break;
         }
+        case "times": {
+          const raw = Array.isArray(params.times)
+            ? params.times.join(", ")
+            : String(params.times || "").trim();
+          if (!raw) return { success: false, output: 'Missing: times (e.g. "09:15, 15:00")', error: "missing_param" };
+          const minutes = parseTimesOfDay(raw);
+          schedule = JSON.stringify({ kind: "times", times: raw.split(/[,\s;]+/).filter(Boolean) });
+          nextRunAt = nextTimesRun(minutes, now, this.ownerOffset());
+          break;
+        }
         default:
           return { success: false, output: `Invalid schedule_type: ${scheduleType}`, error: "invalid_param" };
       }
@@ -540,7 +578,9 @@ export class SchedulerService {
       ? stampInOwnerZone(nextRunAt, this.ownerOffset())
       : scheduleType === "every"
         ? `каждые ${params.every}`
-        : `${params.cron_expression}, ближайший запуск — ${stampInOwnerZone(nextRunAt, this.ownerOffset())}`;
+        : scheduleType === "times"
+          ? `${String(params.times)}, ближайший запуск — ${stampInOwnerZone(nextRunAt, this.ownerOffset())}`
+          : `${params.cron_expression}, ближайший запуск — ${stampInOwnerZone(nextRunAt, this.ownerOffset())}`;
 
     return { success: true, output: `Задача "${name}" запланирована (${when}).` };
   }
@@ -567,6 +607,7 @@ export class SchedulerService {
       const next = Number.isFinite(t.nextRunAt) ? `, следующий — ${stampInOwnerZone(t.nextRunAt, offset)}` : "";
       const detail = type === "at" ? stampInOwnerZone(Number(sched.at), offset)
         : type === "every" ? `каждые ${formatEvery(Number(sched.everyMs))}${next}`
+        : type === "times" ? `${Array.isArray(sched.times) ? sched.times.join(", ") : String(sched.times)}${next}`
         : `${sched.expr}${next}`;
       // `lastRunAt` is written when the row is advanced, before the callback runs:
       // it says the task was started, not that its turn finished. That is the

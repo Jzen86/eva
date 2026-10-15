@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { SchedulerStore } from "../../../src/core/tools/scheduler-store.js";
-import { SchedulerService, nextCronRun } from "../../../src/core/tools/scheduler.js";
+import { SchedulerService, nextCronRun, nextTimesRun } from "../../../src/core/tools/scheduler.js";
+import { parseTimesOfDay } from "../../../src/core/tools/scheduler-parse.js";
 
 let db: Database.Database;
 let store: SchedulerStore;
@@ -282,6 +283,34 @@ describe("SchedulerService", () => {
     expect(store.list()).toHaveLength(0);
   });
 
+  it("adds a task that runs at several set times of day", async () => {
+    // The server check's shape: no single cron line can say "09:15, 15:00, 21:15, 03:00",
+    // because cron multiplies the hour set by the minute set. A list is the honest form.
+    scheduler.setMessageContext("telegram", "1", []);
+    const result = await scheduler.tool.execute({
+      action: "add", name: "several", schedule_type: "times",
+      times: "09:15, 15:00, 21:15, 03:00", command: "проверка",
+    });
+
+    expect(result.success).toBe(true);
+    expect(JSON.parse(store.list()[0].schedule)).toEqual({
+      kind: "times",
+      times: ["09:15", "15:00", "21:15", "03:00"],
+    });
+    const list = await scheduler.tool.execute({ action: "list" });
+    expect(list.output).toContain("09:15, 15:00, 21:15, 03:00");
+  });
+
+  it("refuses a times entry it cannot read", async () => {
+    scheduler.setMessageContext("telegram", "1", []);
+    const result = await scheduler.tool.execute({
+      action: "add", name: "bad-times", schedule_type: "times", times: "9 утра", command: "x",
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("parse_error");
+    expect(store.list()).toHaveLength(0);
+  });
+
   it("parks a task with an unknown schedule kind instead of firing it every tick", async () => {
     const fired: string[] = [];
     scheduler.onTaskFire((task) => { fired.push(task.name); });
@@ -371,5 +400,20 @@ describe("nextCronRun", () => {
   it("throws on a zero step instead of looping forever", () => {
     const now = new Date("2026-03-18T15:00:00Z").getTime();
     expect(() => nextCronRun("*/0 * * * *", now, 4)).toThrow(/holds no values/);
+  });
+
+  it("picks the next of several times of day, on the owner's clock, and wraps", () => {
+    // The shape the owner asked for the server check: 09:15 and 21:15 follow her own
+    // check at :00, 15:00 and 03:00 are the hours where she is not running. It is a
+    // list because cron cannot pair an hour with a minute.
+    const times = parseTimesOfDay("09:15, 15:00, 21:15, 03:00");
+
+    // 06:00 UTC is 10:00 for him: 09:15 has passed, so 15:00 is next.
+    const morning = nextTimesRun(times, Date.UTC(2026, 9, 16, 6, 0), 4);
+    expect(new Date(morning + 4 * 3_600_000).toISOString().slice(0, 16)).toBe("2026-10-16T15:00");
+
+    // 20:00 UTC is midnight for him — today's last time has passed, tomorrow's first.
+    const night = nextTimesRun(times, Date.UTC(2026, 9, 16, 20, 0), 4);
+    expect(new Date(night + 4 * 3_600_000).toISOString().slice(0, 16)).toBe("2026-10-17T03:00");
   });
 });

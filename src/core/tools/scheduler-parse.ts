@@ -49,6 +49,36 @@ export function parseEveryDuration(input: string): number {
   return parseRelativeDuration(input);
 }
 
+/**
+ * "09:15, 15:00, 21:15, 03:00" → those times as minutes since midnight, sorted.
+ *
+ * A list of times is not expressible as one cron line: cron multiplies the hour set
+ * by the minute set, so `15,0 3,9,15,21` fires eight times a day, not four. The owner
+ * asked for exactly "9:15, 15:00, 21:15, 3:00" — two of them following her own check
+ * at :00, two on the hour — and that pairing is a list, so the schedule is one.
+ *
+ * Read on the owner's clock, like every other schedule (see nextTimesRun).
+ */
+export function parseTimesOfDay(input: string): number[] {
+  const parts = input
+    .split(/[,\s;]+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (parts.length === 0) {
+    throw new Error(`Invalid times: "${input}". Use "09:15, 15:00".`);
+  }
+  const minutes = new Set<number>();
+  for (const part of parts) {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(part);
+    if (!m) throw new Error(`Invalid time "${part}": use HH:MM.`);
+    const hour = Number(m[1]);
+    const minute = Number(m[2]);
+    if (hour > 23 || minute > 59) throw new Error(`Invalid time "${part}": use HH:MM.`);
+    minutes.add(hour * 60 + minute);
+  }
+  return [...minutes].sort((a, b) => a - b);
+}
+
 function parseRelativeDuration(input: string): number {
   const regex = /(\d+)\s*(d|h|m|s)/g;
   let totalMs = 0;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseAtTime, parseEveryDuration } from "../../../src/core/tools/scheduler-parse.js";
+import { parseAtTime, parseEveryDuration, parseTimesOfDay } from "../../../src/core/tools/scheduler-parse.js";
 
 describe("parseAtTime", () => {
   // The owner is four hours ahead of the box, as the live install has it.
@@ -55,6 +55,23 @@ describe("parseAtTime", () => {
 
   it("throws on invalid input", () => {
     expect(() => parseAtTime("garbage", Date.now(), HIS)).toThrow();
+  });
+});
+
+describe("parseTimesOfDay", () => {
+  it("reads a list of times into sorted minutes", () => {
+    // The owner asked for "9:15, 15:00, 21:15, 3:00" for the server check: two of them
+    // fifteen minutes after his own check, two on the hour. One cron line cannot say
+    // that — it multiplies hours by minutes and would fire eight times a day.
+    expect(parseTimesOfDay("09:15, 15:00, 21:15, 03:00")).toEqual([180, 555, 900, 1275]);
+    expect(parseTimesOfDay("9:15 15:00")).toEqual([555, 900]);
+    expect(parseTimesOfDay("06:00, 06:00")).toEqual([360]);
+  });
+
+  it("refuses what is not a time", () => {
+    expect(() => parseTimesOfDay("9 утра")).toThrow(/HH:MM/);
+    expect(() => parseTimesOfDay("25:00")).toThrow(/HH:MM/);
+    expect(() => parseTimesOfDay("  ")).toThrow();
   });
 });
 
