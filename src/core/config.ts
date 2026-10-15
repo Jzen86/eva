@@ -636,11 +636,13 @@ export function toRegistryConfig(config: EvaConfig): RegistryConfig {
       if (entry.api_key && !providers[entry.provider]?.api_key) {
         providers[entry.provider] = { ...providers[entry.provider], api_key: entry.api_key };
       }
-      const model = entry.model ?? (role === "fast" ? undefined : undefined);
+      // The two lines that stood here computed `entry.model ?? (role === "fast" ?
+      // undefined : undefined)` — both branches the same value — and then threw the
+      // result away with `void model`. Dead code that reads like a rule about which
+      // role gets a model.
       if (entry.model && !models[role]) {
         models[role] = { provider: entry.provider, model: entry.model };
       }
-      void model;
     }
     if (nested?.fallback_models?.length && !fallbacks.length) {
       fallbacks = nested.fallback_models.map((m) => ({ provider: legacyProvider, model: m }));

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { FilesTool } from "../../../src/core/tools/files.js";
+import { SendFileTool } from "../../../src/core/tools/send-file.js";
 import { defaultPathPolicy } from "../../../src/core/path-policy.js";
 import { discard } from "../../../src/core/pending.js";
 import { userFilesPath } from "../../../src/core/user-files.js";
@@ -232,5 +233,33 @@ describe("files edit", () => {
     expect(res.output).toContain("исправить файл");
     expect(fs.readFileSync(p, "utf-8")).toBe("старое\n"); // not applied until /yes
     discard("test-owner-edit");
+  });
+});
+
+describe("send_file", () => {
+  const sender = () => new SendFileTool({ policy: defaultPathPolicy(path.join(root, "config.yaml"), [root]) });
+
+  it("sends the caption he asked for with the file", async () => {
+    // `caption` was read, validated, and then used only as the tool's own answer: the
+    // file went out under whatever she happened to write in the turn, because the
+    // Telegram caption comes from `mediaText` and this tool never set it.
+    const p = path.join(root, "report.txt");
+    fs.writeFileSync(p, "готово", "utf-8");
+
+    const res = await sender().execute({ path: p, caption: "вот отчёт, как просил" });
+
+    expect(res.success).toBe(true);
+    expect(res.mediaPath).toBe(p);
+    expect(res.mediaText).toBe("вот отчёт, как просил");
+  });
+
+  it("adds no caption of its own when none was asked for", async () => {
+    const p = path.join(root, "quiet.txt");
+    fs.writeFileSync(p, "x", "utf-8");
+
+    const res = await sender().execute({ path: p });
+
+    expect(res.success).toBe(true);
+    expect(res.mediaText).toBeUndefined();
   });
 });

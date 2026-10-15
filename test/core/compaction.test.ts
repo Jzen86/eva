@@ -248,7 +248,14 @@ describe("Compaction", () => {
       .find((p) => p.includes("Объедини их"))!;
     expect(mergePrompt).toContain("A".repeat(15_000));
     expect(mergePrompt).toContain("B".repeat(15_000));
-    expect(mergePrompt).not.toContain("B".repeat(15_000) + "\n---\nНОВОЕ");
+    // The assertion that stood here was `not.toContain("B"+"\n---\nНОВОЕ")` — a
+    // concatenation with nowhere to come from, so it passed whatever the prompt was.
+    // What the comment above promises is the order: both chunks arrive, oldest first,
+    // and neither of them disappears into the other.
+    const posA = mergePrompt.indexOf("A".repeat(15_000));
+    const posB = mergePrompt.indexOf("B".repeat(15_000));
+    expect(posA).toBeGreaterThanOrEqual(0);
+    expect(posB).toBeGreaterThan(posA);
 
     const chunks = loadSummaryChunks("u1");
     expect(chunks.map((c) => c.summary)).toEqual(["СЛИТО"]);

@@ -5,6 +5,20 @@ import { requireApproval, registerApprovalApplier } from "../pending.js";
 
 const execAsync = promisify(exec);
 
+/**
+ * A package name, in the shape npm itself accepts: an optional `@scope/`, a name,
+ * and an optional `@version` or tag.
+ *
+ * An allowlist rather than a blacklist of shell characters, because the blacklist
+ * was the wrong shape: it can never be longer than the list of things that turn a
+ * word into a command. The one that stood here (`[;&|`$(){}[\]<>!#]`) was missing
+ * whitespace, quotes and the backslash — and the name is interpolated into
+ * `exec("npm install " + name)`, so `lodash\nreboot` was a second command on the
+ * server, behind the same single tap. What the owner is shown is a summary, and a
+ * summary is a line he skims.
+ */
+const NPM_PACKAGE = /^(?:@[a-zA-Z0-9._-]+\/)?[a-zA-Z0-9][a-zA-Z0-9._-]*(?:@[a-zA-Z0-9._~*^-]+)?$/;
+
 export const npmInstallTool: Tool = {
   name: "npm_install",
   description:
@@ -38,8 +52,9 @@ export const npmInstallTool: Tool = {
 
     const name = packageName.trim();
 
-    // Basic validation: reject shell meta-characters to prevent injection.
-    if (/[;&|`$(){}[\]<>!#]/.test(name)) {
+    // Basic validation: the name has to look like a package before anything else
+    // looks at it.
+    if (!NPM_PACKAGE.test(name)) {
       return {
         success: false,
         output: `Invalid package name: ${name}`,
@@ -53,16 +68,14 @@ export const npmInstallTool: Tool = {
      * suggested, is arbitrary code execution on the server. The old version
      * declared `requiresConfirmation: true` and trusted a `betsy-` prefix for
      * the rest — and nothing anywhere read that flag, so nothing was
-     * confirmed. It is now an actual gate.
+     * confirmed. It is now an actual gate, and an unconditional one: there is no
+     * package this tool installs on its own.
      */
-    const approval = requireApproval(params, "npm_install", {
+    return requireApproval(params, "npm_install", {
       summary: `установить пакет ${name}`,
       reason: typeof params.reason === "string" ? params.reason : "",
       args: { package_name: name },
     });
-    if (approval) return approval;
-
-    return doInstall(name);
   },
 };
 
@@ -88,5 +101,10 @@ async function doInstall(name: string): Promise<ToolResult> {
 registerApprovalApplier("npm_install", async (args) => {
   const name = typeof args.package_name === "string" ? args.package_name : "";
   if (!name) return { success: false, output: "", error: "empty package_name" };
+  // Checked again here on purpose: this is the last thing between a name and a
+  // shell, and it should not have to trust that the caller checked.
+  if (!NPM_PACKAGE.test(name)) {
+    return { success: false, output: `Invalid package name: ${name}`, error: "invalid_name" };
+  }
   return doInstall(name);
 });

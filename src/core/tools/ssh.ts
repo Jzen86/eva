@@ -90,7 +90,8 @@ export class SshTool implements Tool {
     // runs there.
     const verdict = classify(command, this.allow);
     if (verdict.kind === "gate") {
-      const approval = requireApproval(params, "ssh", {
+      // Parked for the owner, or refused when there is no chat to confirm through.
+      return requireApproval(params, "ssh", {
         summary: approvalSummary(`выполнить на ${host.trim()}`, command),
         reason: typeof params.reason === "string" ? params.reason : "",
         args: {
@@ -101,7 +102,6 @@ export class SshTool implements Tool {
           port,
         },
       });
-      if (approval) return approval;
     }
 
     return run({

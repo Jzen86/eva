@@ -203,7 +203,7 @@ const SQLITE_READ_COMMANDS = new Set([".schema", ".tables", ".indexes", ".fullsc
 
 /** Words that turn SQL into a write. */
 const SQL_WRITE_WORDS =
-  /\b(insert|update|delete|drop|alter|create|replace|vacuum|reindex|attach|detach|pragma)\b/i;
+  /\b(insert|update|delete|drop|alter|create|replace|vacuum|reindex|attach|detach|pragma|writefile)\b/i;
 
 export interface ShellShape {
   segments: string[];
@@ -556,7 +556,20 @@ function clip(text: string, max = 60): string {
   return flat.length > max ? `${flat.slice(0, max)}…` : flat;
 }
 
-/** The command as it should appear on the owner's approval line. */
+/**
+ * The command as it should appear on the owner's approval line.
+ *
+ * Both ends, and a count of what is hidden, because clipping the head alone hid
+ * exactly the part that decides the answer: `sh -c "…"` puts the payload at the end,
+ * `; rm -rf` sits at the end, and so does the redirect that writes a file he never
+ * saw. What he approves has to be what runs — so a long command is not shortened
+ * into something else, and when it is shortened at all, it says so.
+ */
 export function approvalSummary(prefix: string, command: string): string {
-  return `${prefix}: ${clip(command, 120)}`;
+  const flat = command.replace(/\s+/g, " ").trim();
+  const max = 700;
+  if (flat.length <= max) return `${prefix}: ${flat}`;
+  const keep = Math.floor((max - 40) / 2);
+  const hidden = flat.length - keep * 2;
+  return `${prefix}: ${flat.slice(0, keep)} …(скрыто ${hidden} символов)… ${flat.slice(-keep)}`;
 }

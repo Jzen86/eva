@@ -51,10 +51,14 @@ describe("initiative", () => {
     const cfg = onePeriod();
     const period = cfg.periods[0];
     const id = "2026-10-11#утро";
+    // Pinned on purpose: the seed is the date, so this is a fixed number, and the
+    // conditional that stood here (`if (target > 0)`) meant that on the day the seed
+    // picked 0 the check quietly stopped checking anything.
     const target = targetOffsets(period, id)[0];
+    expect(target).toBe(180);
 
     // Before the moment — nothing.
-    if (target > 0) expect(dueNow(cfg, NONE, at(6, target - 1), 0, null)).toBeNull();
+    expect(dueNow(cfg, NONE, at(6, target - 1), 0, null)).toBeNull();
     // At the moment — due.
     const due = dueNow(cfg, NONE, at(6, target), 0, null);
     expect(due?.instance.id).toBe(id);
@@ -65,10 +69,14 @@ describe("initiative", () => {
     expect(targetOffsets(period, "2026-10-11#утро")).toEqual(targetOffsets(period, "2026-10-11#утро"));
     const a = targetOffsets(period, "2026-10-11#утро")[0];
     const b = targetOffsets(period, "2026-10-12#утро")[0];
+    // Both values are fixed by the date seed (mulberry32 over "date#period"), which is
+    // the promise this test exists for: one day, one set — the same tick after tick.
+    // `expect(typeof b).toBe("number")` stood here and asserted nothing: it passed for
+    // any value, including a broken generator.
+    expect(a).toBe(180);
+    expect(b).toBe(223);
     expect(a).toBeGreaterThanOrEqual(0);
     expect(a).toBeLessThan(240);
-    // Different days, most likely different minutes (not guaranteed equal).
-    expect(typeof b).toBe("number");
   });
 
   it("does not exceed the per-period cap, and does not talk over the owner", () => {

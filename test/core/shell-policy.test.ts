@@ -240,6 +240,9 @@ describe("classify — everything that must wait for the owner", () => {
   it("gates sqlite3 that writes", () => {
     expect(allow(`sqlite3 /root/.eva/eva.db "DELETE FROM knowledge"`)).toBe(false);
     expect(allow(`sqlite3 /root/.eva/eva.db "INSERT INTO knowledge VALUES(1)"`)).toBe(false);
+    // `writefile()` is SQL, not a dot-command, and it puts bytes on disk: the write
+    // words did not know it, so this walked out as a read.
+    expect(allow(`sqlite3 /root/.eva/eva.db "SELECT writefile('/tmp/x','data')"`)).toBe(false);
     expect(allow("sqlite3 /root/.eva/eva.db .backup /tmp/steal.db")).toBe(false);
     expect(allow("sqlite3 /root/.eva/eva.db .shell rm -rf /tmp")).toBe(false);
     expect(allow("sqlite3 /root/.eva/eva.db 'PRAGMA journal_mode=WAL'")).toBe(false);
@@ -290,11 +293,20 @@ describe("approvalSummary", () => {
     expect(approvalSummary("выполнить команду", "rm -rf /tmp")).toBe("выполнить команду: rm -rf /tmp");
   });
 
-  it("clips something enormous rather than dumping it into the chat", () => {
+  it("shows the whole command when it fits, and both ends when it does not", () => {
+    // The rule used to be "clip the head at 120 characters", and the head is where the
+    // *safe* part lives: `sh -c "…"` puts its payload at the end, and so do `; rm -rf`
+    // and the redirect that writes a file the owner never saw. A 400-character command
+    // is a command, not an essay — it goes out as it is.
     const long = "x".repeat(400);
-    const line = approvalSummary("выполнить", long);
-    expect(line.length).toBeLessThan(140);
-    expect(line.endsWith("…")).toBe(true);
+    expect(approvalSummary("выполнить", long)).toBe(`выполнить: ${long}`);
+
+    const enormous = "y".repeat(2000);
+    const line = approvalSummary("выполнить", enormous);
+    expect(line.length).toBeLessThan(760);
+    expect(line).toContain("скрыто");
+    expect(line.startsWith(`выполнить: ${"y".repeat(100)}`)).toBe(true);
+    expect(line.endsWith("y".repeat(100))).toBe(true);
   });
 });
 

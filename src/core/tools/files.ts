@@ -93,7 +93,7 @@ export class FilesTool implements Tool {
     // the thing the owner has to release. An edit changes bytes just like a
     // write, so it walks through the same gate.
     if (verdict.kind === "gate" && (action === "write" || action === "edit")) {
-      const approval = requireApproval(params, "files", {
+      return requireApproval(params, "files", {
         summary: action === "edit" ? `исправить файл ${verdict.path}` : `записать файл ${verdict.path}`,
         reason: typeof params.reason === "string" ? params.reason : "",
         args: {
@@ -105,7 +105,6 @@ export class FilesTool implements Tool {
           replace_all: params.replace_all,
         },
       });
-      if (approval) return approval;
     }
 
     return runAction(action, verdict.path, params);

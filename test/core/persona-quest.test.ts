@@ -55,8 +55,18 @@ describe("the four questions", () => {
   });
 
   it("has four questions, and no fifth that only exists to be a fifth", () => {
-    expect(Object.keys(questionFor("photo") ? {} : {})).toEqual([]);
-    expect(start(NOW).step).toBe("photo");
+    // The check that stood here was `Object.keys(questionFor("photo") ? {} : {})` —
+    // `[]` either way, so it asserted nothing at all while reading like a check on the
+    // number of steps. What the promise actually is: the fourth answer finishes the
+    // constructor and there is no step waiting behind it.
+    let turn = answerPhoto(start(NOW));
+    for (const answer of ["female", "она своя и тёплая", "коротко, на ты"]) {
+      expect(turn.finished).toBe(false);
+      turn = answerText(turn.next!, answer);
+    }
+    expect(turn.finished).toBe(true);
+    expect(turn.next).toBeNull();
+    expect(turn.reply).toBe("");
   });
 });
 

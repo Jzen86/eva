@@ -81,8 +81,15 @@ describe("pending approvals", () => {
     expect(res!.error).toMatch(/подтверждени/i);
   });
 
-  it("lets a call through when nothing needs gating", () => {
-    expect(requireApproval({ _userId: OWNER }, "some_tool", { summary: "x" })).not.toBeNull();
+  it("parks every gated call — there is no path that runs without the owner", () => {
+    // The doc promised "returns null when the call may proceed", and no branch ever
+    // returned null: a tool that may run on its own does not call the gate at all.
+    // The type says so now (`ToolResult`, not `ToolResult | null`), and this is the
+    // test that keeps it true — a future "let it through" path has to be a deliberate
+    // change to the gate, not a quiet default.
+    const res = requireApproval({ _userId: OWNER }, "some_tool", { summary: "x" });
+    expect(res.success).toBe(true);
+    expect(res.output).toContain("Жду подтверждения");
     expect(peek(OWNER)?.summary).toBe("x");
   });
 

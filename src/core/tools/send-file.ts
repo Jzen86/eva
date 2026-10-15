@@ -84,6 +84,10 @@ export class SendFileTool implements Tool {
       success: true,
       output: caption || `File sent: ${path.basename(filePath)} (${sizeMB} MB)`,
       mediaPath: filePath,
+      // The caption he asked for goes with the file. It used to be echoed into the
+      // tool's answer only, so the file went out under whatever she happened to write
+      // in the turn — the parameter was read, validated and then thrown away.
+      ...(caption ? { mediaText: caption } : {}),
     };
   }
 }

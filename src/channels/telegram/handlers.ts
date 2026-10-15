@@ -878,8 +878,13 @@ export function registerHandlers(
         ctx.api.deleteMessage(chatId, statusMsgId).catch(() => {});
       }
 
-      // Clear the draft — but skip if response has media (photo will carry the text)
-      if (draftId && draftSupported && !response.mediaUrl) {
+      // Clear the draft — but not when the answer rides a caption: with media the
+      // text goes out attached to it, and the draft would paint it twice (once as a
+      // preview, once as the caption). Only `mediaUrl` was checked, while a voice
+      // note or a file arrive as `mediaPath` (or in the `media` list) and carry the
+      // caption just the same.
+      const carriesText = Boolean(response.mediaUrl || response.mediaPath || response.media?.length);
+      if (draftId && draftSupported && !carriesText) {
         try {
           await sendDraft(ctx.api, chatId, draftId, response.text);
           await sleep(300);

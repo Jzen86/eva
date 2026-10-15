@@ -89,15 +89,19 @@ export function discard(ownerId: string): PendingChange | undefined {
 /**
  * The gate itself: park the action and return the reply to send back.
  *
- * Returns a refusal instead when there is no chat to approve through — the
- * change would sit forever and the caller would have no idea why. Returns
- * null when the call may proceed.
+ * It always parks, or refuses when there is no chat to approve through — there is no
+ * third answer, and the type says so. The doc here used to promise "returns null when
+ * the call may proceed", and no branch ever returned null: every tool that calls this
+ * is gated unconditionally, and the `if (approval) return approval` that followed each
+ * call was dead code reading like a working bypass. A tool that may proceed on its own
+ * does not ask the gate at all — that decision lives in the classifier
+ * (`shell-policy.classify`) or in the tool's own read/write split.
  */
 export function requireApproval(
   params: Record<string, unknown>,
   tool: string,
   opts: { summary: string; reason?: string; args?: Record<string, unknown> },
-): ToolResult | null {
+): ToolResult {
   const ownerId = typeof params._userId === "string" ? params._userId : null;
   if (!ownerId) {
     return {

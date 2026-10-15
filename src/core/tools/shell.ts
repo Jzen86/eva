@@ -45,15 +45,13 @@ export class ShellTool implements Tool {
     // someone has already been burned by; an allowlist is the other way round.
     const verdict = classify(command, this.allow);
     if (verdict.kind === "gate") {
-      const approval = requireApproval(params, "shell", {
+      // Parked for the owner, or refused when there is no chat to confirm through —
+      // requireApproval says which, and a command nobody is watching does not run.
+      return requireApproval(params, "shell", {
         summary: approvalSummary("выполнить команду", command),
         reason: typeof params.reason === "string" ? params.reason : "",
         args: { command: command.trim() },
       });
-      // Non-null covers both cases: parked for the owner, or refused outright
-      // when there is no chat to confirm through — requireApproval says which,
-      // and a command that nobody is watching does not run.
-      if (approval) return approval;
     }
 
     return run(command);
