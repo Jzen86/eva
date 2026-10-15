@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import OpenAI from "openai";
 import { isBillingError, isTransientError, isRetryableError } from "../../src/core/llm/errors";
-import { LLMRouter } from "../../src/core/llm/router";
+import { LLMRouter, splitModelNotice } from "../../src/core/llm/router";
 import { ProviderRegistry, PROVIDER_PRESETS, UnknownProviderError } from "../../src/core/llm/registry";
 import { ToolCallAccumulator } from "../../src/core/llm/providers/openai-compat";
 import type { LLMClient, LLMResponse, LLMMessage, ToolDefinition, StreamCallback } from "../../src/core/llm/types";
@@ -199,6 +199,34 @@ describe("ProviderRegistry", () => {
 });
 
 // --- router ------------------------------------------------------------------
+
+describe("splitModelNotice", () => {
+  it("takes a provider notice off the front and leaves the finding alone", () => {
+    // Live, 15.10: the 21:36 server_watch entered the archive as "✅ Модель … снова
+    // отвечает — вернулась на неё." with its actual finding starting on line three,
+    // because a check's text *is* the report. The notice is hers to say in a
+    // conversation, not a finding to keep in the record.
+    expect(
+      splitModelNotice(
+        "✅ Модель google/gemini-3.5-flash-lite снова отвечает — вернулась на неё.\n\nУпавших юнитов нет.",
+      ),
+    ).toEqual({
+      notice: "✅ Модель google/gemini-3.5-flash-lite снова отвечает — вернулась на неё.",
+      rest: "Упавших юнитов нет.",
+    });
+
+    expect(
+      splitModelNotice(
+        "⚠️ Модель google/gemini-3.5-flash-lite недоступна (пустой ответ). Временно работаю на google/gemini-3.1-flash-lite.\n\nВсё штатно.",
+      ).rest,
+    ).toBe("Всё штатно.");
+  });
+
+  it("does not mistake an answer that talks about models for a notice", () => {
+    const plain = "Я тут временно работаю на другой модели, кот.\n\nИ вот отчёт.";
+    expect(splitModelNotice(plain)).toEqual({ notice: null, rest: plain });
+  });
+});
 
 describe("LLMRouter", () => {
   it("exposes mode normal before anything fails", () => {

@@ -4,7 +4,7 @@ import path from "node:path";
 import { isConfigured, loadConfig, patchConfig, getConfigPath, getAgentName, getPersonality, getPersonalitySliders, getLLMApiKey, toRegistryConfig, type EvaConfig } from "./core/config.js";
 import { TelegramChannel } from "./channels/telegram/index.js";
 import { synthesizeVoiceOgg } from "./channels/telegram/voice.js";
-import { LLMRouter } from "./core/llm/router.js";
+import { LLMRouter, splitModelNotice } from "./core/llm/router.js";
 import { ProviderRegistry } from "./core/llm/registry.js";
 import { Engine, EMPTY_SCHEDULE_REPLY } from "./core/engine.js";
 import { SchedulerService } from "./core/tools/scheduler.js";
@@ -403,13 +403,28 @@ async function main() {
       ].join("\n");
 
       try {
+        const report = isReportTask(task.schedule);
         const result = await engine.process({
           channelName: task.channel,
           userId: task.chatId,
           text: prompt,
           timestamp: Date.now(),
-          metadata: { scheduledTask: true, reportTask: isReportTask(task.schedule) },
+          metadata: { scheduledTask: true, reportTask: report },
         });
+
+        // A provider notice belongs to the conversation, not to the record: a check's
+        // text *becomes* the report, and on 15.10 the 21:36 server_watch entered the
+        // archive as "✅ Модель … снова отвечает — вернулась на неё." with the finding
+        // starting on line three. The journal already says the same thing (the ⚠️/✅
+        // lines), so the report is stored plain. The chat keeps the notice.
+        let answer = result;
+        if (report) {
+          const { notice, rest } = splitModelNotice(result.text);
+          if (notice) {
+            console.log(`ℹ️ Scheduler "${task.name}": ${notice}`);
+            answer = { ...result, text: rest };
+          }
+        }
 
         // A clean round says nothing, in the same shape the initiative uses:
         // the answer is exactly `[тишина]`. Until this branch existed the
@@ -423,7 +438,7 @@ async function main() {
         // not look alike — the empty-answer bug was exactly that confusion, and
         // without the line, shorter intervals would quietly become checks that
         // never happened.
-        if (saidNothing(result.text)) {
+        if (saidNothing(answer.text)) {
           console.log(`🕊 Плановая проверка "${task.name}": чисто — промолчала (ни сообщения, ни записи)`);
           return;
         }
@@ -438,7 +453,7 @@ async function main() {
         // in the reading place is what makes a finding get skimmed past. It is
         // still sent, still in `conversations`, still in Telegram — only the
         // third copy is skipped.
-        if (!isReportTask(task.schedule)) {
+        if (!report) {
           try {
             await channel.send(task.chatId, result);
             console.log(`✅ Scheduler: delivered "${task.name}" (сообщение, без архива)`);
@@ -448,8 +463,8 @@ async function main() {
           return;
         }
 
-        const outcome = await archiveThenDeliver(task.name, result.text, () =>
-          channel.send(task.chatId, result),
+        const outcome = await archiveThenDeliver(task.name, answer.text, () =>
+          channel.send(task.chatId, answer),
         );
         if (outcome.saved) console.log(`🗂 Отчёт "${task.name}" → ${outcome.saved}`);
         if (outcome.delivered) console.log(`✅ Scheduler: delivered "${task.name}" to ${task.channel}:${task.chatId}`);

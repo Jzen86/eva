@@ -423,6 +423,27 @@ export class LLMRouter {
   }
 }
 
+/**
+ * Take a provider notice off the front of an answer, when one is there.
+ *
+ * The notice is hers to say in a conversation: the owner should know she is running
+ * on the backup rather than wonder why the voice changed. It is not a finding, and a
+ * check's text *becomes* the report — live, the 15.10 21:36 server_watch entered the
+ * archive as "✅ Модель google/gemini-3.5-flash-lite снова отвечает — вернулась на
+ * неё." with the actual finding starting on line three, and the journal carries the
+ * same fact anyway (the ⚠️/✅ lines). So the report path strips it; the chat keeps it.
+ *
+ * The notice is always attached as `notice + "\n\n" + text`, so the first blank line
+ * is the seam — no vocabulary to guess.
+ */
+export function splitModelNotice(text: string): { notice: string | null; rest: string } {
+  const first = text.split("\n\n")[0] ?? "";
+  if (!first.startsWith("⚠️ Модель ") && !first.startsWith("✅ Модель ")) {
+    return { notice: null, rest: text };
+  }
+  return { notice: first, rest: text.slice(first.length).replace(/^\n+/, "") };
+}
+
 function errText(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
