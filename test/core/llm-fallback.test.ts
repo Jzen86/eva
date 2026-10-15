@@ -271,6 +271,10 @@ describe("LLMRouter", () => {
     expect(calls).toEqual(["fast-1", "free-1"]);
     expect(res.text).toContain("fallback works");
     expect(res.text).toContain("недоступна");
+    // The reason belongs in the journal, not in her message. The banner used to carry
+    // the whole error text — "недоступна (Модель … вернула пустой ответ (finish_reason:
+    // stop))" — and the owner asked what that explanation was doing in a chat with her.
+    expect(res.text).not.toContain("Payment required");
     expect(router.mode).toBe("degraded");
     router.destroy();
   });

@@ -341,8 +341,8 @@ export class LLMRouter {
       this.degradedRef = next;
       this.degradedIndex = 0;
       this.pendingNotification =
-        `⚠️ Модель ${this.registry.label(ref)} недоступна (${errText(err)}). ` +
-        `Временно работаю на ${this.registry.label(next)}.`;
+        `⚠️ Модель ${this.registry.label(ref)} недоступна — ` +
+        `временно работаю на ${this.registry.label(next)}.`;
       console.warn(`⚠️ LLM [${role}]: переключаюсь на ${this.registry.label(next)}`);
       this.startRestoreProbe(role);
       return;
