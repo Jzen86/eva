@@ -1,15 +1,8 @@
 import { Bot } from "grammy";
-import fs from "node:fs";
-import path from "node:path";
 import { autoRetry } from "@grammyjs/auto-retry";
 import type { Channel, MessageHandler } from "../types.js";
 import type { OutgoingMessage } from "../../core/types.js";
-import { registerHandlers, type SetReferencePhotoFn, type OnOwnerClaimedFn, type AudioOptions } from "./handlers.js";
-
-/** What a file means to Telegram: a voice note is not a document. */
-const VIDEO_EXTS = new Set([".mp4", ".webm", ".mkv", ".avi", ".mov"]);
-const AUDIO_EXTS = new Set([".mp3", ".wav", ".flac", ".m4a", ".aac"]);
-const IMAGE_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
+import { registerHandlers, deliverTo, type SetReferencePhotoFn, type OnOwnerClaimedFn, type AudioOptions } from "./handlers.js";
 
 /**
  * Telegram channel adapter.
@@ -83,6 +76,7 @@ export class TelegramChannel implements Channel {
       { command: "selfie", description: "Селфи (или спроси её словами)" },
       { command: "persona", description: "Собрать её личность заново" },
       { command: "voice", description: "Голосовое сообщение" },
+      { command: "video", description: "Видео-кружок: голос с её лицом (двигает губами)" },
       { command: "settings", description: "Настройки" },
       { command: "pending", description: "Что awaits подтверждения" },
       { command: "yes", description: "Подтвердить последнее" },
@@ -104,60 +98,19 @@ export class TelegramChannel implements Channel {
   }
 
   /**
-   * Send a message the bot made on its own — a scheduled report, or the
-   * initiative. Media used to be dropped here: `sendMessage` carries text and
-   * nothing else, so a voice note or a picture a spontaneous turn produced would
-   * leave as a bare caption. Read the extension and pick the right Telegram
-   * method, the same way `deliver` does for a live turn.
+   * Send a message the bot made on its own — a scheduled report, or the initiative.
+   *
+   * It goes through the same delivery a live turn uses (`deliverTo`), because the
+   * two used to be separate implementations and this one was the poorer: it sent
+   * only the last attachment of a turn, never converted markdown to HTML, never
+   * chunked — a report over 4096 characters threw, so a long check arrived as
+   * *nothing at all* — cut her words at 1024 characters after converting them, and
+   * dropped the approval buttons a parked command needs.
    */
   async send(userId: string, message: OutgoingMessage): Promise<void> {
     const api = this.bot?.api;
     if (!api) return;
-    const chatId = parseInt(userId, 10);
-    // Telegram caps a caption at 1024; a longer one fails the whole send.
-    const caption = message.text ? message.text.slice(0, 1024) : undefined;
-    const opts = caption ? { caption } : {};
-
-    const last = message.media?.[message.media.length - 1];
-    const url = message.mediaUrl ?? last?.url;
-    const file = message.mediaPath ?? last?.path;
-
-    if (file && fs.existsSync(file)) {
-      try {
-        const { InputFile } = await import("grammy");
-        const input = new InputFile(file);
-        const ext = path.extname(file).toLowerCase();
-        if (VIDEO_EXTS.has(ext)) {
-          await api.sendVideo(chatId, input, opts);
-        } else if (ext === ".ogg" || ext === ".opus") {
-          await api.sendVoice(chatId, input, opts);
-        } else if (AUDIO_EXTS.has(ext)) {
-          await api.sendAudio(chatId, input, opts);
-        } else if (IMAGE_EXTS.has(ext)) {
-          await api.sendPhoto(chatId, input, opts);
-        } else {
-          await api.sendDocument(chatId, input, opts);
-        }
-        return;
-      } catch {
-        // A file that will not send is not a reason to send nothing.
-      }
-    }
-
-    if (url) {
-      try {
-        const { InputFile } = await import("grammy");
-        const buffer = url.startsWith("data:")
-          ? Buffer.from(url.replace(/^data:[^;]+;base64,/, ""), "base64")
-          : Buffer.from(await (await fetch(url)).arrayBuffer());
-        await api.sendPhoto(chatId, new InputFile(buffer, "eva.jpg"), opts);
-        return;
-      } catch {
-        // fall through to text
-      }
-    }
-
-    await api.sendMessage(chatId, message.text);
+    await deliverTo({ api, chatId: parseInt(userId, 10) }, message, this.voiceOptions);
   }
 
   onMessage(handler: MessageHandler): void {

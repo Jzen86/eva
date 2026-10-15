@@ -2,8 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Tool, ToolResult } from "./types.js";
-import { synthesizeVoiceOgg } from "../../channels/telegram/voice.js";
-import { checkVoiceBudget, noteVoiceSent, VOICE_PER_DAY } from "../voice-budget.js";
+import { synthesizeVoiceOgg, geminiKeys } from "../../channels/telegram/voice.js";
+import { checkVoiceBudget, VOICE_PER_DAY } from "../voice-budget.js";
 
 export interface VoiceToolConfig {
   voiceConfig: Record<string, unknown>;
@@ -31,9 +31,19 @@ export function voiceBackendAvailable(
   const provider = ((voiceConfig.tts_provider as string) ?? "openai").toLowerCase();
 
   if (provider === "gemini") {
-    return voiceConfig.gemini_api_key
-      ? { ok: true, backend: "gemini", why: "tts_provider=gemini, ключ есть" }
-      : { ok: false, backend: "gemini", why: "tts_provider=gemini, но нет voice.gemini_api_key" };
+    // Asked of the same resolver the synthesizer uses. The gate read
+    // `voice.gemini_api_key` alone, while the synthesizer also reads the
+    // `gemini_api_keys` array (documented in config.example.yaml) and
+    // `google_api_key` — so a config with only the array was reported as
+    // "voice is off: no key" while her voice worked perfectly.
+    const keys = geminiKeys(voiceConfig);
+    return keys.length
+      ? { ok: true, backend: "gemini", why: `tts_provider=gemini, ключей: ${keys.length}` }
+      : {
+          ok: false,
+          backend: "gemini",
+          why: "tts_provider=gemini, но нет voice.gemini_api_key / voice.gemini_api_keys / voice.google_api_key",
+        };
   }
   if (provider === "minimax") {
     return falApiKey
@@ -101,18 +111,17 @@ export class VoiceTool implements Tool {
       return { success: false, output: "Не удалось синтезировать голос (проверь ключ/модель TTS)." };
     }
 
-    noteVoiceSent();
-
     const file = path.join(os.tmpdir(), `eva-voice-${Date.now()}.ogg`);
     fs.writeFileSync(file, ogg);
-    // The state of the budget goes back with the result, because that is the
-    // moment she is deciding about the next one: a number she never sees is a
-    // number that changes nothing, and the refusal alone would teach her only
-    // where the wall is.
-    const after = checkVoiceBudget(false);
+    // The budget is spent when the voice actually leaves (voice-budget.ts, called by
+    // the Telegram channel), not here: recording it at synthesis charged her for a
+    // send that might never happen — she said "отправлено", and the honest place for
+    // that sentence is after the send. What she is told here is what will be left
+    // once this one goes, so the number in front of her is still true.
+    const left = Math.max(0, budget.remaining - 1);
     return {
       success: true,
-      output: `Голосовое готово и отправлено. Осталось сегодня: ${after.remaining} из ${VOICE_PER_DAY}.`,
+      output: `Голосовое готово и уходит в этом же ходу. Останется сегодня: ${left} из ${VOICE_PER_DAY}.`,
       mediaPath: file,
       mediaText: text,
     };

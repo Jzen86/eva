@@ -58,7 +58,7 @@ const personalitySchema = z.object({
     /**
      * Standing rules for how she operates — a list, so each line is one rule
      * the model can hold on to. "Always reply in Russian", "never use bullet
-     * points in chat", "call him Женя".
+     * points in chat", "call him by name".
      */
     ops: z.array(z.string()).optional(),
     /**

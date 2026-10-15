@@ -77,4 +77,29 @@ describe("transcribeVoice", () => {
     expect(await transcribeVoice(ogg, {})).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("accepts the keys array her speech uses", async () => {
+    // The transcription read `gemini_api_key ?? google_api_key` while the
+    // synthesizer also accepted the `gemini_api_keys` array — so a config carrying
+    // only the array had working speech and dead hearing, which the owner saw as
+    // "не разобрала голосовое": a lie about the audio rather than about the key.
+    const fetchMock = vi.fn().mockResolvedValue(
+      reply({ candidates: [{ content: { parts: [{ text: "Слышу тебя." }] } }] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await transcribeVoice(ogg, { gemini_api_keys: ["first", "second"] })).toBe("Слышу тебя.");
+    expect(String(fetchMock.mock.calls[0][0])).toContain("key=first");
+  });
+
+  it("tries the next key when one is out of allowance", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(reply({ error: { message: "quota" } }, false, 429))
+      .mockResolvedValueOnce(reply({ candidates: [{ content: { parts: [{ text: "Со второй попытки." }] } }] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await transcribeVoice(ogg, { gemini_api_keys: ["spent", "fresh"], stt_models: ["m"] }))
+      .toBe("Со второй попытки.");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

@@ -71,7 +71,7 @@ describe("voice budget", () => {
     const budget = checkVoiceBudget(false);
     expect(budget.allow).toBe(false);
     expect(budget.remaining).toBe(0);
-    expect(budget.reason).toContain("Женя попросит");
+    expect(budget.reason).toContain("он попросит");
   });
 
   it("lets his request through both rules", () => {

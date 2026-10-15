@@ -1,10 +1,11 @@
-import type { Bot, Context } from "grammy";
+import type { Api, Bot, Context } from "grammy";
 import type { IncomingMessage, OutgoingMessage, ProgressCallback } from "../../core/types.js";
 import type { MessageHandler } from "../types.js";
 import { sendVoiceResponse } from "./voice.js";
 import { transcribeVoice } from "./transcribe.js";
 import { sendVideoNote } from "./video.js";
 import { applyPending, discard, peek, describe } from "../../core/pending.js";
+import { noteVoiceSent } from "../../core/voice-budget.js";
 import { loadConfig, patchConfig } from "../../core/config.js";
 import { profileKnowledge, knowledgeOfKind } from "../../core/memory/knowledge.js";
 import { renderProfileDossier, renderFlatBlock, writeProfileDoc } from "../../core/profile-dossier.js";
@@ -166,21 +167,66 @@ function sleep(ms: number): Promise<void> {
 // Message delivery with chunking
 // ---------------------------------------------------------------------------
 
-/** Send text as HTML, chunking if needed. Falls back to plain text on parse error. */
-async function replyHtml(ctx: Context, text: string): Promise<void> {
-  const html = markdownToTelegramHtml(text);
-  const chunks = chunkText(html, MAX_MSG_LEN);
+/**
+ * What delivery needs from the channel: the Telegram API and the chat.
+ *
+ * There are two delivery paths — a live turn (`deliver`, which has a grammY
+ * `Context`) and a turn the bot made on its own (`TelegramChannel.send`, which has
+ * an api and a chat id) — and they used to be two separate implementations. The
+ * one without a Context was the poor relation, and every difference was a loss the
+ * owner could see: it sent only the last attachment of a turn, it never converted
+ * markdown to HTML, it never chunked (a report over 4096 characters threw, so a
+ * long check arrived as nothing at all), it cut her words at 1024 characters
+ * *after* converting them — a cut inside a tag makes Telegram reject the whole
+ * message, media included — and it dropped the approval buttons, so a check that
+ * parked a command left him with no button to press.
+ */
+export interface Delivery {
+  api: Api;
+  chatId: number;
+  /** The message to hang the answer off, when there is one: a live turn replies. */
+  replyTo?: number;
+}
 
-  for (const chunk of chunks) {
+/** The delivery of a live turn, which is a grammY context. */
+export function deliveryOf(ctx: Context): Delivery {
+  const chatId = ctx.chat?.id ?? ctx.from?.id;
+  if (chatId === undefined) throw new Error("Telegram: у сообщения нет чата — доставлять некуда");
+  return {
+    api: ctx.api,
+    chatId,
+    ...(ctx.msg?.message_id ? { replyTo: ctx.msg.message_id } : {}),
+  };
+}
+
+/** Options for one send, with the reply link a live turn wants and a bot turn does not. */
+function sendOpts(d: Delivery, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return d.replyTo ? { ...extra, reply_parameters: { message_id: d.replyTo } } : extra;
+}
+
+/**
+ * Send text as HTML, chunking if needed, and never losing the rest of it.
+ *
+ * The source is cut first and each piece converted on its own, on purpose:
+ * converting the whole text and splitting the HTML afterwards cut tags in half,
+ * Telegram answered 400, and the fallback then re-sent *every* earlier chunk — the
+ * beginning of her answer arrived twice. Here a piece that will not parse costs
+ * exactly that piece, sent as plain text.
+ */
+async function sendText(d: Delivery, text: string): Promise<void> {
+  for (const chunk of chunkText(text, MAX_MSG_LEN)) {
+    const html = markdownToTelegramHtml(chunk);
+    // Escaping grows the text, so a converted chunk can come out over the limit.
+    // Cutting the HTML is what broke it in the first place; the plain chunk is
+    // already short enough, so it goes as is.
+    if (html.length > MAX_MSG_LEN) {
+      await d.api.sendMessage(d.chatId, chunk, sendOpts(d));
+      continue;
+    }
     try {
-      await ctx.reply(chunk, { parse_mode: "HTML" });
+      await d.api.sendMessage(d.chatId, html, sendOpts(d, { parse_mode: "HTML" }));
     } catch {
-      // HTML parse failed — send as plain text
-      const plainChunks = chunkText(text, MAX_MSG_LEN);
-      for (const pc of plainChunks) {
-        await ctx.reply(pc);
-      }
-      return;
+      await d.api.sendMessage(d.chatId, chunk, sendOpts(d));
     }
   }
 }
@@ -219,6 +265,7 @@ function chunkText(text: string, maxLen: number): string[] {
 /** File extension to Telegram send method mapping. */
 const VIDEO_EXTS = new Set([".mp4", ".webm", ".mkv", ".avi", ".mov"]);
 const AUDIO_EXTS = new Set([".mp3", ".ogg", ".wav", ".flac", ".m4a", ".aac", ".opus"]);
+const IMAGE_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
 
 /** Runtime options for audio/video delivery (voice config, keys, avatar path). */
 export interface AudioOptions {
@@ -260,12 +307,26 @@ function captionFor(text: string, mediaText?: string): string | undefined {
   const said = normalise(mediaText);
   const wrote = normalise(text);
   if (said.length >= 20 && (wrote === said || wrote.includes(said))) return undefined;
-  return markdownToTelegramHtml(text).slice(0, 1024);
+  // The *source* is cut and then converted, never the other way round: a slice
+  // taken from converted HTML can land inside `<b>` or `<a href="…">`, and Telegram
+  // then rejects the message whole — the picture and the words with it.
+  //
+  // And the result is measured, because conversion *grows* the text (each
+  // `**bold**` becomes `<b>bold</b>`): a 1024-character source can convert to more
+  // than the caption limit, and an over-long caption is rejected along with the
+  // picture. So the source is shrunk until its HTML fits.
+  let source = text;
+  let html = markdownToTelegramHtml(source);
+  while (html.length > 1024 && source.length > 1) {
+    source = source.slice(0, Math.max(1, Math.floor(source.length * 0.8)));
+    html = markdownToTelegramHtml(source);
+  }
+  return html.length > 1024 ? undefined : html;
 }
 
 /** Send one piece of media. False when it could not go out. */
 async function sendMedia(
-  ctx: Context,
+  d: Delivery,
   item: { url?: string; path?: string; text?: string },
   text: string,
 ): Promise<boolean> {
@@ -274,11 +335,11 @@ async function sendMedia(
       const { InputFile } = await import("grammy");
       const ext = path.extname(item.path).toLowerCase();
       const caption = captionFor(text, item.text);
-      const parseMode = caption ? ("HTML" as const) : undefined;
+      const opts = sendOpts(d, caption ? { caption, parse_mode: "HTML" } : {});
       const file = new InputFile(item.path);
 
       if (VIDEO_EXTS.has(ext)) {
-        await ctx.replyWithVideo(file, { caption, parse_mode: parseMode });
+        await d.api.sendVideo(d.chatId, file, opts);
       } else if (ext === ".ogg" || ext === ".opus") {
         // The caption is her written half, not a transcript of the voice note.
         // A turn with the voice tool makes two things: the line she speaks, and
@@ -286,11 +347,16 @@ async function sendMedia(
         // the second one away silently — the tool answers "готово и отправлено",
         // so she had no way to know, and the owner, seeing only the teasing half,
         // concluded she was stalling when she was being cut off.
-        await ctx.replyWithVoice(file, { caption, parse_mode: parseMode });
+        await d.api.sendVoice(d.chatId, file, opts);
+        // Spent where the voice leaves, not where it was made: see voice-budget.ts.
+        noteVoiceSent();
       } else if (AUDIO_EXTS.has(ext)) {
-        await ctx.replyWithAudio(file, { caption, parse_mode: parseMode });
+        await d.api.sendAudio(d.chatId, file, opts);
+      } else if (IMAGE_EXTS.has(ext)) {
+        // A picture that happens to be a file on disk is a picture, not a document.
+        await d.api.sendPhoto(d.chatId, file, opts);
       } else {
-        await ctx.replyWithDocument(file, { caption, parse_mode: parseMode });
+        await d.api.sendDocument(d.chatId, file, opts);
       }
       return true;
     } catch (err) {
@@ -312,10 +378,11 @@ async function sendMedia(
       }
       const { InputFile } = await import("grammy");
       const caption = captionFor(text, item.text);
-      await ctx.replyWithPhoto(new InputFile(buffer, "selfie.jpg"), {
-        caption,
-        parse_mode: caption ? "HTML" : undefined,
-      });
+      await d.api.sendPhoto(
+        d.chatId,
+        new InputFile(buffer, "selfie.jpg"),
+        sendOpts(d, caption ? { caption, parse_mode: "HTML" } : {}),
+      );
       return true;
     } catch {
       return false;
@@ -327,14 +394,27 @@ async function sendMedia(
 
 /** Deliver an OutgoingMessage, and the approval buttons when the turn parked one. */
 export async function deliver(ctx: Context, response: OutgoingMessage, audio?: AudioOptions): Promise<void> {
-  await deliverBody(ctx, response, audio);
+  await deliverTo(deliveryOf(ctx), response, audio);
+}
+
+/**
+ * Deliver a turn the bot made on its own — no context, so nothing to reply to.
+ *
+ * This is the entry point `TelegramChannel.send` uses (a scheduled report, the
+ * initiative, a study note). It is the *same* code a live turn goes through, which
+ * is the point: the two paths used to be separate implementations, and the one
+ * behind this name was the poor relation — only the last attachment, no markdown,
+ * no chunking, a blind 1024-character cut, no approval buttons.
+ */
+export async function deliverTo(d: Delivery, response: OutgoingMessage, audio?: AudioOptions): Promise<void> {
+  await deliverBody(d, response, audio);
   // A parked action goes out as two buttons — one tap instead of typing `/yes`.
   // The commands still work for anyone who prefers them.
-  if (response.confirm) await sendConfirm(ctx, response.confirm);
+  if (response.confirm) await sendConfirm(d, response.confirm);
 }
 
 /** Deliver an OutgoingMessage through the appropriate Telegram media type. */
-async function deliverBody(ctx: Context, response: OutgoingMessage, audio?: AudioOptions): Promise<void> {
+async function deliverBody(d: Delivery, response: OutgoingMessage, audio?: AudioOptions): Promise<void> {
   const mode = response.mode ?? "text";
 
   // Everything the turn made, in order. A turn can make two — two voice notes
@@ -345,17 +425,23 @@ async function deliverBody(ctx: Context, response: OutgoingMessage, audio?: Audi
     // Her words ride the last piece: she writes the reply after the tools, so
     // the scene lands with the voice it belongs to and not before it.
     let sent = 0;
+    let wordsOut = false;
     for (let i = 0; i < items.length; i++) {
-      const text = i === items.length - 1 ? response.text : "";
-      if (await sendMedia(ctx, items[i], text)) sent++;
+      const isLast = i === items.length - 1;
+      const ok = await sendMedia(d, items[i], isLast ? response.text : "");
+      if (ok) {
+        sent += 1;
+        if (isLast) wordsOut = true;
+      }
     }
     if (sent === items.length) return;
     if (sent > 0) {
-      // Half delivered. Her words already went out as a caption, so repeating
-      // them would say the same thing twice; name what did not make it instead
-      // of letting it disappear.
+      // Half delivered. Her words rode the last piece, so if *that* one is what
+      // failed they never arrived at all: naming the loss without repeating her
+      // answer left the owner with a note about a missing picture and no answer.
       const missing = items.length - sent;
-      await replyHtml(ctx, missing === 1 ? "(одно вложение не доехало)" : `(${missing} вложения не доехали)`).catch(() => {});
+      await sendText(d, missing === 1 ? "(одно вложение не доехало)" : `(${missing} вложения не доехали)`).catch(() => {});
+      if (!wordsOut && response.text?.trim()) await sendText(d, response.text).catch(() => {});
       return;
     }
     // Nothing went out — fall through and at least say it as text.
@@ -363,21 +449,30 @@ async function deliverBody(ctx: Context, response: OutgoingMessage, audio?: Audi
 
   if (mode === "voice") {
     const sent = audio
-      ? await sendVoiceResponse(ctx as never, response.text, audio.voiceConfig, audio.falApiKey)
+      ? await sendVoiceResponse(mediaCtx(d), response.text, audio.voiceConfig, audio.falApiKey)
       : false;
-    if (!sent) await replyHtml(ctx, response.text);
+    if (!sent) await sendText(d, response.text);
     return;
   }
 
   if (mode === "video") {
     const sent = audio
-      ? await sendVideoNote(ctx as never, response.text, audio.voiceConfig, audio.falApiKey ?? "", audio.avatarPath ?? "")
+      ? await sendVideoNote(mediaCtx(d), response.text, audio.voiceConfig, audio.falApiKey ?? "", audio.avatarPath ?? "")
       : false;
-    if (!sent) await replyHtml(ctx, response.text);
+    if (!sent) await sendText(d, response.text);
     return;
   }
 
-  await replyHtml(ctx, response.text);
+  await sendText(d, response.text);
+}
+
+/** The `reply*` methods the voice and video senders ask for, pointed at this delivery. */
+function mediaCtx(d: Delivery) {
+  return {
+    replyWithVoice: (file: unknown) => d.api.sendVoice(d.chatId, file as never, sendOpts(d)),
+    replyWithVideo: (file: unknown) => d.api.sendVideo(d.chatId, file as never, sendOpts(d)),
+    replyWithVideoNote: (file: unknown) => d.api.sendVideoNote(d.chatId, file as never, sendOpts(d)),
+  };
 }
 
 /**
@@ -387,21 +482,25 @@ async function deliverBody(ctx: Context, response: OutgoingMessage, audio?: Audi
  * and the command is invisible. `/yes` and `/no` stay as they were — a button
  * that fails to arrive must not leave the owner with no way to answer.
  */
-async function sendConfirm(ctx: Context, confirm: { summary: string; reason?: string }): Promise<void> {
+async function sendConfirm(d: Delivery, confirm: { summary: string; reason?: string }): Promise<void> {
   const text =
     `❔ Подтверди: ${confirm.summary}` +
     (confirm.reason ? `\nПричина: ${confirm.reason}` : "");
-  await ctx
-    .reply(text, {
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: "✅ Принять", callback_data: "pending:yes" },
-            { text: "❌ Отклонить", callback_data: "pending:no" },
+  await d.api
+    .sendMessage(
+      d.chatId,
+      text,
+      sendOpts(d, {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "✅ Принять", callback_data: "pending:yes" },
+              { text: "❌ Отклонить", callback_data: "pending:no" },
+            ],
           ],
-        ],
-      },
-    })
+        },
+      }),
+    )
     .catch(() => {});
   console.log(`🔘 Кнопки подтверждения отправлены: ${confirm.summary.slice(0, 100)}`);
 }
@@ -527,11 +626,20 @@ export type OnOwnerClaimedFn = (chatId: number) => void;
  * difference was found by reading rather than by a failure. Returns where the
  * photo went, or null if Telegram would not give it up.
  */
-async function savePhotoFromTelegram(ctx: Context, token: string, who: ReferenceKind = "self"): Promise<string | null> {
-  const photo = ctx.message?.photo;
-  if (!photo?.length) return null;
+async function savePhotoFromTelegram(
+  ctx: Context,
+  token: string,
+  who: ReferenceKind = "self",
+  photo?: { file_id: string }[],
+): Promise<string | null> {
+  // The photo is a parameter because `/setphoto` accepts one sent as a *reply*,
+  // and reading it from `ctx.message` alone meant the documented form — reply to
+  // the command with the picture — was answered with "не удалось обработать фото"
+  // while `/setphoto`'s own prompt said to do exactly that.
+  const files = photo ?? ctx.message?.photo;
+  if (!files?.length) return null;
   try {
-    const file = await ctx.api.getFile(photo[photo.length - 1].file_id);
+    const file = await ctx.api.getFile(files[files.length - 1].file_id);
     const url = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
     const res = await fetch(url);
     if (!res.ok) return null;
@@ -598,7 +706,7 @@ export function registerHandlers(
       await sendCurrentReference(ctx, who);
       return;
     }
-    const saved = await savePhotoFromTelegram(ctx, bot.token, who);
+    const saved = await savePhotoFromTelegram(ctx, bot.token, who, photo);
     if (saved) {
       onSetReferencePhoto?.(saved, who);
       await ctx.reply(
@@ -914,10 +1022,13 @@ export function registerHandlers(
     // like from the outside.
     const body = result.output?.trim() ? result.output.slice(0, 3000) : "(вывод пустой)";
 
+    // The owner's name is not written here: the repo is a base, not an install, and
+    // his name already reaches her through the prompt ("Его зовут: …"). The sentence
+    // is about him, so it says "he" the way the rest of the prompt's prose does.
     const prompt =
-      `[Подтверждено] Женя подтвердил отложенное действие, и оно выполнено. Его вывод:\n\n` +
+      `[Подтверждено] Он подтвердил отложенное действие, и оно выполнено. Его вывод:\n\n` +
       `${body}\n\n` +
-      `Коротко скажи Жене, что из этого следует — что нашла, всё ли в порядке. Не пересказывай команду.`;
+      `Коротко скажи ему, что из этого следует — что нашла, всё ли в порядке. Не пересказывай команду.`;
     try {
       const reply = await handler(await toIncoming(ctx, prompt, bot.token));
       await deliver(ctx, reply, audio);
@@ -1053,6 +1164,15 @@ export function registerHandlers(
       return;
     }
     if (quest) {
+      if (quest.step !== "photo") {
+        // The photo is refused *before* anything is written. The file on disk used
+        // to be replaced first and only then did `answerPhoto` answer "сейчас я
+        // спрашиваю не про фото" — so a picture sent while she was asking about his
+        // character quietly became her face, and the question stayed where it was.
+        // The wording is the state machine's, not a copy of it.
+        await ctx.reply(answerQuestPhoto(quest).reply);
+        return;
+      }
       const saved = await savePhotoFromTelegram(ctx, bot.token, "self");
       if (!saved) {
         await ctx.reply("Не получилось забрать фото — Telegram не отдал его. Попробуй ещё раз.");
@@ -1111,7 +1231,43 @@ export function registerHandlers(
       return;
     }
 
+    // A voice note is an answer like any other. The constructor has a branch in the
+    // text and photo handlers but had none here, so a voice note during `/persona`
+    // went into the chat as an ordinary turn while the open question kept eating the
+    // *next* text message: the question and its answer landed in different rooms.
+    if (quest) {
+      if (questExpired(quest)) {
+        quest = null;
+        await ctx.reply("Забыла, что собиралась. Начать заново: /persona");
+        return;
+      }
+      await finishOrContinue(ctx, answerQuestText(quest, transcript));
+      return;
+    }
+
     await handleWithTyping(ctx, transcript, undefined, true);
   });
+
+  // Everything else he can send: a document, a video, a round video note, an audio
+  // file, a sticker. There was no listener for any of them and the bot answered
+  // with silence — the same defect that got `message:voice` its own handler, and the
+  // worst shape of it: he sent something and *nothing* happened, which reads as a
+  // bot that is down or ignoring him.
+  bot.on(
+    ["message:document", "message:video", "message:video_note", "message:audio", "message:sticker"],
+    async (ctx) => {
+      const kind = ctx.message.document
+        ? "документ"
+        : ctx.message.video
+          ? "видео"
+          : ctx.message.video_note
+            ? "видео-кружок"
+            : ctx.message.audio
+              ? "аудио"
+              : "стикер";
+      console.log(`📎 Пришло вложение (${kind}) — читать такое я не умею.`);
+      await ctx.reply(`Вижу ${kind}, но открыть его не могу — пришли текстом или картинкой.`);
+    },
+  );
 }
 

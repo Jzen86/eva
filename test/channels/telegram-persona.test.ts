@@ -182,6 +182,10 @@ describe("the constructor, wired into the chat", () => {
     await bot.fire("text", asOwner("пропустить")); // photo step skipped
     await bot.fire("photo", asPhoto());
     expect(said.at(-1)).toMatch(/не про фото|текстом/i);
+    // And her face on disk was not replaced by a picture that was not an answer:
+    // the file used to be written *before* the state machine refused the step, so a
+    // photo sent while she was asking about his character quietly became her face.
+    expect(fs.existsSync(path.join(dir, "reference.jpg"))).toBe(false);
 
     // The quest is intact: the next text answer is the gender one.
     await bot.fire("text", asOwner("она"));
@@ -194,6 +198,23 @@ describe("the constructor, wired into the chat", () => {
     await bot.fire("text", asOwner("коротко, на ты"));
     expect(loadConfig(configPath)?.agent?.gender).toBe("female");
     expect(personaOf()?.persona).toBe("она своя, тёплая");
+  });
+
+  it("takes the photo /setphoto was answered with, not only one attached to it", async () => {
+    // The command's own prompt tells the owner to send the picture *as a reply* to
+    // it, and `savePhotoFromTelegram` read only `ctx.message.photo` — so the
+    // documented form was answered with "не удалось обработать фото" while /photo
+    // kept showing the old face. The reply's photo is what the handler looked for.
+    const bot = wire();
+    const ctx = asOwner("/setphoto");
+    ctx.message.reply_to_message = {
+      message_id: 1,
+      photo: [{ file_id: "f1", file_unique_id: "u1", width: 1, height: 1 }],
+    };
+    await bot.fire("command", ctx);
+
+    expect(fs.existsSync(path.join(dir, "reference.jpg"))).toBe(true);
+    expect(said.at(-1)).toContain("сохранено");
   });
 
   it("lets go of a constructor the owner walked away from", async () => {

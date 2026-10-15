@@ -69,7 +69,7 @@ export function getDB(dbPath?: string): Database.Database {
       access_count INTEGER NOT NULL DEFAULT 0,
       last_used INTEGER,
       -- A corrected fact retires the old row instead of deleting it, so a
-      -- "Женя не ест грибы" that supersedes "Женя ест грибы" leaves a trail and
+      -- "владелец не ест грибы" that supersedes "владелец ест грибы" leaves a trail and
       -- a pure DELETE would let the stale version come back on the next study
       -- pass and overwrite the correction.
       superseded_at INTEGER,

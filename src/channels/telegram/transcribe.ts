@@ -16,6 +16,8 @@
  * voice input down with it.
  */
 
+import { geminiKeys } from "./voice.js";
+
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 
 const DEFAULT_MODELS = ["gemini-3.5-transcribe"];
@@ -76,46 +78,53 @@ export async function transcribeVoice(
   voiceConfig?: Record<string, unknown>,
 ): Promise<string | null> {
   const cfg = voiceConfig ?? {};
-  const key = (cfg.gemini_api_key ?? cfg.google_api_key) as string | undefined;
-  if (!key) return null;
+  // The same resolver her speech uses: a config that carries only the
+  // `gemini_api_keys` array had working TTS and *dead* transcription, which showed
+  // up as "не разобрала голосовое" — a lie about the audio, not about the key.
+  const keys = geminiKeys(cfg);
+  if (!keys.length) return null;
 
   const data = ogg.toString("base64");
 
+  // Model × key, the same shape her speech uses: a key whose allowance ran out for
+  // one model should not take voice input down with it.
   for (const model of sttModels(cfg)) {
-    try {
-      const res = await fetch(`${ENDPOINT}/${model}:generateContent?key=${key}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                { text: PROMPT },
-                { inline_data: { mime_type: "audio/ogg", data } },
-              ],
-            },
-          ],
-        }),
-      });
+    for (const key of keys) {
+      try {
+        const res = await fetch(`${ENDPOINT}/${model}:generateContent?key=${key}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [
+                  { text: PROMPT },
+                  { inline_data: { mime_type: "audio/ogg", data } },
+                ],
+              },
+            ],
+          }),
+        });
 
-      if (!res.ok) {
-        const detail = await res.text();
-        console.error(`STT ${model}: ${res.status} ${detail.slice(0, 200)}`);
-        continue;
+        if (!res.ok) {
+          const detail = await res.text();
+          console.error(`STT ${model}: ${res.status} ${detail.slice(0, 200)}`);
+          continue;
+        }
+
+        const json = (await res.json()) as GeminiResponse;
+        if (json.error) {
+          console.error(`STT ${model}: ${json.error.message ?? "error"}`);
+          continue;
+        }
+
+        // The reasoning part comes back alongside the answer on some models; only
+        // the answer is the transcript.
+        const text = readTranscript(json);
+        if (text) return text;
+      } catch (err) {
+        console.error(`STT ${model}: ${err instanceof Error ? err.message : String(err)}`);
       }
-
-      const json = (await res.json()) as GeminiResponse;
-      if (json.error) {
-        console.error(`STT ${model}: ${json.error.message ?? "error"}`);
-        continue;
-      }
-
-      // The reasoning part comes back alongside the answer on some models; only
-      // the answer is the transcript.
-      const text = readTranscript(json);
-      if (text) return text;
-    } catch (err) {
-      console.error(`STT ${model}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 

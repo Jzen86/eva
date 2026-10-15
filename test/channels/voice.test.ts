@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { synthesizeSpeech } from "../../src/channels/telegram/voice.js";
+import { synthesizeSpeech, geminiKeys } from "../../src/channels/telegram/voice.js";
+import { voiceBackendAvailable } from "../../src/core/tools/voice.js";
 
 /**
  * Gemini TTS is limited per day per model (10 on the flash-lite tier) and has no
@@ -102,5 +103,30 @@ describe("Gemini TTS fallback", () => {
       "тепло и нежно, тихо",
     );
     expect(log.bodies.some((b) => b.includes("тепло и нежно, тихо"))).toBe(true);
+  });
+});
+
+describe("the keys a voice can live on", () => {
+  // Three callers have to agree on this list — her speech, the transcription of
+  // his, and the gate that decides whether the voice tool exists at all — and they
+  // did not: the gate read `gemini_api_key` alone, so a config carrying only the
+  // `gemini_api_keys` array (the documented form) reported "voice is off: no key"
+  // while the rest of the voice path worked.
+  it("reads the array, then a single key, then the google alias", () => {
+    expect(geminiKeys({ gemini_api_keys: ["a", "b"] })).toEqual(["a", "b"]);
+    expect(geminiKeys({ gemini_api_key: "k" })).toEqual(["k"]);
+    expect(geminiKeys({ google_api_key: "g" })).toEqual(["g"]);
+    expect(geminiKeys({ gemini_api_keys: ["a"], gemini_api_key: "k" })).toEqual(["a"]);
+    expect(geminiKeys({})).toEqual([]);
+  });
+
+  it("registers the voice tool for a config that has only the array", () => {
+    const backend = voiceBackendAvailable({ tts_provider: "gemini", gemini_api_keys: ["a", "b"] });
+    expect(backend.ok).toBe(true);
+    expect(backend.why).toContain("ключей: 2");
+
+    const missing = voiceBackendAvailable({ tts_provider: "gemini" });
+    expect(missing.ok).toBe(false);
+    expect(missing.why).toContain("gemini_api_keys");
   });
 });

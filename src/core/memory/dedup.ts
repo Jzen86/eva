@@ -38,7 +38,7 @@ export function contentStems(text: string): Set<string> {
  * smaller of the two sets — the obvious symmetric-looking choice — means a
  * long, informative new insight that happens to mention one known word scores
  * 1.0 against a one-word entry and gets thrown away as a repeat. That is data
- * loss, and it was the actual behaviour: "Женя любит пиццу каждый день" was
+ * loss, and it was the actual behaviour: "владелец любит пиццу каждый день" was
  * rejected as a duplicate of an existing "пицца".
  */
 export function coverageOf(candidate: Set<string>, existing: Set<string>): number {
@@ -75,7 +75,7 @@ export interface DedupSubject {
 /**
  * What makes this row the row it is.
  *
- * A fact is identified by its text, loosely: "Женя не любит айфоны" said five
+ * A fact is identified by its text, loosely: "владелец не любит айфоны" said five
  * ways is one fact, and the base should hold one of them.
  *
  * A case is identified by its whole moment, and exactly. Two cases with the same

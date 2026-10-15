@@ -105,7 +105,7 @@ export function checkVoiceBudget(requested: boolean): VoiceBudget {
       allow: false,
       reason:
         `Своих голосовых на сегодня уже ${VOICE_PER_DAY} — лимит выбран. Ответь текстом: ` +
-        `если Женя попросит голосом или пришлёт голосовое, это пройдёт мимо лимита.`,
+        `если он попросит голосом или пришлёт голосовое, это пройдёт мимо лимита.`,
       remaining: 0,
       waitMin: 0,
     };

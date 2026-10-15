@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawn } from "node:child_process";
+import { noteVoiceSent } from "../../core/voice-budget.js";
 
 const GEMINI_DEFAULT_MODEL = "gemini-3.8-flash-lite-tts";
 const GEMINI_DEFAULT_VOICE = "Aoede";
@@ -73,8 +74,16 @@ function geminiModels(voiceConfig: Record<string, unknown>): string[] {
   return typeof one === "string" && one.trim() ? [one] : [GEMINI_DEFAULT_MODEL];
 }
 
-/** The Gemini keys to try. A key carries its own allowance, so a second key is a second bucket. */
-function geminiKeys(voiceConfig: Record<string, unknown>): string[] {
+/**
+ * The Gemini keys to try. A key carries its own allowance, so a second key is a second bucket.
+ *
+ * Exported because three callers have to agree on this list: her speech, the
+ * transcription of his, and the registration gate that decides whether the voice
+ * tool exists at all. The gate once read `gemini_api_key` alone while the
+ * synthesizer also accepted `gemini_api_keys`, so a config carrying only the array
+ * was reported as "voice is off: no key" — a working feature described as missing.
+ */
+export function geminiKeys(voiceConfig: Record<string, unknown>): string[] {
   const many = voiceConfig.gemini_api_keys;
   if (Array.isArray(many)) {
     const list = many.filter((k): k is string => typeof k === "string" && k.trim() !== "");
@@ -340,6 +349,12 @@ export async function sendVoiceResponse(
     fs.writeFileSync(tmpFile, ogg);
     const { InputFile } = await import("grammy");
     await ctx.replyWithVoice(new InputFile(tmpFile));
+    // The budget is spent here, where the voice actually leaves — not at synthesis.
+    // It used to be recorded by the tool, before the file had even been written to
+    // disk, so a send that failed still cost her the day's allowance and the gap
+    // started from a note nobody heard. `/voice` did not count at all, and the
+    // owner's rule is that the clock starts from the last voice of any kind.
+    noteVoiceSent();
     return true;
   } catch {
     return false;

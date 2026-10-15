@@ -495,19 +495,25 @@ export class Engine {
     const sameToolLimit =
       msg.metadata?.scheduledTask === true ? MAX_SAME_TOOL_SERVICE : MAX_SAME_TOOL;
 
+    /**
+     * Everything this turn made, in the order it was made.
+     *
+     * `lastMediaUrl` and `lastMediaPath` are one slot each, so the second
+     * picture or the second voice note overwrote the first and vanished — while
+     * the tool told her "готово и отправлено", which is why she never noticed
+     * and never repeated it. A turn can legitimately make two: two voice notes
+     * when she is asked for two, or a voice and a picture together.
+     *
+     * Declared outside the `try` on purpose: the catch below is a *recovery* turn,
+     * and it used to return text alone. A picture or a voice note made before the
+     * failure — the frame she had just been told she could see — was dropped, and
+     * the owner read an apology with no sign that anything had been made at all.
+     */
+    let lastMediaUrl: string | undefined;
+    let lastMediaPath: string | undefined;
+    const media: Array<{ url?: string; path?: string; text?: string }> = [];
+
     try {
-      let lastMediaUrl: string | undefined;
-      let lastMediaPath: string | undefined;
-      /**
-       * Everything this turn made, in the order it was made.
-       *
-       * `lastMediaUrl` and `lastMediaPath` are one slot each, so the second
-       * picture or the second voice note overwrote the first and vanished — while
-       * the tool told her "готово и отправлено", which is why she never noticed
-       * and never repeated it. A turn can legitimately make two: two voice notes
-       * when she is asked for two, or a voice and a picture together.
-       */
-      const media: Array<{ url?: string; path?: string; text?: string }> = [];
       const toolCallCounts = new Map<string, number>();
       const processStart = Date.now();
 
@@ -806,13 +812,15 @@ export class Engine {
         const text = recoveryResponse.text || "Прости, что-то у меня зависло. Повтори, пожалуйста!";
         history.push({ role: "assistant", content: text });
         saveMessage(userId, msg.channelName, "assistant", text);
-        return { text };
+        // Whatever the turn managed to make before it broke goes out with the
+        // apology. The apology is a lie if the frame it answers about is thrown away.
+        return { text, mediaUrl: lastMediaUrl, mediaPath: lastMediaPath, ...(media.length ? { media } : {}) };
       } catch {
         // If even the recovery LLM call fails, use a simple message
         const text = "Прости, что-то у меня зависло. Повтори, пожалуйста!";
         history.push({ role: "assistant", content: text });
         saveMessage(userId, msg.channelName, "assistant", text);
-        return { text };
+        return { text, mediaUrl: lastMediaUrl, mediaPath: lastMediaPath, ...(media.length ? { media } : {}) };
       }
     }
   }
