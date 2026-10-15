@@ -29,6 +29,9 @@
  * it is not a decision someone made once and forgot.
  */
 
+import path from "node:path";
+import { defaultPathPolicy, expandHome, realPath, type PathPolicy } from "./path-policy.js";
+
 export type ShellVerdict =
   | { kind: "allow" }
   | { kind: "gate"; why: string };
@@ -398,13 +401,80 @@ function sqliteWrites(segment: string): boolean {
 }
 
 /**
+ * A path the command line mentions whose content is a secret.
+ *
+ * The owner's rule for this layer, in his words: she may read everything that
+ * makes her smarter and lets her find her own mistakes — the journal, her
+ * sources, the reports — and what is closed is the small set whose only purpose
+ * is to be secret. So this is not a list of places she is allowed to read (that
+ * kind of table would be a fiction, the same way the old blocklist was), and it
+ * is not about binaries either: `cat` is a reader and stays one. It is one
+ * question asked of every path in the line — would reading this hand the chat a
+ * key?
+ *
+ * The set is the one `path-policy` has always refused to `files` and
+ * `send_file`: the install's config and its rotating backups, credentials by
+ * name, ssh material, the memory database, and the config's own directory —
+ * because `grep -r api_key ~/.eva` names no secret and reads one anyway. Files
+ * *inside* that directory stay readable through the `files` tool, which judges
+ * them one by one; here a file sitting in the config's directory is parked,
+ * which is one tap and not a closed door.
+ *
+ * Judged by name on purpose. This layer has to stay a function of the command
+ * line and of the install, so a symlink in /tmp pointing at the config is not
+ * caught, and that is the price. Everything it matches is parked rather than
+ * refused, so a false positive costs one tap.
+ */
+const SECRET_BASENAME =
+  /^(\.env(\..+)?|\.netrc|\.htpasswd|\.pgpass|auth\.json|credentials\.json|id_(rsa|dsa|ecdsa|ed25519)|authorized_keys|config\.ya?ml(\.bak.*)?|shadow|gshadow)$/i;
+const SECRET_SUFFIX = /(\.(pem|key|p12|pfx)|_key)$/i;
+
+/**
+ * Binaries that print the *contents* of the file they are pointed at.
+ *
+ * Only for these does the config's own directory count as a secret path. `ls`
+ * and `find` name files and read none, and the live install uses both (`ls -la
+ * ~/.eva` is in its own list of reads that must just work) — parking a listing
+ * would be friction with no secret behind it. The list narrows nothing else: a
+ * reader added to the allowlist without being added here loses the directory
+ * protection, so it is checked when the allowlist grows, not silently trusted.
+ */
+const CONTENT_READERS = new Set([
+  "cat", "head", "tail", "grep", "egrep", "fgrep", "nl", "tac", "fold",
+  "expand", "sort", "uniq", "cut", "tr", "diff", "cmp", "column", "strings",
+]);
+
+function secretPathIn(token: string, policy: PathPolicy, contentsOnly: boolean): string | null {
+  const cleaned = token.replace(/^["']+|["']+$/g, "").trim();
+  if (!cleaned || cleaned.startsWith("-")) return null;
+
+  const resolved = realPath(expandHome(cleaned));
+  const base = path.basename(resolved);
+  if (SECRET_BASENAME.test(base) || SECRET_SUFFIX.test(base)) return base;
+  if (/(^|[\\/])\.ssh([\\/]|$)/.test(resolved)) return ".ssh";
+
+  for (const file of policy.deniedFiles) {
+    if (resolved === file) return `файл конфигурации (${file})`;
+    // The directory itself, and the directory a glob or a search was pointed
+    // at: `cat ~/.eva/*` and `grep -r key ~/.eva/` both read the config without
+    // ever naming it. Listings are left alone — see CONTENT_READERS.
+    if (!contentsOnly) continue;
+    const dir = path.dirname(file);
+    if (resolved === dir || path.dirname(resolved) === dir) {
+      return `каталог конфигурации (${dir})`;
+    }
+  }
+  return null;
+}
+
+/**
  * Decide whether a whole command line may run unattended.
  *
  * Every segment must pass. A pipeline is only as safe as its least safe link,
  * and the point of splitting at all is that `ls | xargs rm` contains a writer
  * even though the first half is innocent.
  */
-export function classify(command: string, trusted: string[] = []): ShellVerdict {
+export function classify(command: string, trusted: string[] = [], policy: PathPolicy = defaultPathPolicy()): ShellVerdict {
   const trimmed = command.trim();
   if (!trimmed) return { kind: "gate", why: "пустая команда" };
 
@@ -424,6 +494,15 @@ export function classify(command: string, trusted: string[] = []): ShellVerdict 
     const bin = leadingBinary(segment);
     if (!bin) {
       return { kind: "gate", why: `непонятно, что запускается: «${clip(segment)}»` };
+    }
+
+    // Secrets come first, and before the trusted-binary skip on purpose: trust
+    // means "its writing modes may run unattended", and the install's keys are
+    // not a writing mode. A read-only verb does not unlock them either — `cat`
+    // is allowed and the config is still out of reach.
+    for (const token of segment.split(/\s+/)) {
+      const secret = secretPathIn(token, policy, CONTENT_READERS.has(bin));
+      if (secret) return { kind: "gate", why: `в команде путь с секретами: ${secret}` };
     }
 
     if (trustedBins.has(bin)) continue;

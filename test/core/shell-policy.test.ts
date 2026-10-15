@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
+import path from "node:path";
 import { classify, shapeOf, leadingBinary, approvalSummary } from "../../src/core/shell-policy.js";
+import { getConfigPath } from "../../src/core/config.js";
 
 /**
  * The allowlist, and the bypasses it has to survive.
@@ -356,5 +358,70 @@ describe("git — history is readable, writes are not", () => {
     }
     // `-C` is a directory, not a program, and stays a read.
     expect(allow("git -C /opt/eva log -1")).toBe(true);
+  });
+});
+
+describe("secrets are the one thing shell may not read on its own", () => {
+  // The owner's rule, verbatim: she may read everything that makes her smarter
+  // and lets her find her own mistakes, and closed is the small set whose only
+  // purpose is to be secret. So the tests below come in two halves, and the
+  // second half matters as much as the first: sources, journal, reports and the
+  // database's own directory listings must stay open, or the rule has been
+  // turned into "she may read nothing" by accident.
+  const allow = (c: string, trust: string[] = []) => classify(c, trust).kind === "allow";
+  const configPath = getConfigPath();
+  const configDir = path.dirname(configPath);
+
+  it("parks the install's config, named, backed up, or merely searched for", () => {
+    // The file itself: it holds the API keys, the telegram token and the
+    // password hash, and `cat` is a permitted reader.
+    expect(allow(`cat ${configPath}`)).toBe(false);
+    // The rotations `rotateConfigBackups` keeps beside it, old keys and all.
+    expect(allow(`cat ${configPath}.bak-20261015-104432`)).toBe(false);
+    // And the directory as a place to look *inside*: `grep -r api_key ~/.eva`
+    // names no secret file and reads one anyway, and `cat ~/.eva/*` names none.
+    expect(allow(`grep -rn api_key ${configDir}/`)).toBe(false);
+    expect(allow(`cat ${configDir}/*`)).toBe(false);
+    expect(allow(`grep -rl password ${configDir}`)).toBe(false);
+  });
+
+  it("parks credentials by their name, wherever they live", () => {
+    for (const bad of [
+      "cat /root/.ssh/id_rsa",
+      "head -3 /root/.ssh/authorized_keys",
+      "cat /srv/app/.env.local",
+      "cat /etc/shadow",
+      "cat /srv/app/auth.json",
+      "cat /srv/tls/cert.pem",
+    ]) {
+      expect(allow(bad), bad).toBe(false);
+    }
+  });
+
+  it("leaves the memory database readable, on purpose", () => {
+    // Not in the secret set: it is her own memory, and a schema read or a
+    // SELECT is how she checks herself. Nothing in it is a key. `files` and
+    // `send_file` still refuse it *as a file* (path-policy) — shipping the
+    // database somewhere is a different act from reading a row out of it.
+    expect(allow('sqlite3 /tmp/eva.db "SELECT count(*) FROM knowledge"')).toBe(true);
+    expect(allow("sqlite3 /tmp/eva.db .tables")).toBe(true);
+  });
+
+  it("keeps open everything she needs to find her own mistakes", () => {
+    expect(allow("cat /opt/eva/src/core/engine.ts")).toBe(true);
+    expect(allow("grep -rn qwen /opt/eva/src | head -20")).toBe(true);
+    expect(allow("journalctl -u eva -n 100 --no-pager")).toBe(true);
+    expect(allow("git -C /opt/eva log --oneline -5")).toBe(true);
+    expect(allow("git -C /opt/eva show HEAD --stat")).toBe(true);
+    expect(allow(`cat ${path.join(configDir, "reports", "self_watch.md")}`)).toBe(true);
+    expect(allow("cat /var/log/syslog")).toBe(true);
+    expect(allow("ls /root/.eva/reports")).toBe(true);
+  });
+
+  it("does not hand the keys over because a binary is trusted", () => {
+    // Trust means "its writing modes may run unattended". Reading the config is
+    // not a writing mode.
+    expect(allow(`cat ${configPath}`, ["cat"])).toBe(false);
+    expect(allow(`grep -r key ${configDir}`, ["grep"])).toBe(false);
   });
 });
