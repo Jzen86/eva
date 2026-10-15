@@ -154,12 +154,25 @@ const RULES: Record<string, BinaryRule> = {
       "rev-parse", "describe", "ls-files", "ls-tree", "cat-file",
       "whatchanged", "grep", "version", "help",
     ],
-    // `git diff --output=<file>` writes a file, which is the one way a read verb
-    // reaches the disk without a redirect to catch it.
-    writeFlags: /(^|\s)--output(=|\s|$)/,
+    // Two ways a read verb runs a program of someone else's choosing, both
+    // measured before they were closed:
+    //
+    //   `git grep -O<program>` is --open-files-in-pager, and git runs it with the
+    //   file name appended. `git grep -O<sh -c …>` is therefore command
+    //   execution that `classify` called "allow" — the whole approval gate
+    //   skipped, and with it path-policy, because a shell command was never
+    //   subject to it. Verified rather than reasoned: `git grep -Oecho HEAD --
+    //   AGENTS.md` printed the file name, so the program really ran.
+    //
+    //   `-c <name>=<value>` sets a config for one invocation, and some of those
+    //   values are program names git executes: `core.fsmonitor`,
+    //   `core.pager`, `core.sshCommand`, `core.hooksPath`. `-c` was a value flag
+    //   and its value was eaten, so the verb underneath still looked like a
+    //   history read. `-C` stays: a directory, not a program.
+    writeFlags: /(^|\s)(--output(=|\s|$)|-O\S*|--open-files-in-pager(=|\s|$)|-c(\s|$)|--config-env(=|\s|$))/,
     // `git -C /opt/eva log` is a history read run from another directory; without
     // this the value of `-C` reads as the verb.
-    valueFlags: ["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"],
+    valueFlags: ["-C", "--git-dir", "--work-tree", "--namespace", "--exec-path"],
   },
   sort: {
     // `sort -o FILE` writes the sorted output to FILE; without it, sort can only

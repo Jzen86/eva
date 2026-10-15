@@ -337,4 +337,24 @@ describe("git — history is readable, writes are not", () => {
       expect(allow(bad), bad).toBe(false);
     }
   });
+
+  it("parks the two ways a read verb runs a program of someone else's choosing", () => {
+    // Both were "allow" and both were measured, not reasoned about: `git grep
+    // -Oecho HEAD -- AGENTS.md` printed the file name, i.e. git really ran the
+    // program `-O` named, and classify had let it through without a tap. With
+    // `sh -c …` as that value it is command execution with the approval gate
+    // skipped — and path-policy with it, since shell never asked it.
+    for (const bad of [
+      'git grep -O"sh -c echo_pwned" HEAD -- AGENTS.md',
+      "git grep -Osh HEAD -- AGENTS.md",
+      "git --open-files-in-pager=sh grep x HEAD",
+      "git -c core.fsmonitor=sh status",
+      "git -c core.sshCommand=sh fetch",
+      "git --config-env=core.pager=EVIL log",
+    ]) {
+      expect(allow(bad), bad).toBe(false);
+    }
+    // `-C` is a directory, not a program, and stays a read.
+    expect(allow("git -C /opt/eva log -1")).toBe(true);
+  });
 });
