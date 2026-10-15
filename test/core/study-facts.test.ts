@@ -6,6 +6,7 @@ import crypto from "crypto";
 import { getDB, closeDB } from "../../src/core/memory/db.js";
 import { runStudy } from "../../src/core/memory/study-runner.js";
 import { addKnowledge } from "../../src/core/memory/knowledge.js";
+import { PROFILE_SECTIONS } from "../../src/core/profile-dossier.js";
 import {
   saveMessage,
   studyCursor,
@@ -315,6 +316,33 @@ describe("study: what a session may leave in the base", () => {
     // фото перед работой" while the fact that he has a job was missing.
     expect(prompt).toContain("Не пиши свои выводы о закономерностях");
     expect(prompt).toContain("ритуал последнего фото");
+  });
+
+  it("names the dossier sections the way the dossier does", async () => {
+    // The hole list said "техника и досуг", "люди и имена" and "что любит и что не
+    // любит" — three names that are not sections. The writer filed by the invented
+    // one, and the live base ended up with a profile row whose topic was "железо":
+    // the dossier prints an unknown topic under its own heading, so a claim about
+    // the owner's hardware sat in her always-on block as a section of its own.
+    const { prompt } = await session("{}");
+    for (const section of PROFILE_SECTIONS) {
+      expect(prompt).toContain(`  ${section} — `);
+    }
+  });
+
+  it("says a question and a third party's thing are not facts about him", async () => {
+    // Live, 15.10: he asked "скок врам на 4090?", she answered 24 GB, and the next
+    // session wrote "Имеет видеокарту RTX 4090 с 24 ГБ видеопамяти" into his
+    // profile. He then said "эт не про меня", "это задрота тестил", "задрот не
+    // пользователь, он не владеет видюхой 4090", "мне и моих 12 хватает" — and the
+    // line stayed, because the corrections went in as an episode about the server
+    // while the profile row kept its own topic. Both halves are the prompt's job.
+    const { prompt } = await session("{}");
+    expect(prompt).toContain("Вопрос — не факт");
+    expect(prompt).toContain("Рассказ про чужое");
+    expect(prompt).toContain("это правка анкеты");
+    expect(prompt).toContain("профиль — про НЕГО, а не про тебя");
+    expect(prompt).toContain("про все случаи, а не про одну задачу");
   });
 
   it("names the block each record went to", async () => {

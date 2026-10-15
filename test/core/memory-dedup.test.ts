@@ -190,6 +190,20 @@ describe("retireKnowledge", () => {
 describe("trimKnowledge", () => {
   const study = "study_session";
 
+  /**
+   * Backdate a row, so the test speaks about a memory that has had its day.
+   *
+   * A row written a moment ago is spared by the fresh-row window (see
+   * FRESH_GRACE_HOURS) whatever its budget says — that window exists because the
+   * live base kept retiring the newest rows exactly like this.
+   */
+  function age(ids: number[], hours: number): void {
+    const when = Math.floor(Date.now() / 1000) - hours * 3_600;
+    for (const id of ids) {
+      getDB().prepare("UPDATE knowledge SET timestamp = ? WHERE id = ?").run(when, id);
+    }
+  }
+
   it("does nothing when under budget", () => {
     addKnowledge({ topic: "a", insight: "что-то одно", source: study });
     expect(trimKnowledge(10, study).retired).toBe(0);
@@ -197,14 +211,36 @@ describe("trimKnowledge", () => {
   });
 
   it("keeps the budget without deleting rows", () => {
+    const ids: number[] = [];
     for (let i = 0; i < 6; i++) {
-      addKnowledge({ topic: `t${i}`, insight: `запись номер ${i} про разное`, source: study });
+      ids.push(addKnowledge({ topic: `t${i}`, insight: `запись номер ${i} про разное`, source: study }));
     }
+    age(ids, 48);
+
     const result = trimKnowledge(3, study);
     expect(result.retired).toBe(3);
     expect(getKnowledgeCount()).toBe(3);
     // The history stays, which is the whole reason for retiring over deleting.
     expect(rawCount()).toBe(6);
+  });
+
+  it("spares a fresh row, even when every older row has been used", () => {
+    // The live shape of 15.10: the base sits at its cap, so every older row has
+    // been read at least once and only the newest has zero accesses — which made it
+    // the tail of `used DESC` every single time. Twelve rows died that way between
+    // 12:40 and 15:56, each one evicted by the session after the one that wrote it.
+    const old = addKnowledge({ topic: "старое", insight: "давняя запись про погоду", source: study });
+    age([old], 48);
+    touchKnowledge([old]);
+    addKnowledge({ topic: "свежее", insight: "сегодняшняя запись про работу", source: study });
+
+    trimKnowledge(1, study);
+    // Both stay: the used one keeps its slot, and the fresh one is not evicted for
+    // being new. The budget is honoured softly until the fresh row has had its day.
+    const live = getAllKnowledge().map((r) => r.topic);
+    expect(live).toHaveLength(2);
+    expect(live).toContain("старое");
+    expect(live).toContain("свежее");
   });
 
   /**
@@ -213,7 +249,8 @@ describe("trimKnowledge", () => {
    */
   it("retires an unused memory before one that is in use", () => {
     const old = addKnowledge({ topic: "old", insight: "давний факт про дом", source: study });
-    addKnowledge({ topic: "new", insight: "свежий факт про погоду", source: study });
+    const fresh = addKnowledge({ topic: "new", insight: "свежий факт про погоду", source: study });
+    age([old, fresh], 48);
     touchKnowledge([old]);
 
     trimKnowledge(1, study);
@@ -223,12 +260,14 @@ describe("trimKnowledge", () => {
   });
 
   it("gives study rows first claim on the budget without starving chat memory", () => {
+    const ids: number[] = [];
     for (let i = 0; i < 4; i++) {
-      addKnowledge({ topic: `c${i}`, insight: `из чата запись ${i} про кота`, source: "memory_tool" });
+      ids.push(addKnowledge({ topic: `c${i}`, insight: `из чата запись ${i} про кота`, source: "memory_tool" }));
     }
     for (let i = 0; i < 4; i++) {
-      addKnowledge({ topic: `s${i}`, insight: `вывод сессии ${i} про работу`, source: study });
+      ids.push(addKnowledge({ topic: `s${i}`, insight: `вывод сессии ${i} про работу`, source: study }));
     }
+    age(ids, 48);
 
     trimKnowledge(4, study);
     const live = getAllKnowledge();
@@ -240,9 +279,12 @@ describe("trimKnowledge", () => {
   });
 
   it("does not count retired rows against the budget", () => {
+    const ids: number[] = [];
     for (let i = 0; i < 5; i++) {
-      addKnowledge({ topic: `t${i}`, insight: `запись ${i} про разное`, source: study });
+      ids.push(addKnowledge({ topic: `t${i}`, insight: `запись ${i} про разное`, source: study }));
     }
+    age(ids, 48);
+
     trimKnowledge(2, study);
     expect(getKnowledgeCount()).toBe(2);
 

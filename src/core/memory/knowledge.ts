@@ -477,9 +477,10 @@ export function trimKnowledge(max: number, studySource: string): { retired: numb
 
     // Oldest and least used first, so a memory that helped is never the victim
     // while an untouched one of the same age survives.
+    const now = Math.floor(Date.now() / 1000);
     const doomed: number[] = [
-      ...rowsToRetire(db, "source IS ?", [studySource], studyKeep),
-      ...rowsToRetire(db, "source IS NOT ?", [studySource], otherKeep),
+      ...rowsToRetire(db, "source IS ?", [studySource], studyKeep, now),
+      ...rowsToRetire(db, "source IS NOT ?", [studySource], otherKeep, now),
     ];
 
     if (doomed.length === 0) return { retired: 0 };
@@ -520,6 +521,27 @@ function purgeRetired(): void {
 }
 
 /**
+ * How long a new row is spared before "unused" can count against it.
+ *
+ * The ordering below is right — most used and most recent first — but a row
+ * written a minute ago has not had its chance yet, and `access_count = 0` puts it
+ * at the very bottom of the list. Live, on 15.10, that cost every new fact: the
+ * base had been sitting at its cap for weeks, so every older row had been read at
+ * least once and every fresh one had not, which made each study session retire the
+ * previous session's rows — twelve of them between 12:40 and 15:56, `#348` through
+ * `#359`, while the alive count never moved off two hundred. Her report said
+ * "запомнила", and the row was gone by the next session; the cap was never the
+ * problem, the tie was. A day is the window a fact gets to be read in.
+ */
+const FRESH_GRACE_HOURS = 24;
+
+/**
+ * And a flood still has to be bounded: past twice the budget even a fresh row is
+ * evicted, because a busy day has to land somewhere.
+ */
+const FLOOD_FACTOR = 2;
+
+/**
  * The rows that have to go: everything past the first `keep`.
  *
  * The ordering is the whole point. Most-used and most recent first, so the rows
@@ -533,13 +555,23 @@ function rowsToRetire(
   where: string,
   params: unknown[],
   keep: number,
+  now: number,
 ): number[] {
-  const sql = `SELECT id FROM knowledge WHERE ${where} AND superseded_at IS NULL
-               ORDER BY COALESCE(access_count, 0) DESC, timestamp DESC, id DESC`;
-  if (keep <= 0) {
-    return (db.prepare(sql).all(...params) as Array<{ id: number }>).map((r) => r.id);
+  const rows = db
+    .prepare(
+      `SELECT id, timestamp, COALESCE(access_count, 0) AS used FROM knowledge
+        WHERE ${where} AND superseded_at IS NULL
+        ORDER BY used DESC, timestamp DESC, id DESC`,
+    )
+    .all(...params) as Array<{ id: number; timestamp: number; used: number }>;
+
+  const freshCutoff = now - FRESH_GRACE_HOURS * 3_600;
+  const doomed: number[] = [];
+  for (let i = Math.max(0, keep); i < rows.length; i++) {
+    const row = rows[i]!;
+    const untouchedAndNew =
+      row.used === 0 && row.timestamp > freshCutoff && i < Math.max(0, keep) * FLOOD_FACTOR;
+    if (!untouchedAndNew) doomed.push(row.id);
   }
-  return (db.prepare(`${sql} LIMIT -1 OFFSET ?`).all(...params, keep) as Array<{ id: number }>).map(
-    (r) => r.id,
-  );
+  return doomed;
 }

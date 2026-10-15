@@ -259,19 +259,24 @@ export function createMemoryTool(opts: MemoryToolOptions = {}): Tool {
       "'в ходе диалога', 'подтвердил, что' — the substance is what is worth the space. " +
       "Even a plain chat about nothing in particular has a subject, and this is " +
       "how you can bring it up yourself a week later.\n" +
-      "2) A fact about him or her: content alone ('не любит айфоны'). Set kind=\"profile\" " +
+      "2) A fact about him: content alone ('не любит айфоны'). Set kind=\"profile\" " +
       "for these, and only for what stays true — ask yourself: if tomorrow were the " +
       "opposite, would the line still be true? 'Пьёт энергетики' survives it; 'сегодня " +
       "устал', 'с L-теанином', 'раз в день' do not, and those are episodes. A profile " +
       "entry is one fact, in one line, with no 'сказал', 'уточнил', 'объяснил' and no " +
       "cause and effect — it is read as a questionnaire, not as a retelling. Its topic " +
       "comes from this list, exactly: 'работа', 'где живёт', 'тело и привычки', 'досуг', " +
-      "'люди', 'деньги и планы', 'вкусы'. If a sharper fact replaces an older one, pass " +
+      "'люди', 'деньги и планы', 'вкусы'. Every section is about him: how you are built, " +
+      "what models your generation uses, what you can do — not a fact about him, and not " +
+      "a profile line. If a sharper fact replaces an older one, pass " +
       "the old entry's #ID in supersedes — the older line must not linger beside the new " +
       "one and disagree with it. Everything else is kind=\"episode\" (the default): what " +
       "happened, what was discussed or decided, with the subject as the topic.\n" +
       "kind=\"rules\" is how he wants you to work — a requirement, a prohibition, a format " +
-      "he asked for ('новых файлов не создавать', 'не придумай, а найди в интернете'). " +
+      "he asked for and expects every time ('коротко, без списков', 'сначала спроси меня'). " +
+      "A prohibition said for one job ('правки и проверки идут в одну таблицу') is not a " +
+      "rule: test it like a profile line — if tomorrow he asks for the opposite, does your " +
+      "line help him or argue with him? That belongs in an episode about the job. " +
       "kind=\"lesson\" is what he taught you about meaning — what his word stands for, " +
       "where the usual sense does not fit ('его „моё“ — как „моя школа“: гордость, а не " +
       "собственность'). Both are always in front of you, so write them in his words.\n" +
