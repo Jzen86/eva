@@ -67,13 +67,22 @@ export function minutesOfDay(hhmm: string): number | null {
 export function parseInitiative(raw: unknown): InitiativeConfig | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
+  // `Number(null)` is 0 and `Number("")` is 0, so an empty `idle_min:` in the YAML
+  // used to read as "do not wait for him at all" — the default silently turning
+  // into its opposite, in the one place that exists to keep her quiet while he is
+  // around. An absent value means absent.
+  const num = (v: unknown, dflt: number) => {
+    if (v === null || v === undefined || v === "") return dflt;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : dflt;
+  };
   const periods: InitiativePeriod[] = [];
   for (const p of Array.isArray(r.periods) ? r.periods : []) {
     if (!p || typeof p !== "object") continue;
     const o = p as Record<string, unknown>;
     const fromMin = minutesOfDay(String(o.from ?? ""));
     const toMin = minutesOfDay(String(o.to ?? ""));
-    const perDay = Number(o.per_day ?? 1);
+    const perDay = num(o.per_day, 1);
     if (fromMin === null || toMin === null || fromMin === toMin) continue;
     if (!Number.isFinite(perDay) || perDay <= 0) continue;
     periods.push({
@@ -84,7 +93,6 @@ export function parseInitiative(raw: unknown): InitiativeConfig | null {
     });
   }
   if (periods.length === 0) return null;
-  const num = (v: unknown, dflt: number) => (Number.isFinite(Number(v)) ? Number(v) : dflt);
   return {
     enabled: r.enabled === true,
     idleMin: Math.max(0, num(r.idle_min, 30)),
@@ -93,9 +101,19 @@ export function parseInitiative(raw: unknown): InitiativeConfig | null {
   };
 }
 
-/** Length of the period in minutes, wrap-aware. */
+/**
+ * Length of the period in minutes, wrap-aware.
+ *
+ * The modulo is 0 for the whole day — `00:00`–`24:00`, which `minutesOfDay`
+ * accepts on purpose (an owner writes "вечер 20:00–24:00" and the bare `24:00` is
+ * the end of the day) and which the parser keeps, since `from` and `to` differ.
+ * Zero is then skipped everywhere downstream, so "пиши весь день" was accepted,
+ * printed by `initiative.prototype`, and never fired once — with nothing to tell
+ * it apart from a feature that is switched off.
+ */
 function periodLength(p: InitiativePeriod): number {
-  return (p.toMin - p.fromMin + 1440) % 1440;
+  const len = (p.toMin - p.fromMin + 1440) % 1440;
+  return len === 0 && p.toMin !== p.fromMin ? 1440 : len;
 }
 
 /** Minutes elapsed since the period began, wrap-aware. */

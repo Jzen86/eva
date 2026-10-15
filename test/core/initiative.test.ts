@@ -144,4 +144,43 @@ describe("initiative", () => {
     // 09:00 is morning.
     expect(instanceAt(cfg, "2026-10-11", 9 * 60)!.period.name).toBe("утро");
   });
+
+  it("fires on a whole-day period instead of skipping it in silence", () => {
+    // "пиши весь день". The wrap-aware length of 00:00–24:00 is 0, and every check
+    // downstream reads a zero length as "not a period": the config was accepted,
+    // the doctor printed it, and it never fired once.
+    const cfg = parseInitiative({
+      enabled: true,
+      periods: [{ name: "весь день", from: "00:00", to: "24:00", per_day: 2 }],
+    })!;
+    expect(cfg.periods).toHaveLength(1);
+    expect(instanceAt(cfg, "2026-10-11", 0)!.period.name).toBe("весь день");
+    expect(instanceAt(cfg, "2026-10-11", 23 * 60 + 59)!.period.name).toBe("весь день");
+    expect(targetOffsets(cfg.periods[0], "2026-10-11#весь день")).toHaveLength(2);
+  });
+
+  it("reads an empty idle_min as the default, not as 'do not wait for him'", () => {
+    // `idle_min:` with nothing after it is null, and `Number(null)` is 0 — so the
+    // setting that exists to keep her quiet while he is around turned into its
+    // opposite, silently, in the one place that must not fail open.
+    const cfg = parseInitiative({
+      enabled: true,
+      idle_min: null,
+      periods: [{ name: "утро", from: "06:00", to: "10:00", per_day: 1 }],
+    })!;
+    expect(cfg.idleMin).toBe(30);
+
+    const target = targetOffsets(cfg.periods[0], "2026-10-11#утро")[0];
+    const after = at(6, target);
+    expect(dueNow(cfg, NONE, after, 0, after - 60_000)).toBeNull();
+
+    // An explicit zero still means what it says.
+    const eager = parseInitiative({
+      enabled: true,
+      idle_min: 0,
+      periods: [{ name: "утро", from: "06:00", to: "10:00", per_day: 1 }],
+    })!;
+    expect(eager.idleMin).toBe(0);
+    expect(dueNow(eager, NONE, after, 0, after - 60_000)).not.toBeNull();
+  });
 });

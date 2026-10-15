@@ -57,7 +57,7 @@ describe("buildTools", () => {
     db = getDB(dbPath);
     const store = new SchedulerStore(db);
     store.init();
-    scheduler = new SchedulerService(store);
+    scheduler = new SchedulerService(store, () => 4);
   });
 
   afterEach(() => {

@@ -136,6 +136,22 @@ const EMPTY_SERVICE_REPLY =
   "⚠️ Плановое задание осталось без ответа: модель промолчала дважды. Проверки не было — отчёта нет, следующий заход по расписанию.";
 
 /**
+ * What a scheduled *message* says when the model answered nothing at all.
+ *
+ * A check's text becomes the report, so it has to be a fact about a check (the
+ * constant above). A reminder or an initiative has no report — and until this
+ * existed it was handed the check's sentence verbatim: her own initiative at nine
+ * in the morning carried "Проверки не было — отчёта нет, следующий заход по
+ * расписанию" about a check nobody had scheduled. That is the same "lie with a
+ * date on it" the text above was written to avoid, one step to the side.
+ *
+ * The flag that tells the two apart is `reportTask` — the same one the report
+ * archive uses, not `scheduledTask`, which is true for all three.
+ */
+export const EMPTY_SCHEDULE_REPLY =
+  "⚠️ Плановое сообщение осталось без ответа: модель промолчала дважды.";
+
+/**
  * What she is told when her own picture is put in front of her.
  *
  * Two jobs, and the second is the one the live install needed: not only "look at
@@ -587,9 +603,11 @@ export class Engine {
             if (!text) {
               console.log(JSON.stringify({ tag: "engine:empty", turn: turn + 1, retry: false }));
               text =
-                msg.metadata?.scheduledTask === true
+                msg.metadata?.reportTask === true
                   ? EMPTY_SERVICE_REPLY
-                  : emptyReply(this.liveConfig().gender);
+                  : msg.metadata?.scheduledTask === true
+                    ? EMPTY_SCHEDULE_REPLY
+                    : emptyReply(this.liveConfig().gender);
             }
           }
           history.push({ role: "assistant", content: text });

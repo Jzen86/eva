@@ -6,7 +6,7 @@ import { TelegramChannel } from "./channels/telegram/index.js";
 import { synthesizeVoiceOgg } from "./channels/telegram/voice.js";
 import { LLMRouter } from "./core/llm/router.js";
 import { ProviderRegistry } from "./core/llm/registry.js";
-import { Engine } from "./core/engine.js";
+import { Engine, EMPTY_SCHEDULE_REPLY } from "./core/engine.js";
 import { SchedulerService } from "./core/tools/scheduler.js";
 import { SchedulerStore } from "./core/tools/scheduler-store.js";
 import { getDB } from "./core/memory/db.js";
@@ -189,7 +189,12 @@ async function main() {
   const schedulerDb = getDB();
   const schedulerStore = new SchedulerStore(schedulerDb);
   schedulerStore.init();
-  const scheduler = new SchedulerService(schedulerStore);
+  const scheduler = new SchedulerService(
+    schedulerStore,
+    // The owner's clock, the same one her prompt uses. Read live, not captured:
+    // he can change it in the chat, and his reminders should follow him.
+    () => loadConfig()?.agent?.timezone_offset_hours ?? config.agent?.timezone_offset_hours ?? 4,
+  );
   const passwordHash = config.security?.password_hash ?? "default-key-change-me";
   // channels map is populated later — closure captures the reference
   const channels = new Map<string, Channel>();
@@ -463,55 +468,96 @@ async function main() {
     // Config is re-read every tick, so the owner can change the periods or switch
     // it off without a restart. The first tick is five minutes after boot, never
     // at once, so a restart cannot set her off mid-morning.
-    if (config.telegram?.owner_id) {
-      const initiativeOwnerId = String(config.telegram.owner_id);
-      const runInitiative = async (): Promise<void> => {
-        try {
-          const live = loadConfig() ?? config;
-          const cfg = parseInitiative(live.initiative);
-          if (!cfg || !cfg.enabled) return;
+    //
+    // The timer is armed even with no owner yet. On a fresh install `owner_id`
+    // appears *after* boot — `onOwnerClaimed` writes it into the config — and the
+    // timer used to be created under `if (owner_id)`, so she never wrote first
+    // until the next restart, while the paragraph above promised the opposite.
+    let initiativeBusy = false;
+    const runInitiative = async (): Promise<void> => {
+      // A turn can outlive the five-minute tick: its own budget is five minutes,
+      // and it may also be waiting on another turn for the same user. Without this
+      // flag the second tick reads the state the first has not saved yet, finds the
+      // same moment still due, and sends a second message for it.
+      if (initiativeBusy) return;
+      initiativeBusy = true;
+      try {
+        const live = loadConfig() ?? config;
+        const cfg = parseInitiative(live.initiative);
+        if (!cfg || !cfg.enabled) return;
 
-          const offset = live.agent?.timezone_offset_hours ?? 0;
-          const now = Date.now();
-          const state = loadState();
-          const due = dueNow(cfg, state, now, offset, lastOwnerMessageAt(initiativeOwnerId));
-          if (!due) return;
+        const ownerId = live.telegram?.owner_id ? String(live.telegram.owner_id) : "";
+        if (!ownerId) return;
 
-          const { minutes } = localClock(now, offset);
-          const clock = `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
-          const prompt = [
-            `${SCHEDULED_TURN_PREFIX} «инициатива».`,
-            `Сейчас ${clock} — период «${due.instance.period.name}». Ты пишешь Жене сама, первой, без его запроса.`,
-            `Реши сама: написать текстом, прислать селфи или голосовое (с подписью или без) — или не писать ничего, если момент не тот. Что и как — на твоё усмотрение; пусть будет по времени суток к месту.`,
-            `Одно короткое сообщение. Если решишь промолчать — ответь ровно ${SILENCE_REPLY}.`,
-          ].join("\n");
+        // Same default as the rest of the bot (`agent` schema). It used to be 0
+        // here, so a config whose offset had been dropped as invalid left the
+        // initiative on UTC while her prompt stayed four hours ahead.
+        const offset = live.agent?.timezone_offset_hours ?? config.agent?.timezone_offset_hours ?? 4;
+        const now = Date.now();
+        const state = loadState();
+        const due = dueNow(cfg, state, now, offset, lastOwnerMessageAt(ownerId));
+        if (!due) return;
 
-          const result = await engine.process({
-            channelName: "telegram",
-            userId: initiativeOwnerId,
-            text: prompt,
-            timestamp: now,
-            metadata: { scheduledTask: true },
-          });
+        const { minutes } = localClock(now, offset);
+        const clock = `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+        const prompt = [
+          `${SCHEDULED_TURN_PREFIX} «инициатива».`,
+          `Сейчас ${clock} — период «${due.instance.period.name}». Ты пишешь Жене сама, первой, без его запроса.`,
+          `Реши сама: написать текстом, прислать селфи или голосовое (с подписью или без) — или не писать ничего, если момент не тот. Что и как — на твоё усмотрение; пусть будет по времени суток к месту.`,
+          `Одно короткое сообщение. Если решишь промолчать — ответь ровно ${SILENCE_REPLY}.`,
+        ].join("\n");
 
-          // The moment is spent either way; only a real message resets the gap.
-          const fired = (state.instanceId === due.instance.id ? state.fired : 0) + 1;
-          if (saidNothing(result.text)) {
-            saveState({ instanceId: due.instance.id, fired, lastSentAt: state.lastSentAt });
-            console.log(`🕊 Инициатива: ${due.instance.period.name} — промолчала`);
-            return;
-          }
-          saveState(markSent(state, due.instance.id, now));
-          await channels.get("telegram")?.send(initiativeOwnerId, result);
-          console.log(`💌 Инициатива: ${due.instance.period.name} — отправлено`);
-        } catch (err) {
-          console.error("❌ Инициатива:", err instanceof Error ? err.message : err);
+        const result = await engine.process({
+          channelName: "telegram",
+          userId: ownerId,
+          text: prompt,
+          timestamp: now,
+          metadata: { scheduledTask: true },
+        });
+
+        // The moment is spent either way — silence, a model that answered nothing,
+        // a send that failed: there is no second try at this moment. The *gap* is
+        // another thing, and only a message that actually left resets it. This
+        // comment always said so; the code reset the gap before the send, so a
+        // Telegram failure quietly pushed her next chance out by min_gap_min.
+        const spent = {
+          instanceId: due.instance.id,
+          fired: (state.instanceId === due.instance.id ? state.fired : 0) + 1,
+          lastSentAt: state.lastSentAt,
+        };
+        if (saidNothing(result.text)) {
+          saveState(spent);
+          console.log(`🕊 Инициатива: ${due.instance.period.name} — промолчала`);
+          return;
         }
-      };
-      const initiativeTimer = setInterval(() => { void runInitiative(); }, 5 * 60_000);
-      initiativeTimer.unref?.();
-      console.log("💌 Инициатива: таймер запущен (раз в 5 мин)");
-    }
+
+        // Two empty answers in a row are not a message from her, they are the model
+        // failing, and the engine marks that with a text of its own. It still goes
+        // out — the owner should not be left guessing — but it does not count as
+        // "she wrote", and the journal must not call it "отправлено".
+        const failedTurn = result.text === EMPTY_SCHEDULE_REPLY;
+        try {
+          await channels.get("telegram")?.send(ownerId, result);
+        } catch (err) {
+          saveState(spent);
+          console.error("❌ Инициатива: отправка не удалась:", err instanceof Error ? err.message : err);
+          return;
+        }
+        saveState(markSent(state, due.instance.id, now));
+        console.log(
+          failedTurn
+            ? `⚠️ Инициатива: ${due.instance.period.name} — модель промолчала дважды`
+            : `💌 Инициатива: ${due.instance.period.name} — отправлено`,
+        );
+      } catch (err) {
+        console.error("❌ Инициатива:", err instanceof Error ? err.message : err);
+      } finally {
+        initiativeBusy = false;
+      }
+    };
+    const initiativeTimer = setInterval(() => { void runInitiative(); }, 5 * 60_000);
+    initiativeTimer.unref?.();
+    console.log("💌 Инициатива: таймер запущен (раз в 5 мин)");
   }
 
   setupShutdown(scheduler, llm ?? undefined);

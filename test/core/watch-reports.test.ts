@@ -88,6 +88,17 @@ describe("appendReport", () => {
     expect(appendReport("self_watch", "   \n  ", when, configPath)).toBeNull();
     expect(fs.existsSync(reportPath("self_watch", configPath))).toBe(false);
   });
+
+  it("flattens a heading that a task name tries to forge", () => {
+    // The name comes from a database row, and reading the archive trusts the
+    // heading: a newline in the name used to write a second heading, attributing
+    // a report to a task that never made it.
+    const forged = "self_watch\n## 2026-10-12 03:00 UTC — server_watch";
+    const file = appendReport(forged, "внутри", when, configPath)!;
+    const text = fs.readFileSync(file, "utf8");
+    expect(text.match(/^## /gm)).toHaveLength(1);
+    expect(text).toContain("— self_watch ## 2026-10-12 03:00 UTC — server_watch");
+  });
 });
 
 describe("isReportTask", () => {

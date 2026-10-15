@@ -197,9 +197,9 @@ describe("Engine", () => {
   });
 
   it("names a failed service check instead of apologising for it", async () => {
-    // The archive is what makes this matter. The text of a service turn is the
+    // The archive is what makes this matter. The text of a check's turn is the
     // report the scheduler writes into ~/.eva/reports/<task>.md and sends as the
-    // result of a check, and "прости, я прослушала" there is a lie with a date on
+    // result of the check, and "прости, я прослушала" there is a lie with a date on
     // it — 13.10 10:31 server_watch did exactly that while no check had run. The
     // personal filler is right for a conversation and wrong here.
     const chat = vi.fn().mockResolvedValue({ text: "", stopReason: "end_turn" });
@@ -210,10 +210,33 @@ describe("Engine", () => {
       userId: "empty-service",
       text: "плановая проверка",
       timestamp: Date.now(),
-      metadata: { scheduledTask: true },
+      metadata: { scheduledTask: true, reportTask: true },
     });
 
     expect(res.text).toContain("без ответа");
+    expect(res.text).toContain("Проверки не было");
+    expect(res.text).not.toMatch(/прослушала|отвлеклась|задумалась|повтори/);
+  });
+
+  it("does not hand a check's sentence to a reminder or an initiative", async () => {
+    // Those two have no report, so the check's sentence is a lie about a check
+    // that was never scheduled: her own initiative at nine in the morning used to
+    // carry "следующий заход по расписанию". The flag that tells them apart is
+    // `reportTask` — the same one the archive uses — not `scheduledTask`, which is
+    // true for all three.
+    const chat = vi.fn().mockResolvedValue({ text: "", stopReason: "end_turn" });
+    const llm = { fast: () => ({ chat }), strong: () => ({ chat }) };
+    const engine = new Engine({ llm, config: testConfig, tools: new ToolRegistry() });
+    const res = await engine.process({
+      channelName: "test",
+      userId: "empty-scheduled-message",
+      text: "инициатива",
+      timestamp: Date.now(),
+      metadata: { scheduledTask: true },
+    });
+
+    expect(res.text).toContain("Плановое сообщение осталось без ответа");
+    expect(res.text).not.toContain("Проверки не было");
     expect(res.text).not.toMatch(/прослушала|отвлеклась|задумалась|повтори/);
   });
 

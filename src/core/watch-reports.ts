@@ -69,7 +69,11 @@ export function appendReport(
 
   const file = reportPath(taskName, configPath);
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  fs.appendFileSync(file, `\n---\n\n## ${stamp(when)} — ${taskName}\n\n${body}\n`);
+  // The heading is flattened the way the path is sanitized, and for the same
+  // reason: the name comes from a database row, and reading the archive trusts the
+  // heading — a newline in the name would forge a block for another task.
+  const heading = taskName.replace(/\s+/g, " ").trim() || "task";
+  fs.appendFileSync(file, `\n---\n\n## ${stamp(when)} — ${heading}\n\n${body}\n`);
   try {
     fs.chmodSync(file, 0o600);
   } catch {
