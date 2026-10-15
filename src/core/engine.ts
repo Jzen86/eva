@@ -154,23 +154,16 @@ export const EMPTY_SCHEDULE_REPLY =
 /**
  * What she is told when her own picture is put in front of her.
  *
- * Two jobs, and the second is the one the live install needed: not only "look at
- * what you made" but "check it for the defects this generator actually makes".
- * The owner sent back a frame with three hands — she had looked straight at it
- * and praised the picture instead, because the instruction asked her to describe,
- * not to judge. One retry is allowed on her own (with a changed prompt), and if
- * the second frame is flawed too she shows it and says so plainly: praising a
- * broken picture is worse than admitting the generator missed, since the owner
- * then goes looking for the fault in himself.
- */
-/**
- * What she is told when her own picture is put in front of her.
- *
  * Two sentences, on purpose. The first version listed the defects to look for and
  * she recited them; the second listed the ones to ignore and was just as
  * specific — the same mistake twice, both times mine. What has to be said is the
  * task (does the picture show what he asked for) and who decides (he does), and
  * neither needs an inventory of failure modes to be understood.
+ *
+ * There is no retry here, and that is deliberate: the note used to promise one
+ * ("one retry on her own, with a changed prompt"), and the engine has never had
+ * such a thing — the only retry in it is for an empty answer. A second frame is
+ * the owner's call.
  */
 export const IMAGE_FEEDBACK_NOTE =
   "Вот что получилось на этом кадре. Смотри: то ли на нём, что он просил, и нет ли " +
@@ -522,10 +515,16 @@ export class Engine {
         // Soft time budget — give LLM one final chance to summarize (no tools)
         if (Date.now() - processStart > PROCESS_TIMEOUT) {
           console.log(JSON.stringify({ tag: "engine:limit", reason: "timeout", elapsedMs: Date.now() - processStart }));
-          history.push({ role: "user", content: "Времени мало. Ответь на основе того, что уже удалось сделать. Не вызывай инструменты." });
+          // The instruction belongs to this call, not to the session. Pushed into
+          // `history` it stayed there for the rest of it, so the *next* turn opened
+          // with "не вызывай инструменты" — a stale order outliving the reason for
+          // it. (The image feedback is the deliberate opposite: seen once, dropped
+          // at the top of the next turn, because it is about something she made.
+          // These are instructions to one call.)
           const finalMessages: LLMMessage[] = [
             { role: "system", content: systemPrompt },
             ...history,
+            { role: "user", content: "Времени мало. Ответь на основе того, что уже удалось сделать. Не вызывай инструменты." },
           ];
           const finalResponse = await llm.chat(finalMessages);
           const text = finalResponse.text || "Не удалось завершить задачу полностью, но вот что получилось.";
@@ -757,11 +756,12 @@ export class Engine {
             // different ones, and without this the log cannot tell them apart.
             limit: sameToolLimit,
           }));
-          // Give LLM one final chance to summarize what it found (no tools)
-          history.push({ role: "user", content: `Лимит использования инструмента "${overused[0]}" достигнут. Ответь на основе уже полученной информации.` });
+          // Give LLM one final chance to summarize what it found (no tools). The
+          // instruction goes with this call only — see the timeout branch above.
           const finalMessages: LLMMessage[] = [
             { role: "system", content: systemPrompt },
             ...history,
+            { role: "user", content: `Лимит использования инструмента "${overused[0]}" достигнут. Ответь на основе уже полученной информации.` },
           ];
           const finalResponse = await llm.chat(finalMessages);
           const text = finalResponse.text || `Инструмент "${overused[0]}" использован ${overused[1]} раз, но не удалось сформировать ответ.`;
@@ -775,10 +775,10 @@ export class Engine {
 
       // Max turns exceeded — give LLM final chance to summarize
       console.log(JSON.stringify({ tag: "engine:limit", reason: "max_turns" }));
-      history.push({ role: "user", content: "Лимит шагов достигнут. Ответь на основе того, что уже удалось сделать." });
       const wrapMessages: LLMMessage[] = [
         { role: "system", content: systemPrompt },
         ...history,
+        { role: "user", content: "Лимит шагов достигнут. Ответь на основе того, что уже удалось сделать." },
       ];
       const wrapResponse = await llm.chat(wrapMessages);
       const text = wrapResponse.text || "Вот что удалось сделать.";
@@ -797,16 +797,17 @@ export class Engine {
           : errorMsg.includes("503") || errorMsg.includes("502") ? "сервер языковой модели временно недоступен"
           : `техническая проблема: ${errorMsg}`;
 
-        history.push({ role: "user", content: `[Системное сообщение: произошла ошибка — ${errorContext}. Объясни пользователю своими словами что случилось, извинись и предложи попробовать ещё раз. Не используй технические термины. Будь краткой.]` });
-
         // Last chance to leave the history in a state someone can answer: the
         // apology below is the last thing Eva says this turn, and if it goes
         // out on an unparseable history the user gets silence instead of it.
         history = this.align(userId, history, "recovery");
 
+        // The instruction rides this call only — see the timeout branch above for
+        // why it must not be pushed into `history`.
         const recoveryMessages: LLMMessage[] = [
           { role: "system", content: systemPrompt },
           ...history,
+          { role: "user", content: `[Системное сообщение: произошла ошибка — ${errorContext}. Объясни пользователю своими словами что случилось, извинись и предложи попробовать ещё раз. Не используй технические термины. Будь краткой.]` },
         ];
         const recoveryResponse = await llm.chat(recoveryMessages);
         const text = recoveryResponse.text || "Прости, что-то у меня зависло. Повтори, пожалуйста!";

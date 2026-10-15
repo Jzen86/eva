@@ -138,6 +138,19 @@ describe("indexText", () => {
 // --- end to end --------------------------------------------------------------
 
 describe("memory search in Russian", () => {
+  it("hands back the row with its kind, not one field short", () => {
+    // `searchKnowledge` carried its own list of columns and it was missing `kind`,
+    // while `KnowledgeRow.kind` is declared required — so a consumer reading `.kind`
+    // off a search hit got `undefined`, and an episode could be rendered as a
+    // standing rule. The list is shared with the other queries now, which is what
+    // stops the two from drifting apart again.
+    addKnowledge({ topic: "про кота", insight: "кот был рыжим и толстым", source: "test" });
+    const [row] = searchKnowledge("кот", 5);
+    expect(row.kind).toBe("episode");
+    expect(row.topic).toBe("про кота");
+    expect(row.insight).toContain("рыжим");
+  });
+
   it("finds an entry through an inflected query", () => {
     addKnowledge({ topic: "про кота", insight: "кот был рыжим и толстым", source: "test" });
     expect(searchKnowledge("котом", 5)).toHaveLength(1);

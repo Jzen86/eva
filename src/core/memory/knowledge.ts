@@ -89,6 +89,17 @@ const SELECT_COLUMNS =
   "id, topic, insight, source, confidence, timestamp, access_count, last_used, superseded_at, superseded_by, her_move, context, his_reaction, conclusion, kind";
 
 /**
+ * The same list, qualified for the query that joins `knowledge_fts`.
+ *
+ * Written this way so the two cannot drift again: `searchKnowledge` used to carry
+ * its own list of columns, and it was missing `kind` while `KnowledgeRow.kind` is
+ * declared a required field. Any consumer reading `.kind` off a search hit got
+ * `undefined` — an episode rendered as a standing rule — and the type system could
+ * not say a word about it.
+ */
+const SELECT_COLUMNS_K = SELECT_COLUMNS.split(", ").map((c) => `k.${c}`).join(", ");
+
+/**
  * Build a safe FTS5 MATCH expression from free text.
  *
  * User text must never reach MATCH raw. FTS5 reads `:`, `~`, `^`, `"`, `*`,
@@ -218,9 +229,7 @@ export function searchKnowledge(query: string, limit = 5): KnowledgeRow[] {
   try {
     const rows = db
       .prepare(
-        `SELECT k.id, k.topic, k.insight, k.source, k.confidence, k.timestamp,
-                k.access_count, k.last_used, k.superseded_at, k.superseded_by,
-                k.her_move, k.context, k.his_reaction, k.conclusion
+        `SELECT ${SELECT_COLUMNS_K}
          FROM knowledge_fts fts
          JOIN knowledge k ON k.id = fts.rowid
          WHERE knowledge_fts MATCH ?

@@ -89,4 +89,53 @@ describe("engine runaway protection", () => {
   it("keeps the service ceiling above the chat one", () => {
     expect(MAX_SAME_TOOL_SERVICE).toBeGreaterThan(MAX_SAME_TOOL);
   });
+
+  it("does not carry the wind-up order into the next turn", async () => {
+    // The instruction ("Лимит использования инструмента … достигнут") was pushed
+    // into the session history and stayed there, so the *next* message opened with a
+    // stale order that had already been obeyed. The same shape sat in the error
+    // branch ("[Системное сообщение: произошла ошибка …]"): she answered the next
+    // message in the room as if the failure had just happened. Both belong to one
+    // call, like the timeout and max-turns branches.
+    let executed = 0;
+    const tools = new ToolRegistry();
+    tools.register({
+      name: "shell",
+      description: "shell",
+      parameters: [],
+      async execute() {
+        executed += 1;
+        return { success: true, output: "ok" };
+      },
+    });
+    const chat = vi.fn();
+    for (let i = 0; i < 7; i++) chat.mockResolvedValueOnce(shellTurn());
+    chat.mockResolvedValue({ text: "готово", stopReason: "end_turn" });
+    const llm = {
+      fast: () => ({ chat }),
+      strong: () => ({ chat }),
+      hasRole: (n: string) => n === "strong",
+    };
+    const engine = new Engine({ llm, config: testConfig, tools });
+
+    await engine.process({
+      channelName: "test",
+      userId: "limits-stale",
+      text: "проверь себя",
+      timestamp: Date.now(),
+    });
+    expect(executed).toBe(MAX_SAME_TOOL + 1);
+
+    chat.mockClear();
+    await engine.process({
+      channelName: "test",
+      userId: "limits-stale",
+      text: "ну что там?",
+      timestamp: Date.now(),
+    });
+
+    const nextTurn = JSON.stringify(chat.mock.calls[0]?.[0]);
+    expect(nextTurn).not.toContain("Лимит использования инструмента");
+    expect(nextTurn).not.toContain("Не вызывай инструменты");
+  });
 });

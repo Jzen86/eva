@@ -1,5 +1,3 @@
-import { getAllKnowledge, addKnowledge } from "./knowledge.js";
-import type { KnowledgeRow } from "./knowledge.js";
 import { readMeta, writeMeta } from "./db.js";
 
 export interface LearningConfig {
@@ -58,15 +56,6 @@ export function markStudyComplete(): void {
   }
 }
 
-export interface StudyResult {
-  topic: string;
-  insight: string;
-  /** False when the writer refused the insight as a repeat. */
-  written: boolean;
-  reason: string;
-  entriesBefore: number;
-  entriesAfter: number;
-}
 
 /**
  * `runStudySession` used to live here — a single-insight runner the study prompt

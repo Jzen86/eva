@@ -122,10 +122,12 @@ describe("memory in the prompt", () => {
     });
 
     // The request that follows the tool call carries the picture itself, and the
-    // note that tells her to look at it quietly — the first version of this note
-    // turned every photo into an inspection with a written report, so the test now
-    // pins the two parts that were wrong: a gross defect still triggers a retry,
-    // and trivia must not be reported.
+    // note that tells her to look at it. What is pinned here is that the frame
+    // travels and that the note names the task ("есть ли анатомические дефекты")
+    // and the one who decides ("решает он"): the first version of the note listed
+    // the defects to look for and she recited them, the second listed the ones to
+    // ignore and she recited those — the inventory was mine both times. There is no
+    // retry to pin, and that is deliberate: a second frame is his call, not hers.
     expect(JSON.stringify(chat.mock.calls[1]?.[0])).toContain("data:image/png;base64,AAAA");
     expect(JSON.stringify(chat.mock.calls[1]?.[0])).toContain("анатомических дефектов");
     expect(JSON.stringify(chat.mock.calls[1]?.[0])).toContain("решает он");
