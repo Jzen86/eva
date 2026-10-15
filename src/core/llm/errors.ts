@@ -11,6 +11,27 @@ import OpenAI from "openai";
 /** 5xx that means "the server broke", not "your request was wrong". */
 const SERVER_ERRORS = new Set([500, 502, 503, 504, 520, 522, 524, 529]);
 
+/**
+ * The provider answered 200 and said nothing at all.
+ *
+ * Not an HTTP error, which is exactly why it needs a name of its own. It looks
+ * like a successful answer to every layer below, so nothing retried, nothing
+ * fell back, and the engine's two empty attempts turned into her saying
+ * "повтори" — twelve minutes of that on the live install while the provider
+ * flapped (503s in between, and 200s whose choice carried neither text nor a
+ * tool call). `doctor`'s own probe has always called an empty reply a failure;
+ * this makes the transport agree, and isTransientError says what to do next.
+ */
+export class EmptyResponseError extends Error {
+  constructor(model: string, finishReason: string | null = null) {
+    super(
+      `Модель ${model} вернула пустой ответ` +
+        (finishReason ? ` (finish_reason: ${finishReason})` : ""),
+    );
+    this.name = "EmptyResponseError";
+  }
+}
+
 const BILLING_KEYWORDS = [
   "insufficient_quota",
   "insufficient credits",
@@ -74,6 +95,9 @@ export function isBillingError(err: unknown): boolean {
 
 /** Model is gone, rate limited, or the provider is having a bad day. */
 export function isTransientError(err: unknown): boolean {
+  // The provider failing while looking healthy. Checked first, because
+  // by every other measure here it is not an error at all.
+  if (err instanceof EmptyResponseError) return true;
   const status = statusOf(err);
   if (status === 404) return true; // dead model id
   if (status === 408) return true; // request timeout

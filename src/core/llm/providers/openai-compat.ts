@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { EmptyResponseError } from "../errors.js";
 import type { LLMClient, LLMMessage, LLMResponse, ToolDefinition, ToolUseRequest, StreamCallback, LLMCallOptions } from "../types.js";
 
 /**
@@ -336,6 +337,7 @@ export function createOpenAICompatClient(opts: OpenAICompatOptions): LLMClient {
 
   return {
     async chat(messages: LLMMessage[], tools?: ToolDefinition[], callOpts?: LLMCallOptions): Promise<LLMResponse> {
+      const started = Date.now();
       const response = await client.chat.completions
         .create(
           {
@@ -369,16 +371,21 @@ export function createOpenAICompatClient(opts: OpenAICompatOptions): LLMClient {
         };
       });
 
-      return buildResponse(
-        message?.content ?? "",
+      return assertAnswered(
+        buildResponse(
+          message?.content ?? "",
+          choice?.finish_reason ?? null,
+          toolCalls,
+          json.usage
+            ? {
+                prompt_tokens: json.usage.prompt_tokens ?? 0,
+                completion_tokens: json.usage.completion_tokens ?? 0,
+              }
+            : undefined,
+        ),
+        opts.model,
         choice?.finish_reason ?? null,
-        toolCalls,
-        json.usage
-          ? {
-              prompt_tokens: json.usage.prompt_tokens ?? 0,
-              completion_tokens: json.usage.completion_tokens ?? 0,
-            }
-          : undefined,
+        Date.now() - started,
       );
     },
 
@@ -388,6 +395,7 @@ export function createOpenAICompatClient(opts: OpenAICompatOptions): LLMClient {
       tools?: ToolDefinition[],
       callOpts?: LLMCallOptions,
     ): Promise<LLMResponse> {
+      const started = Date.now();
       const response = await openStream(messages, tools, callOpts?.signal);
 
       let text = "";
@@ -423,9 +431,32 @@ export function createOpenAICompatClient(opts: OpenAICompatOptions): LLMClient {
         }
       }
 
-      return buildResponse(text, finishReason, acc.finish(), usage);
+      return assertAnswered(
+        buildResponse(text, finishReason, acc.finish(), usage),
+        opts.model,
+        finishReason,
+        Date.now() - started,
+      );
     },
   };
+}
+
+/**
+ * A 200 with nothing in it is not an answer.
+ *
+ * See EmptyResponseError for what this cost live: her "повтори" instead of the
+ * next model in the chain answering. The test is about the whole reply, because
+ * a turn that only calls a tool arrives with no text and is perfectly good.
+ */
+function assertAnswered(
+  response: LLMResponse,
+  model: string,
+  finishReason: string | null,
+  ms: number,
+): LLMResponse {
+  if (response.text.trim() || response.toolCalls?.length) return response;
+  console.log(JSON.stringify({ tag: "llm:empty", model, finishReason, ms }));
+  throw new EmptyResponseError(model, finishReason);
 }
 
 function safeParseArgs(raw: string | null | undefined): Record<string, unknown> {
