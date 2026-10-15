@@ -168,4 +168,35 @@ describe("memory in the prompt", () => {
     // conversation comes near it.
     expect(system).not.toContain("мы любим шампиньоны");
   });
+
+  it("gives a check the skeleton of a report, and a conversation none", async () => {
+    // The owner asked for a structure he can verify — what was checked, what was found,
+    // what she recommends, the verdict — and for it in her own words rather than as a form:
+    // "весь отчет она пишет своими словами, а не по моему шаблону. это примерный каркас".
+    // One skeleton in one place: three checks read it, so the shape cannot drift apart.
+    const engine = new Engine({ llm: captureLlm(), config: testConfig, tools: new ToolRegistry() });
+
+    await engine.process({
+      channelName: "test",
+      userId: "mem-check",
+      text: "плановая проверка",
+      timestamp: Date.now(),
+      metadata: { scheduledTask: true, reportTask: true },
+    });
+    const reportPrompt = String(captured.at(-1)?.[0]?.content);
+    expect(reportPrompt).toContain("## Отчёт");
+    expect(reportPrompt).toContain("своими словами");
+    expect(reportPrompt).toContain("что ты проверяла");
+    expect(reportPrompt).toContain("твой вердикт");
+    // A check still gets no profile and no memory search — the skeleton is not memory.
+    expect(reportPrompt).not.toContain("Что я о нём знаю");
+
+    await engine.process({
+      channelName: "test",
+      userId: "mem-chat-2",
+      text: "привет",
+      timestamp: Date.now(),
+    });
+    expect(String(captured.at(-1)?.[0]?.content)).not.toContain("## Отчёт");
+  });
 });

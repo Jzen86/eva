@@ -14,6 +14,7 @@ import {
 } from "./config.js";
 import { searchKnowledge, renderKnowledge, KNOWLEDGE_PROMPT_LIMIT, profileKnowledge, knowledgeOfKind } from "./memory/knowledge.js";
 import { renderProfileDossier, renderFlatBlock, PROFILE_RULE, RULES_RULE, LESSON_RULE } from "./profile-dossier.js";
+import { REPORT_SHAPE } from "./watch-reports.js";
 import { previewImage, isInlineImage } from "./image-preview.js";
 import { saveMessage, loadHistory, extractText, previousLiveExchange, recentSeams } from "./memory/conversations.js";
 import { gapFacts, GAP_THRESHOLD_MIN, type GapFacts } from "./memory/time-words.js";
@@ -1007,6 +1008,13 @@ export class Engine {
     const summary = this.summaries.get(chatId);
     if (summary) {
       prompt += `\n\n## Краткое содержание предыдущего разговора\n\n${summary}`;
+    }
+
+    // What a report has to make visible. It belongs to the turn rather than to the task
+    // text: three checks read one skeleton, and a shape copied into three texts drifts.
+    // See REPORT_SHAPE for where it came from and why a clean run answers as well.
+    if (reportTurn) {
+      prompt += `\n\n## Отчёт\n\n${REPORT_SHAPE}`;
     }
 
     const turnContext = buildTurnContext(userMessage, gap ?? undefined);

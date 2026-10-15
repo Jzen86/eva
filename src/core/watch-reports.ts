@@ -120,6 +120,45 @@ export function isReportTask(schedule: string): boolean {
 }
 
 /**
+ * The skeleton of a report, in the one place all the checks read it from.
+ *
+ * A skeleton, not a form. The owner's own words about it: the report is written "своими
+ * словами, а не по моему шаблону. это примерный каркас чтоб выразить идею" — she tells him
+ * what happened in her own voice, and the skeleton only guarantees that four things are
+ * answerable in it: what was checked (where and how), what was found, what she recommends,
+ * and her verdict.
+ *
+ * He asked for it instead of a retelling, and said why: "суть в том, чтоб я (и ты) понимали
+ * что она проверяла, где и как. что нашла, и правильно ли нашла, может найти то что не
+ * заметили мы, может дать совет на починку такой какой мы не учли". The reports are also
+ * how her capability in this work is judged — which is why "what she looked at" is part of
+ * the skeleton and not the wrapping.
+ *
+ * It lives in code rather than in three task texts so the shape cannot drift apart between
+ * the checks: a task text says *what* to look at, this says what the answer has to make
+ * visible. And it is compact on purpose — a report is read on a phone, and a wall of text is
+ * a report nobody verifies.
+ *
+ * A clean run answers too. That is a deliberate change from "если всё чисто — ответь ровно
+ * [тишина]": silence after a check is indistinguishable from a check that never ran, and the
+ * whole point is knowing what she looked at. `[тишина]` stays in the code for messages (the
+ * initiative), not for reports.
+ */
+export const REPORT_SHAPE =
+  "Отчёт — своими словами, как рассказываешь человеку; это каркас, а не форма для заполнения. " +
+  "В нём должно быть видно четыре вещи:\n" +
+  "📝 что ты проверяла — где и как (одна-две строки, чтобы это можно было повторить за тобой);\n" +
+  "🆘 серьёзное — то, что по-твоему правда требует нашего вмешательства: что именно и чем грозит; " +
+  "⚠️ несерьёзное, но на что стоит обратить внимание: что именно; ✅ ничего — так и скажи, если ни того, " +
+  "ни другого. Если есть и серьёзное, и замечания — начни со 🆘, а замечания перечисли отдельной строкой ниже;\n" +
+  "💬 что рекомендуешь — поправить, и как именно ты бы это сделала (нечего советовать — не пиши);\n" +
+  "📊 твой вердикт — одна-две строки в конце.\n" +
+  "Ровно один вердикт из трёх (🆘 / ⚠️ / ✅), по факту, а не по вежливости: 🆘 — это то, что ждёт нашего " +
+  "решения, ⚠️ — то, на что стоит взглянуть. Весь отчёт — не больше экрана телефона. Файл, строку и время " +
+  "называй там, где есть что чинить; по мелочи хватит одной строки. Отчёт присылай всегда, даже когда всё " +
+  "чисто: иначе не видно, смотрела ли ты вообще.";
+
+/**
  * Keep the report, then deliver it — in that order, and on purpose.
  *
  * Sending used to come first, so the archive only ran on the way back, and a
