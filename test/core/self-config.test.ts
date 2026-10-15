@@ -17,7 +17,7 @@ let prevPath: string | undefined;
 
 const BASE = {
   agent: { name: "Eva", gender: "female" },
-  owner: { name: "Женя" },
+  owner: { name: "Марк" },
   telegram: { token: "123456:SUPERSECRETTOKENVALUE", owner_id: "42" },
   providers: { openrouter: { api_key: "sk-or-v1-abcdef0123456789" } },
   models: { fast: { provider: "openrouter", model: "x/y" } },
@@ -263,11 +263,11 @@ describe("personality stored as a bare string", () => {
       path.join(tmpDir, "config.yaml"),
       stringify({ agent: { name: "Eva", personality: "я ласковая" } }),
     );
-    await runAs(OWNER, "set", "owner.name", "Женя");
+    await runAs(OWNER, "set", "owner.name", "Марк");
     await applyPending(OWNER);
     const cfg = loadConfig() as any;
     expect(cfg.agent.personality.custom_instructions).toBe("я ласковая");
-    expect(cfg.owner.name).toBe("Женя");
+    expect(cfg.owner.name).toBe("Марк");
   });
 });
 

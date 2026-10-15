@@ -254,7 +254,7 @@ describe("saveConfig", () => {
           empathy: 4,
         },
       },
-      owner: { name: "Jzen86", address_as: "Женя", facts: ["любит котиков"] },
+      owner: { name: "Марк", address_as: "Марк", facts: ["любит котиков"] },
       security: { password_hash: "x", tools: { shell: true, ssh: false } },
       providers: {
         main: { base_url: "https://api.example.com/v1", api_key: "k", provider: "openai" },

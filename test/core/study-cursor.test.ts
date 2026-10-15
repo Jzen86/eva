@@ -234,7 +234,7 @@ describe("study: the read cursor", () => {
     // reaching `markStudyComplete`, so the timer still read as expired and the
     // study model re-fired on the next tick and every tick after it, once per
     // minute, for as long as the model kept repeating itself.
-    addKnowledge({ topic: "техника", insight: "Женя не любит айфоны", source: "memory_tool" });
+    addKnowledge({ topic: "техника", insight: "Марк не любит айфоны", source: "memory_tool" });
     say(["разговор"]);
 
     const now = vi.spyOn(Date, "now").mockReturnValue(0);
@@ -247,7 +247,7 @@ describe("study: the read cursor", () => {
       const { wrote } = await session(
         JSON.stringify({
           facts: [
-            { topic: "техника", fact: "Женя не любит айфоны", зачем: "предложить другое, а не айфон" },
+            { topic: "техника", fact: "Марк не любит айфоны", зачем: "предложить другое, а не айфон" },
           ],
         }),
       );

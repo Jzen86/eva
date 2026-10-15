@@ -77,14 +77,14 @@ describe("coverageOf", () => {
 
 describe("findLexicalDuplicate", () => {
   it("catches an exact repeat", () => {
-    addKnowledge({ topic: "еда", insight: "Женя любит пиццу", source: "test" });
-    const hit = findLexicalDuplicate("Женя любит пиццу", getAllKnowledge());
+    addKnowledge({ topic: "еда", insight: "Марк любит пиццу", source: "test" });
+    const hit = findLexicalDuplicate("Марк любит пиццу", getAllKnowledge());
     expect(hit?.how).toBe("exact");
   });
 
   it("catches a repeat written with different inflection", () => {
-    addKnowledge({ topic: "еда", insight: "Женя любит пиццу", source: "test" });
-    const hit = findLexicalDuplicate("Женя любила пиццу", getAllKnowledge());
+    addKnowledge({ topic: "еда", insight: "Марк любит пиццу", source: "test" });
+    const hit = findLexicalDuplicate("Марк любила пиццу", getAllKnowledge());
     expect(hit).not.toBeNull();
   });
 
@@ -94,27 +94,27 @@ describe("findLexicalDuplicate", () => {
    */
   it("does not discard a richer insight that mentions a known word", () => {
     addKnowledge({ topic: "еда", insight: "пицца", source: "test" });
-    const richer = "Женя любит пиццу и берёт её по пятницам";
+    const richer = "Марк любит пиццу и берёт её по пятницам";
     const hit = findLexicalDuplicate(richer, getAllKnowledge());
     expect(hit).toBeNull();
   });
 
   it("ignores retired entries", () => {
-    const id = addKnowledge({ topic: "еда", insight: "Женя любит пиццу", source: "test" });
+    const id = addKnowledge({ topic: "еда", insight: "Марк любит пиццу", source: "test" });
     retireKnowledge(id);
-    expect(findLexicalDuplicate("Женя любит пиццу", getAllKnowledge(true))).toBeNull();
+    expect(findLexicalDuplicate("Марк любит пиццу", getAllKnowledge(true))).toBeNull();
   });
 
   it("says nothing about text that is all noise", () => {
-    addKnowledge({ topic: "еда", insight: "Женя любит пиццу", source: "test" });
+    addKnowledge({ topic: "еда", insight: "Марк любит пиццу", source: "test" });
     expect(findLexicalDuplicate("и в на с", getAllKnowledge())).toBeNull();
   });
 });
 
 describe("findDuplicate", () => {
   it("stops at the lexical check when no endpoint is configured", async () => {
-    addKnowledge({ topic: "еда", insight: "Женя не ест грибы", source: "test" });
-    const hit = await findDuplicate("Женя не ест грибы", { known: getAllKnowledge() });
+    addKnowledge({ topic: "еда", insight: "Марк не ест грибы", source: "test" });
+    const hit = await findDuplicate("Марк не ест грибы", { known: getAllKnowledge() });
     expect(hit?.how).toBe("exact");
     expect(hit?.id).toBe(1);
   });
@@ -135,7 +135,7 @@ describe("findDuplicate", () => {
 describe("learnInsight", () => {
   it("writes and reports the id", async () => {
     const outcome = await learnInsight(
-      { topic: "еда", insight: "Женя любит пиццу", source: "test" },
+      { topic: "еда", insight: "Марк любит пиццу", source: "test" },
       { known: [] },
     );
     expect(outcome.written).toBe(true);
@@ -143,9 +143,9 @@ describe("learnInsight", () => {
   });
 
   it("refuses a repeat and says which entry already holds it", async () => {
-    await learnInsight({ topic: "еда", insight: "Женя любит пиццу", source: "test" }, { known: [] });
+    await learnInsight({ topic: "еда", insight: "Марк любит пиццу", source: "test" }, { known: [] });
     const again = await learnInsight(
-      { topic: "еда", insight: "Женя любит пиццу", source: "test" },
+      { topic: "еда", insight: "Марк любит пиццу", source: "test" },
       { known: getAllKnowledge() },
     );
     expect(again.written).toBe(false);
@@ -156,11 +156,11 @@ describe("learnInsight", () => {
   /** The point of routing every writer through one function. */
   it("is the only path that can tell two writers apart", async () => {
     await learnInsight(
-      { topic: "еда", insight: "Женя не ест грибы", source: "study_session" },
+      { topic: "еда", insight: "Марк не ест грибы", source: "study_session" },
       { known: [] },
     );
     const fromTool = await learnInsight(
-      { topic: "еда", insight: "Женя не ест грибы", source: "memory_tool" },
+      { topic: "еда", insight: "Марк не ест грибы", source: "memory_tool" },
       { known: getAllKnowledge() },
     );
     expect(fromTool.written).toBe(false);
@@ -169,7 +169,7 @@ describe("learnInsight", () => {
 
 describe("retireKnowledge", () => {
   it("stops answering but keeps the row", () => {
-    const id = addKnowledge({ topic: "еда", insight: "Женя любит пиццу", source: "test" });
+    const id = addKnowledge({ topic: "еда", insight: "Марк любит пиццу", source: "test" });
     retireKnowledge(id);
 
     expect(searchKnowledge("пиццу", 5)).toHaveLength(0);
@@ -178,8 +178,8 @@ describe("retireKnowledge", () => {
   });
 
   it("records what replaced it", () => {
-    const old = addKnowledge({ topic: "еда", insight: "Женя ест грибы", source: "test" });
-    const fresh = addKnowledge({ topic: "еда", insight: "Женя не ест грибы", source: "test" });
+    const old = addKnowledge({ topic: "еда", insight: "Марк ест грибы", source: "test" });
+    const fresh = addKnowledge({ topic: "еда", insight: "Марк не ест грибы", source: "test" });
     retireKnowledge(old, fresh);
 
     const row = getAllKnowledge(true).find((r) => r.id === old);
@@ -296,7 +296,7 @@ describe("trimKnowledge", () => {
 
 describe("usage tracking", () => {
   it("counts a memory as used when it answers a question", () => {
-    addKnowledge({ topic: "еда", insight: "Женя любит пиццу", source: "test" });
+    addKnowledge({ topic: "еда", insight: "Марк любит пиццу", source: "test" });
     expect(searchKnowledge("пиццу", 5)).toHaveLength(1);
 
     // Read back from the table: the row a search returns was read before the
@@ -307,13 +307,13 @@ describe("usage tracking", () => {
   });
 
   it("does not count a query that missed", () => {
-    addKnowledge({ topic: "еда", insight: "Женя любит пиццу", source: "test" });
+    addKnowledge({ topic: "еда", insight: "Марк любит пиццу", source: "test" });
     expect(searchKnowledge("велосипед", 5)).toHaveLength(0);
     expect(getAllKnowledge()[0].access_count).toBe(0);
   });
 
   it("accumulates across repeated hits", () => {
-    const id = addKnowledge({ topic: "еда", insight: "Женя любит пиццу", source: "test" });
+    const id = addKnowledge({ topic: "еда", insight: "Марк любит пиццу", source: "test" });
     searchKnowledge("пиццу", 5);
     searchKnowledge("пиццу", 5);
     touchKnowledge([id]);

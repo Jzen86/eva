@@ -206,7 +206,7 @@ describe("study: what a session may leave in the base", () => {
   it("takes every fact of a multi-fact answer, not just the first", async () => {
     const { result } = await session(JSON.stringify({
       facts: [
-        { topic: "техника", fact: "Женя не любит айфоны", her_move: null, context: null, his_reaction: null },
+        { topic: "техника", fact: "Марк не любит айфоны", her_move: null, context: null, his_reaction: null },
         {
           topic: "шутки",
           fact: "околололо",
@@ -241,8 +241,8 @@ describe("study: what a session may leave in the base", () => {
   it("does not store two near-identical facts from one answer", async () => {
     const { result } = await session(JSON.stringify({
       facts: [
-        { topic: "техника", fact: "Женя любит андроид", her_move: null, context: null, his_reaction: null },
-        { topic: "техника", fact: "Женя предпочитает андроид", her_move: null, context: null, his_reaction: null },
+        { topic: "техника", fact: "Марк любит андроид", her_move: null, context: null, his_reaction: null },
+        { topic: "техника", fact: "Марк предпочитает андроид", her_move: null, context: null, his_reaction: null },
       ],
     }));
 

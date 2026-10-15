@@ -41,7 +41,7 @@ describe("cases", () => {
   it("tells a case from a plain statement", () => {
     const statement = addKnowledge({
       topic: "техника",
-      insight: "Женя не любит айфоны",
+      insight: "Марк не любит айфоны",
       source: "memory_tool",
     });
     const recorded = addKnowledge({
@@ -127,10 +127,10 @@ describe("cases", () => {
   });
 
   it("keeps a statement readable as itself, with no case fields invented", () => {
-    addKnowledge({ topic: "техника", insight: "Женя не любит айфоны", source: "memory_tool" });
+    addKnowledge({ topic: "техника", insight: "Марк не любит айфоны", source: "memory_tool" });
 
     const out = renderKnowledge(searchKnowledge("айфон", 5));
-    expect(out).toContain("Женя не любит айфоны");
+    expect(out).toContain("Марк не любит айфоны");
     expect(out).not.toContain("состояние:");
   });
 
@@ -255,7 +255,7 @@ describe("memory tool, case fields", () => {
 
     const result = await tool.execute({
       action: "save",
-      content: "Женя гомофоб, не упоминать пидоров",
+      content: "Не любит айфоны, про технику не спрашивать",
       topic: "тема",
     });
 
@@ -278,7 +278,7 @@ describe("memory tool, case fields", () => {
 describe("memory tool, a corrected fact", () => {
   it("shows stable entry IDs in search results", async () => {
     const tool = createMemoryTool();
-    await tool.execute({ action: "save", content: "Женя любит старые самолёты", topic: "хобби" });
+    await tool.execute({ action: "save", content: "Марк любит старые самолёты", topic: "хобби" });
     const id = getAll()[0].id;
 
     const result = await tool.execute({ action: "search", query: "самолёты" });
@@ -288,12 +288,12 @@ describe("memory tool, a corrected fact", () => {
 
   it("does not save anything when supersedes is not a live numeric ID", async () => {
     const tool = createMemoryTool();
-    await tool.execute({ action: "save", content: "Женя любит самолёты", topic: "хобби" });
+    await tool.execute({ action: "save", content: "Марк любит самолёты", topic: "хобби" });
     const before = getAll().length;
 
     const result = await tool.execute({
       action: "save",
-      content: "Женя любит старые самолёты",
+      content: "Марк любит старые самолёты",
       topic: "хобби",
       supersedes: "memory-unknown-id",
     });
@@ -309,7 +309,7 @@ describe("memory tool, a corrected fact", () => {
       action: "save",
       content: "Оператор отключил домашний интернет",
       topic: "интернет",
-      conclusion: "Женя злился на оператора, а не без причины",
+      conclusion: "Марк злился на оператора, а не без причины",
     };
     await tool.execute(input);
     const id = getAll()[0].id;
@@ -335,12 +335,12 @@ describe("memory tool, a corrected fact", () => {
 
   it("retires the old row and points it at the new one", async () => {
     const tool = createMemoryTool();
-    await tool.execute({ action: "save", content: "Женя пьёт энергетики 10-15 лет", topic: "привычки" });
+    await tool.execute({ action: "save", content: "Марк пьёт энергетики 10-15 лет", topic: "привычки" });
     const oldId = byId(getAll()[0].id).id;
 
     const result = await tool.execute({
       action: "save",
-      content: "Женя бросил энергетики полгода назад",
+      content: "Марк бросил энергетики полгода назад",
       topic: "привычки",
       supersedes: String(oldId),
     });
@@ -363,12 +363,12 @@ describe("memory tool, a corrected fact", () => {
     // The order matters. Retiring first and writing second would leave the base
     // with neither version of the fact.
     const tool = createMemoryTool();
-    await tool.execute({ action: "save", content: "Женя пьёт энергетики 10-15 лет", topic: "привычки" });
+    await tool.execute({ action: "save", content: "Марк пьёт энергетики 10-15 лет", topic: "привычки" });
     const oldId = getAll()[0].id;
 
     const result = await tool.execute({
       action: "save",
-      content: "Женя пьёт энергетики 10-15 лет",
+      content: "Марк пьёт энергетики 10-15 лет",
       topic: "привычки",
       supersedes: String(oldId),
     });
@@ -380,13 +380,13 @@ describe("memory tool, a corrected fact", () => {
 
   it("says so when the row it was told to retire is not live", async () => {
     const tool = createMemoryTool();
-    await tool.execute({ action: "save", content: "Женя пьёт энергетики", topic: "привычки" });
+    await tool.execute({ action: "save", content: "Марк пьёт энергетики", topic: "привычки" });
     const oldId = getAll()[0].id;
     retireKnowledge(oldId);
 
     const result = await tool.execute({
       action: "save",
-      content: "Женя бросил энергетики",
+      content: "Марк бросил энергетики",
       topic: "привычки",
       supersedes: String(oldId),
     });
@@ -424,7 +424,7 @@ describe("migration", () => {
       .prepare(
         "INSERT INTO knowledge (topic, insight, source, timestamp) VALUES (?,?,?,0)",
       )
-      .run("техника", "Женя не любит айфоны", "memory_tool");
+      .run("техника", "Марк не любит айфоны", "memory_tool");
     legacy.close();
 
     closeDB();
@@ -642,10 +642,10 @@ describe("cases and the duplicate check", () => {
   it("still collapses near-identical facts", async () => {
     // The fact rule is untouched: five wordings of one fact is one fact.
     expect(
-      (await save({ topic: "техника", insight: "Женя не любит айфоны и не хочет их видеть" }))
+      (await save({ topic: "техника", insight: "Марк не любит айфоны и не хочет их видеть" }))
         .written,
     ).toBe(true);
-    expect((await save({ topic: "техника", insight: "Женя не любит айфоны" })).written).toBe(false);
+    expect((await save({ topic: "техника", insight: "Марк не любит айфоны" })).written).toBe(false);
     expect(getAll()).toHaveLength(1);
   });
 });
