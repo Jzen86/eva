@@ -277,6 +277,10 @@ export function createMemoryTool(opts: MemoryToolOptions = {}): Tool {
       "A prohibition said for one job ('правки и проверки идут в одну таблицу') is not a " +
       "rule: test it like a profile line — if tomorrow he asks for the opposite, does your " +
       "line help him or argue with him? That belongs in an episode about the job. " +
+      "Two things never become an entry: your own joking turns (he did not say them, and " +
+      "reading them as fact is how 'a bot owns a 4090' got written down), and a relation you " +
+      "assembled out of two separate statements of his — who owns what, who is who, what " +
+      "stands where. Write what was said, not what it adds up to. " +
       "kind=\"lesson\" is what he taught you about meaning — what his word stands for, " +
       "where the usual sense does not fit ('его „моё“ — как „моя школа“: гордость, а не " +
       "собственность'). Both are always in front of you, so write them in his words.\n" +

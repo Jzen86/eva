@@ -215,7 +215,11 @@ describe("study: the read cursor", () => {
     getDB().prepare("UPDATE conversations SET timestamp = ?").run(fiveDaysAgo);
 
     await session(
-      JSON.stringify({ facts: [{ topic: "самолёты", fact: "летал в Саратов" }] }),
+      JSON.stringify({
+        facts: [
+          { topic: "самолёты", fact: "летал в Саратов", зачем: "спросить, как прошла поездка" },
+        ],
+      }),
     );
 
     const row = getDB().prepare("SELECT timestamp FROM knowledge").get() as {
@@ -242,7 +246,9 @@ describe("study: the read cursor", () => {
 
       const { wrote } = await session(
         JSON.stringify({
-          facts: [{ topic: "техника", fact: "Женя не любит айфоны" }],
+          facts: [
+            { topic: "техника", fact: "Женя не любит айфоны", зачем: "предложить другое, а не айфон" },
+          ],
         }),
       );
 

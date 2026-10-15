@@ -40,12 +40,34 @@ describe("study: what a session may leave in the base", () => {
     }
   });
 
+  /**
+   * Add the use field the contract requires to every record of a canned answer.
+   *
+   * `зачем` is required — see `hasUse` in the runner — and a test about dedup, about
+   * a superseded row or about the length limit should not quietly become a test of
+   * that gate as well. The gate itself is tested with `{ raw: true }` below, on raw
+   * JSON, so nothing here can hide it.
+   */
+  function withUse(answer: string): string {
+    try {
+      const parsed = JSON.parse(answer) as { facts?: Array<Record<string, unknown>> };
+      if (!Array.isArray(parsed.facts)) return answer;
+      return JSON.stringify({
+        ...parsed,
+        facts: parsed.facts.map((f) => ("зачем" in f ? f : { ...f, зачем: "спросить, как это было" })),
+      });
+    } catch {
+      return answer;
+    }
+  }
+
   /** Run one session against a canned model answer, and hand back the prompt. */
-  async function session(answer: string) {
+  async function session(answer: string, opts: { raw?: boolean } = {}) {
     let prompt = "";
+    const canned = opts.raw ? answer : withUse(answer);
     const chat = vi.fn().mockImplementation(async (messages: LLMMessage[]) => {
       prompt = messages.map((m) => (typeof m.content === "string" ? m.content : "")).join("\n");
-      return { text: answer, stopReason: "end_turn" };
+      return { text: canned, stopReason: "end_turn" };
     });
     const result = await runStudy({
       clients: [{ chat } as never],
@@ -343,6 +365,79 @@ describe("study: what a session may leave in the base", () => {
     expect(prompt).toContain("это правка анкеты");
     expect(prompt).toContain("профиль — про НЕГО, а не про тебя");
     expect(prompt).toContain("про все случаи, а не про одну задачу");
+    // Whose word is evidence, and what may not be assembled out of two statements:
+    // the live row said "ещё один пользователь («задрот»), который тестирует
+    // генератор и владеет RTX 4090" — the user never said either half. "Задрот
+    // переехал на 4090" was *her* joke two turns earlier, and "4090 у типа одного"
+    // was his, about somebody else entirely.
+    expect(prompt).toContain("Свидетельство — только его реплики");
+    expect(prompt).toContain("не связывай то, что он назвал по отдельности");
+  });
+
+  it("asks what the memory would change, not just whether it is true", async () => {
+    // The owner, reading that same case: "зачем ей? Какую смысловую нагрузку это
+    // несёт? Какая польза ей от этих знаний? Это были три разных вопроса, не
+    // связанных между собой". The old test was "can you imagine using it?", which a
+    // model can always answer with a shrug — and "буду знать" is not a use.
+    const { prompt } = await session("{}");
+    expect(prompt).toContain("«Буду знать» — не ответ");
+    expect(prompt).toContain("не склеивай");
+    expect(prompt).toContain("не меняет в твоём поведении");
+  });
+
+  it("refuses a record that cannot say what it is for", async () => {
+    // The owner's acceptance test, said twice and exactly: "я хочу чтоб в памяти было
+    // только то, что действительно полезно… то что ей может пригодится в будущем, за
+    // пределами контекстного окна. А не все подряд с каждой реплики". The prompt asks
+    // for the use in every record; this is the half that cannot be left to the prompt.
+    const { result } = await session(
+      JSON.stringify({
+        facts: [
+          {
+            topic: "железо",
+            fact: "Спрашивал, сколько памяти у 4090.",
+            kind: "episode",
+            зачем: "буду знать",
+          },
+          {
+            topic: "работа",
+            fact: "Работает на складе в ночную смену.",
+            kind: "profile",
+            зачем: "спросить, как прошла смена",
+          },
+        ],
+      }),
+      { raw: true },
+    );
+
+    expect(rows().map((r) => r.topic)).toEqual(["работа"]);
+    expect(result.dropped?.join(" ")).toContain("не названо, что она с этим сделает");
+  });
+
+  it("refuses a record with no use field at all", async () => {
+    // A shrug in the field and no field at all are the same answer. The cost is real
+    // and deliberate: a session whose writer forgot the field stores nothing, and the
+    // journal says which rows went and why — losing a fact to a visible reason beats
+    // keeping a base of things she will never use.
+    const { result } = await session(
+      JSON.stringify({
+        facts: [{ topic: "погода", fact: "Спрашивал про погоду за окном.", kind: "episode" }],
+      }),
+      { raw: true },
+    );
+
+    expect(rows()).toHaveLength(0);
+    expect(result.dropped?.join(" ")).toContain("не названо");
+  });
+
+  it("shows the use in the report, where the owner audits the base", async () => {
+    // He reads these reports as the way to follow what she picks up, and the use is
+    // the difference between a memory and noise — visible without opening the base.
+    const { result } = await session(JSON.stringify({
+      facts: [{ topic: "работа", fact: "Работает на складе.", kind: "profile" }],
+    }));
+
+    expect(result.report).toContain("💾профиль: спросить, как это было");
   });
 
   it("names the block each record went to", async () => {
@@ -358,8 +453,8 @@ describe("study: what a session may leave in the base", () => {
       ],
     }));
 
-    expect(result.report).toContain("(💾профиль)");
-    expect(result.report).toContain("(💾события)");
+    expect(result.report).toContain("💾профиль");
+    expect(result.report).toContain("💾события");
   });
 
   it("keeps a fact of the same session when it fits in a sentence", async () => {    // The cap is on length, not on length of the session: what he said in a dull

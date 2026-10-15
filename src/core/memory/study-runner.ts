@@ -246,6 +246,13 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
     const accepted: Array<{ f: StudyFact; c: CaseFields }> = [];
     const dropped: string[] = [];
     for (const f of facts) {
+      // The owner's acceptance test first, because it is the one that decides
+      // whether the other three matter at all: a true fact nobody can use is the
+      // same weight in the base as a false one.
+      if (!hasUse(f.why)) {
+        dropped.push(`«${truncate(f.fact, 60)}» — не названо, что она с этим сделает`);
+        continue;
+      }
       if (looksLikePrescription(f.fact)) {
         dropped.push(`«${truncate(f.fact, 60)}» — это правило, а не факт`);
         continue;
@@ -287,7 +294,7 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
     // only against what was there before the session started. A false positive
     // only wastes one cheap session; a false negative permanently pollutes every
     // future prompt.
-    const written: Array<{ topic: string; fact: string; kind: string; c: CaseFields }> = [];
+    const written: Array<{ topic: string; fact: string; kind: string; why?: string; c: CaseFields }> = [];
     const refused: string[] = [];
     for (const { f, c } of accepted) {
       // The case fields go into the check, not only the sentence. Without them a
@@ -344,7 +351,7 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
             retireKnowledge(old.id, outcome.id);
           }
         }
-        written.push({ topic: f.topic, fact: f.fact, kind: normalizeKind(f.kind), c });
+        written.push({ topic: f.topic, fact: f.fact, kind: normalizeKind(f.kind), why: f.why, c });
       } else {
         refused.push(`«${truncate(f.fact, 60)}» — ${outcome.reason}`);
       }
@@ -383,7 +390,13 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
           // понятнее, проще понимать и отслеживать по ходу" — two lines can be
           // nearly identical and land in different blocks, and then "почему это
           // висит у неё перед глазами, а то нет" has no answer in the text.
-          return `${entry} (💾${BLOCK_LABELS[w.kind] ?? w.kind})`;
+          //
+          // The use goes with it, for the same reason and one more: the owner's
+          // acceptance test for the whole base is "только то, что ей нужно знать и
+          // помнить", and this is the only place he can see whether the writer met
+          // it — "спросить, как прошла смена" reads differently from "буду знать".
+          const why = w.why ? `: ${w.why}` : "";
+          return `${entry} (💾${BLOCK_LABELS[w.kind] ?? w.kind}${why})`;
         }),
         ...refused.map((r) => `  (отброшено) ${r}`),
         ...dropped.map((d) => `  (отброшено) ${d}`),
@@ -474,7 +487,7 @@ function buildStudyMessages(
     "Жёсткие правила:",
     "",
     "Отвечай ТОЛЬКО валидным JSON, без пояснений и обёрток:",
-    '{"facts": [{"topic": "тема", "fact": "что было", "kind": "episode", "conclusion": null}]}',
+    '{"facts": [{"topic": "тема", "fact": "что было", "зачем": "что она сделает или скажет иначе", "kind": "episode", "conclusion": null}]}',
     "",
     "У каждой записи поставь kind — от него зависит, как она попадёт к тебе в следующий раз:",
     "  \"profile\" — знание О НЁМ: что он любит и что не любит, что ему нравится и не нравится,",
@@ -542,9 +555,10 @@ function buildStudyMessages(
     "которое он сам назвал, — факт («его „моя девочка“ — про гордость»), а узор, который",
     "увидела ты, — не факт, даже если он красивый. Проживёт трижды и он сам это назовёт —",
     "тогда и запишешь.",
-    "И если не можешь решить, его это слова или твой узор, — пиши. Его объяснение себя",
+    "И если не можешь решить, его это слова о себе или твой узор, — пиши. Его объяснение себя",
     "(«наказываю сразу, потому что не злопамятный — потом подобрею и не отомщу») дороже",
-    "чистоты анкеты, а выбросить неудачную строку всегда успеешь.",
+    "чистоты анкеты, а выбросить неудачную строку всегда успеешь. Но это про него самого:",
+    "про чужое сомнение решается наоборот — см. ниже.",
     "Если сказанное сейчас ДОПОЛНЯЕТ или ПОПРАВЛЯЕТ известное — пиши полную, уточнённую",
     "версию и в поле replaces назови тему старой записи ровно так, как она написана в списке",
     "того, что ты уже знаешь. Тогда старая уйдёт в исправленные, а не будет лежать рядом и",
@@ -559,11 +573,17 @@ function buildStudyMessages(
     "Одна такая запись стоит десяти пересказов того, что вы делали.",
     "",
     "Запись нужна для одного: чтобы в следующий раз по ней можно было что-то вспомнить и",
-    "сказать — спросить, продолжить, повести себя иначе. Не можешь представить, как ты её",
-    "используешь, — не пиши её. Пересказ того, что вы только что делали в этой переписке,",
-    "(кто что проверил, кто извинился, чем закончился тест) — не запись: это эхо разговора,",
-    "по нему нечего вспомнить. И помни: слишком длинно — значит, это тоже не факт.",
-    "Пиши коротко: одну фразу, не абзац.",
+    "сказать — спросить, продолжить, повести себя иначе. Проверка прямая, и её ответ идёт в",
+    "поле «зачем»: назови фразу или поступок, которые из-за неё изменятся.",
+    "«Буду знать» — не ответ. Знать, сколько у кого",
+    "гигабайт, какие модели у чужого бота и кто что тестировал, не меняет в твоём поведении",
+    "ничего, и в памяти этому места нет; то же про технику вокруг тебя — версии, шедулеры,",
+    "настройки генератора. Не можешь назвать — не пиши. Пересказ того, что вы только что",
+    "делали в этой переписке (кто что проверил, кто извинился, чем закончился тест) —",
+    "не запись: это эхо разговора, по нему нечего вспомнить. И помни: слишком длинно —",
+    "значит, это тоже не факт. Пиши коротко: одну фразу, не абзац.",
+    "И не склеивай: несколько отдельных вопросов подряд — не одна история. Каждый ответ сам",
+    "должен проходить проверку выше; не проходит — не пиши ни его, ни общий пересказ.",
     "",
     "Не пиши выводы и правила, как себя вести: ни «не надо», ни «вывод:», ни «следует».",
     "Такое она потом выполняет как приказ вместо того, чтобы смотреть на момент.",
@@ -572,6 +592,14 @@ function buildStudyMessages(
     "это уже приказ на будущее: она выполнит его посреди разговора про что-то другое.",
     "Нечем назвать случай — пиши, что было сказано, а не чего он ждёт.",
     "Не можешь назвать, что именно произошло — не пиши ничего.",
+    "",
+    "Свидетельство — только его реплики (user). Твои — не свидетельство: если ты в шутку",
+    "сказала «Задрот у нас на 4090 переехал», это твоя шутка, а не то, что было; факт из неё",
+    "не делается, даже если она звучит как сводка.",
+    "И не связывай то, что он назвал по отдельности. «Задрот — бот на сервере», «карта у одного",
+    "типа» — это два разных факта, и «бот владеет картой» из них НЕ следует. Кто кому кто, чья",
+    "вещь, кто что умеет, где что стоит — только его словами; вывод об этом, даже очевидный, —",
+    "не запись. Пиши, что было сказано, а не то, как оно у тебя сложилось.",
     "",
     "Не пиши, как меня чинили или проверяли: баги, тесты, замеры, выбор моделей",
     "и провайдеров, коммиты, «задеплоил», «проверил синтезатор», «зафиксировал баг».",
@@ -808,6 +836,17 @@ export interface StudyFact {
    * to choose, and a missing choice falls to the side that costs less if wrong.
    */
   kind?: string | null;
+  /**
+   * What this memory is for, in the writer's own words — required, and checked.
+   *
+   * The owner's principle is exact: "я хочу чтоб в памяти было только то, что
+   * действительно полезно… то что ей может пригодится в будущем… А не все подряд с
+   * каждой реплики". A fact that changes nothing she will say or do next time is not
+   * worth the slot, and the prompt's older test — "can you imagine using it?" — was
+   * answerable with a shrug. So the writer has to name the use, and `hasUse` below
+   * refuses the shrugs.
+   */
+  why?: string;
   her_move: string | null;
   context: string | null;
   his_reaction: string | null;
@@ -851,6 +890,40 @@ const PRESCRIPTION_MARKERS = [
 function looksLikePrescription(fact: string): boolean {
   const lower = fact.toLowerCase();
   return PRESCRIPTION_MARKERS.some((m) => lower.includes(m));
+}
+
+/**
+ * Did the writer name what the memory is for?
+ *
+ * The owner's principle, said twice and exactly: memory is for "то, что ей может
+ * пригодится в будущем, за пределами контекстного окна… А не все подряд с каждой
+ * реплики". The prompt asks for a use in every record; this is the half a check can
+ * enforce, and it enforces nothing clever — only that the answer is not a shrug.
+ * The shrugs are predictable ("буду знать", "пригодится", "для контекста") because
+ * the shape of the non-answer is what is predictable, not the shape of the insight.
+ *
+ * A short but real use exists ("спросить, как прошла смена"), so the bar is a
+ * sentence, not a keyword list: under a dozen characters cannot name an action.
+ */
+const USE_SHRUGS = [
+  "буду знать",
+  "знать",
+  "пригодится",
+  "может пригодиться",
+  "потом пригодится",
+  "на будущее",
+  "для контекста",
+  "для памяти",
+  "чтобы помнить",
+  "чтобы знать",
+  "полезно знать",
+  "общее развитие",
+];
+
+function hasUse(why: string | undefined): boolean {
+  const text = (why ?? "").trim().toLowerCase().replace(/[.!…]+$/, "");
+  if (text.length < 12) return false;
+  return !USE_SHRUGS.includes(text);
 }
 
 /**
@@ -952,6 +1025,7 @@ function parseStudyJson(
       fact,
       kind: normalizeKind(str("kind")),
       replaces: str("replaces"),
+      why: str("зачем") ?? undefined,
       her_move: str("her_move"),
       context: str("context"),
       his_reaction: str("his_reaction"),
