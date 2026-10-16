@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildWorkflow, sizeFor, cloudSizeFor, COMFY_UNET } from "../../src/core/comfy.js";
+import { buildWorkflow, sizeFor, cloudSizeFor, COMFY_UNET, TURBO_SIGMAS } from "../../src/core/comfy.js";
 
 describe("buildWorkflow", () => {
   it("builds a text-only graph with no reference node", () => {
@@ -8,7 +8,8 @@ describe("buildWorkflow", () => {
     expect(g["6"]).toBeUndefined();
     expect(g["5"].class_type).toBe("TextEncodeQwenImage21");
     expect(g["5"].inputs.prompt).toBe("a cafe");
-    expect(g["7"].inputs.negative).toEqual(["5", 1]);
+    expect(g["15"].inputs.negative).toEqual(["5", 1]);
+    expect(g["12"].inputs.noise_seed).toBe(1);
     expect(g["10"].inputs.filename_prefix).toBe("eva/img");
   });
 
@@ -23,7 +24,7 @@ describe("buildWorkflow", () => {
     expect(g["6"]).toEqual({ class_type: "LoadImage", inputs: { image: "eva_ref.jpg" } });
     expect(g["5"].class_type).toBe("TextEncodeQwenImageEditPlus");
     expect(g["5"].inputs.image1).toEqual(["6", 0]);
-    expect(g["7"].inputs.negative).toEqual(["5", 0]);
+    expect(g["15"].inputs.negative).toEqual(["5", 0]);
     expect(g["10"].inputs.filename_prefix).toBe("eva/selfie");
   });
 
@@ -43,14 +44,36 @@ describe("buildWorkflow", () => {
     expect(g["5"].class_type).toBe("TextEncodeQwenImageEditPlus");
     expect(g["5"].inputs.image1).toEqual(["6", 0]);
     expect(g["5"].inputs.image2).toEqual(["11", 0]);
-    expect(g["7"].inputs.negative).toEqual(["5", 0]);
+    expect(g["15"].inputs.negative).toEqual(["5", 0]);
     expect(g["10"].inputs.filename_prefix).toBe("eva/couple");
   });
 
   it("never reuses the owner's custom nodes", () => {
+    // The bot's graph has to stand on core nodes alone: it must not depend on the
+    // owner's custom_nodes directory, or pulling a ComfyUI that dropped them would
+    // take the pictures down with it. A schedule can be handed over as a value on
+    // core nodes, so nothing here needs ours.
     const g = buildWorkflow({ prompt: "x", seed: 1, referenceName: "r.jpg" });
     const classes = Object.values(g).map((n) => n.class_type);
-    expect(classes.some((c) => /JzenReference|JzenResolution|StringConcatenate/.test(c))).toBe(false);
+    expect(classes.some((c) => /^Jzen/.test(c))).toBe(false);
+  });
+
+  it("samples on the schedule Turbo was distilled on, one for both paths", () => {
+    // The KSampler used to be told "8 steps" and a scheduler name — a guess at the
+    // schedule. The schedule Turbo actually learned is this list, handed over as a
+    // value.
+    const g = buildWorkflow({ prompt: "x", seed: 1 });
+    expect(g["14"]).toEqual({ class_type: "ManualSigmas", inputs: { sigmas: TURBO_SIGMAS } });
+    expect(g["13"]).toEqual({ class_type: "KSamplerSelect", inputs: { sampler_name: "euler" } });
+    expect(g["7"].class_type).toBe("SamplerCustomAdvanced");
+    expect(g["15"].inputs.cfg).toBe(1);
+    // A selfie and a plain picture take the same schedule now; the old graph
+    // branched here, `simple` against `linear_quadratic`.
+    const withRef = buildWorkflow({ prompt: "x", seed: 1, referenceName: "r.jpg" });
+    expect(withRef["14"]).toEqual(g["14"]);
+    expect(withRef["15"].inputs.cfg).toBe(1);
+    // Nothing anywhere names a scheduler: the old guess is gone, not outvoted.
+    expect(Object.values(g).some((n) => "scheduler" in n.inputs)).toBe(false);
   });
 
   it("sizes the frame from an empty latent, 1024 by default", () => {

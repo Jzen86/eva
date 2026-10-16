@@ -9,9 +9,29 @@ import { randomUUID } from "node:crypto";
  * own; nothing here reads or writes them.
  */
 
-export const COMFY_UNET = "qwen-image-2.1-turbo-int8-convrot.safetensors";
+export const COMFY_UNET = "qwen_image_2.1_turbo_int8_convrot.safetensors";
 export const COMFY_CLIP = "qwen3vl_8b_int8_convrot.safetensors";
 export const COMFY_VAE = "qwen_image_2.1_vae_bf16.safetensors";
+
+/**
+ * The noise schedule Qwen-Image 2.1 Turbo is distilled on — and the reason the
+ * sampler is a chain instead of a KSampler.
+ *
+ * The old graph asked KSampler for 8 steps and named a scheduler — `simple` for
+ * a selfie, `linear_quadratic` for a plain picture. That is a *guess at* the
+ * schedule, not the schedule. Turbo is distilled onto these exact sigmas: it is
+ * cheap and clean at its own step count and its own noise levels, and a
+ * scheduler that merely resembles them is a stand-in. The desktop graph swapped
+ * the guess out; this is the same list, so the bot and the desktop render alike.
+ *
+ * One schedule now, where there used to be two. That split existed because the
+ * approximation had to be picked per case: a reference carries the structure and
+ * tolerated `simple`'s low-frequency tail, a text-only frame did not. The native
+ * schedule is the trained one for both, so the branch is gone.
+ *
+ * Kept beside the model name, not inside the graph, so the two cannot drift.
+ */
+export const TURBO_SIGMAS = "1.0, 0.978453, 0.95418, 0.926626, 0.89508, 0.845148, 0.704534, 0.414568, 0";
 
 export interface ComfyGraphOptions {
   prompt: string;
@@ -147,28 +167,19 @@ export function buildWorkflow(opts: ComfyGraphOptions): ComfyGraph {
             vae: ["3", 0],
           },
         },
+    // Sampling is the stock five-node chain (noise, sampler, sigmas, guider,
+    // SamplerCustomAdvanced) and not a KSampler, because only this shape can take
+    // a schedule as a value — see TURBO_SIGMAS. It is the same shape the desktop
+    // graph runs, so both render the same; and it stays on core nodes, so the bot
+    // keeps its own graph and neither reads nor needs the owner's custom ones.
     "7": {
-      class_type: "KSampler",
+      class_type: "SamplerCustomAdvanced",
       inputs: {
-        model: ["4", 0],
-        seed: opts.seed ?? Math.floor(Math.random() * 2 ** 31),
-        steps: 8,
-        cfg: 1,
-        sampler_name: "euler",
-        // Two schedules, because the reference changes what the sampler is for.
-        // With a reference the photo carries the structure, and `simple`'s fine
-        // low-frequency tail only adds life — that is what the selfie has always
-        // looked like. Without one the model builds the anatomy itself, and the
-        // same tail invents a crease across the belly and veins on the forearms:
-        // measured at 768x1152, `simple` grew both, `linear_quadratic` on the same
-        // seed and prompt had neither.
-        scheduler: anyRef ? "simple" : "linear_quadratic",
-        positive: ["5", 0],
-        // EditPlus has a single output; the 21-encoder has positive and negative.
-        // cfg is 1, so the negative has no effect either way.
-        negative: anyRef ? ["5", 0] : ["5", 1],
+        noise: ["12", 0],
+        guider: ["15", 0],
+        sampler: ["13", 0],
+        sigmas: ["14", 0],
         latent_image: ["9", 0],
-        denoise: 1,
       },
     },
     "8": { class_type: "VAEDecode", inputs: { samples: ["7", 0], vae: ["3", 0] } },
@@ -183,6 +194,22 @@ export function buildWorkflow(opts: ComfyGraphOptions): ComfyGraph {
     "10": {
       class_type: "SaveImage",
       inputs: { images: ["8", 0], filename_prefix: opts.filenamePrefix ?? "eva/img" },
+    },
+    // The rest of the sampler chain. Ids 12–15 sit after 10 so the nodes that
+    // were already here keep the ids their comments and tests name.
+    "12": { class_type: "RandomNoise", inputs: { noise_seed: opts.seed ?? Math.floor(Math.random() * 2 ** 31) } },
+    "13": { class_type: "KSamplerSelect", inputs: { sampler_name: "euler" } },
+    "14": { class_type: "ManualSigmas", inputs: { sigmas: TURBO_SIGMAS } },
+    "15": {
+      class_type: "CFGGuider",
+      inputs: {
+        model: ["4", 0],
+        positive: ["5", 0],
+        // EditPlus has a single output; the 21-encoder has positive and negative.
+        // cfg is 1, so the negative has no effect either way.
+        negative: anyRef ? ["5", 0] : ["5", 1],
+        cfg: 1,
+      },
     },
   };
 
