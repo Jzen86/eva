@@ -121,16 +121,16 @@ describe("memory in the prompt", () => {
       timestamp: Date.now(),
     });
 
-    // The request that follows the tool call carries the picture itself, and the
-    // note that tells her to look at it. What is pinned here is that the frame
-    // travels and that the note names the task ("есть ли анатомические дефекты")
-    // and the one who decides ("решает он"): the first version of the note listed
-    // the defects to look for and she recited them, the second listed the ones to
-    // ignore and she recited those — the inventory was mine both times. There is no
-    // retry to pin, and that is deliberate: a second frame is his call, not hers.
+    // The request that follows the tool call carries the picture itself and the
+    // note that tells her what to do with it. Pinned: the frame travels; the note
+    // gives her the call ("переделай один раз" on a gross defect) and tells her to
+    // answer in her own words, not to review the picture ("не описывай"). It no
+    // longer says "решает он" — since 16.10 the redo is hers (silently; the engine
+    // replaces the rejected frame), and what stays his is the picture itself.
     expect(JSON.stringify(chat.mock.calls[1]?.[0])).toContain("data:image/png;base64,AAAA");
-    expect(JSON.stringify(chat.mock.calls[1]?.[0])).toContain("анатомических дефектов");
-    expect(JSON.stringify(chat.mock.calls[1]?.[0])).toContain("решает он");
+    expect(JSON.stringify(chat.mock.calls[1]?.[0])).toContain("переделай один раз");
+    expect(JSON.stringify(chat.mock.calls[1]?.[0])).toContain("не описывай");
+    expect(JSON.stringify(chat.mock.calls[1]?.[0])).not.toContain("решает он");
 
     chat.mockClear();
     await engine.process({

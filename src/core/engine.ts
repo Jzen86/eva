@@ -165,10 +165,32 @@ export const EMPTY_SCHEDULE_REPLY =
  * ("one retry on her own, with a changed prompt"), and the engine has never had
  * such a thing — the only retry in it is for an empty answer. A second frame is
  * the owner's call.
+ *
+ * The owner added a third thing (16.10): the frame is for her to *know what she
+ * sent*, not to narrate. He sees the picture himself, so a description in the
+ * reply is noise, and "оставлять или переделывать?" is a question he does not
+ * want to answer in chat. The reply must be her own message — the words she
+ * wanted to say, e.g. "я тебе кофе сделала, идём пить" — with the picture
+ * standing beside it. So the note keeps "you see it" (that clause is what once
+ * stopped her from writing "я не вижу картинок" into memory) and adds "don't
+ * describe it, don't ask — write your own message".
+ *
+ * And the decision he did want her to make (16.10, second pass): a *gross*
+ * defect — an extra arm, leg or head, the wrong number of parts — is hers to
+ * redo, once, and she says nothing about it; small flaws (a bent finger, a
+ * crooked hand) are kept. The line is drawn where he drew it, because the
+ * difference between "broken picture" and "nobody looks at hands" is his, not
+ * hers to guess. This is why the note no longer ends "переделывать или нет —
+ * решает он": the retry exists now (she re-calls the generator, and the engine
+ * replaces the rejected frame — see the media list in the tool loop, so only the
+ * accepted one is delivered), and only the *report* about it stays unwelcome.
  */
 export const IMAGE_FEEDBACK_NOTE =
-  "Вот что получилось на этом кадре. Смотри: то ли на нём, что он просил, и нет ли " +
-  "анатомических дефектов. Переделывать или нет — решает он, не ты.";
+  "Это кадр, который ты только что сделала — ты видишь его сама. Явный брак (лишняя рука, " +
+  "нога или голова, не то число частей тела) — переделай один раз; мелкие огрехи вроде " +
+  "вывернутых пальцев или кривой кисти — оставь как есть. Ни проверку, ни переделку ему " +
+  "не описывай и не переспрашивай: напиши то, что хочешь ему сказать, — своё обычное " +
+  "сообщение, кадр он видит и без тебя.";
 
 export interface EngineDeps {
   llm: {
@@ -506,6 +528,18 @@ export class Engine {
     let lastMediaUrl: string | undefined;
     let lastMediaPath: string | undefined;
     const media: Array<{ url?: string; path?: string; text?: string }> = [];
+    /**
+     * Where an inline frame from each generator sits in `media`.
+     *
+     * A frame she can see and judge is the one thing she may ask for again: a
+     * gross defect is hers to redo (see IMAGE_FEEDBACK_NOTE). The second frame
+     * *replaces* the rejected one instead of joining it, so the owner gets the
+     * picture and not the process — he said it plainly (16.10): "для меня это
+     * просто картинка в итоге". Keyed by tool and limited to inline images,
+     * which is exactly what she can see; two voice notes, or a voice and a
+     * picture, still both travel.
+     */
+    const frameAt = new Map<string, number>();
 
     try {
       const toolCallCounts = new Map<string, number>();
@@ -680,11 +714,20 @@ export class Engine {
             lastMediaPath = result.mediaPath;
           }
           if (result.mediaUrl || result.mediaPath) {
-            media.push({
+            const entry = {
               ...(result.mediaUrl ? { url: result.mediaUrl } : {}),
               ...(result.mediaPath ? { path: result.mediaPath } : {}),
               ...(result.mediaText ? { text: result.mediaText } : {}),
-            });
+            };
+            // A second inline frame from the same generator is a redo, and it
+            // takes the rejected frame's place rather than piling up beside it.
+            const redoAt = isInlineImage(result.mediaUrl) ? frameAt.get(tc.name) : undefined;
+            if (redoAt !== undefined) {
+              media[redoAt] = entry;
+            } else {
+              if (isInlineImage(result.mediaUrl)) frameAt.set(tc.name, media.length);
+              media.push(entry);
+            }
           }
 
           history.push({

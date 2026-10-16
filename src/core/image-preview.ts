@@ -49,9 +49,23 @@ export function isInlineImage(url: string | null | undefined): url is string {
  * conclusion into her memory as a rule — switching off the very thing this
  * feedback was built for. A tool's text has to be the truth about the whole
  * turn, including the part the engine does.
+ *
+ * The second half is the owner's correction (16.10): the frame is *hers*, and the
+ * caption is *hers too* — what she wants to say to him. The note used to end
+ * "посмотри на него, прежде чем отвечать", and the answer became a review of the
+ * picture ("правая рука вывернута… оставляем или перегенерируем?") — he sees the
+ * frame himself and does not need it narrated. So the note now says plainly: look
+ * for yourself, but write your own words — the thing you wanted him to hear.
+ *
+ * And the call she *does* make: a gross defect is hers to redo, once, silently —
+ * small flaws are kept (see IMAGE_FEEDBACK_NOTE in engine.ts, where the line
+ * between the two is drawn in his words). The tool says so here too, because a
+ * generator that only hears "кадр приложен" learns only that she sees it.
  */
 export const FRAME_SHOWN_NOTE =
-  " Кадр приложен к этому же ходу — посмотри на него, прежде чем отвечать.";
+  " Кадр приложен к этому же ходу — ты видишь его сама; явный брак (лишняя рука, нога или " +
+  "голова) переделай один раз, мелочи вроде вывернутых пальцев оставь, а в ответе кадр не " +
+  "описывай и про переделку не пиши.";
 
 /**
  * The clause a generator appends to its answer, or nothing when the frame is a
