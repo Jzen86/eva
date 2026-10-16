@@ -44,6 +44,11 @@ describe("SelfieTool", () => {
     expect(d).toMatch(/что на нём/i);
     expect(d).toMatch(/его одежд/i);
     expect(d).toContain("с его фото");
+    // And contact has to be spelled out: "страстно целуемся" renders as the moment
+    // *before* a kiss; "lips pressed to lips, mouths touching, eyes closed" lands
+    // (measured on the live engine, 16.10 — the owner flagged the explicit frame
+    // as the one that actually kissed).
+    expect(d).toContain("плотно прижаты к губам");
   });
 
   it("returns error when the OpenRouter key is missing", async () => {
