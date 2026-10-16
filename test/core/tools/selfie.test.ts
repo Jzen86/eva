@@ -34,9 +34,9 @@ describe("SelfieTool", () => {
     // old text said context describes "ТОЛЬКО сцену" and never named his outfit.
     const tool = new SelfieTool({ openrouterApiKey: "k", referencePhotoUrl: "https://example.com/photo.jpg" });
     const d = tool.description;
-    expect(d).toMatch(/что на каждом из вас/i);
-    expect(d).toMatch(/одежду его называй/i);
-    expect(d).toContain("прямо с его фото");
+    expect(d).toMatch(/что на нём/i);
+    expect(d).toMatch(/его одежд/i);
+    expect(d).toContain("с его фото");
   });
 
   it("returns error when the OpenRouter key is missing", async () => {
@@ -390,6 +390,9 @@ describe("SelfieTool", () => {
     // that once made the model inflate her chest and drop the man; see e5544ea.
     expect(String(graph["5"].inputs.prompt)).toContain("A woman with a balanced figure");
     expect(String(graph["5"].inputs.prompt)).toContain("The man's figure: a man of athletic build");
+    // And the clothing is taken from the scene, not copied from the references:
+    // with nothing said, every frame reproduced his shirt from image 2 (16.10).
+    expect(String(graph["5"].inputs.prompt)).toContain("not from the reference photos");
     // The requested frame reaches the local graph for a pair shot too — but the
     // pair narrows the set: landscape stays, and a portrait becomes a square.
     expect(graph["9"].inputs).toMatchObject({ width: 1024, height: 768 });

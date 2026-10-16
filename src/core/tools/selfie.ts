@@ -85,11 +85,22 @@ const PAIR_FACES =
  * clothing rides in on the scene, so `context` must name what each of them has on.
  * His figure stays words-only (`ownerBody`) because the photo already carries the
  * body; only the outfit was missing a place to be said.
+ *
+ * The scene is not enough on its own, though. The first live frame after the
+ * description was changed still showed the same shirt: she named her own dress and
+ * said nothing about his, and the note is a request the model can skip (16.10,
+ * 11:08 — `context` was "протягиваю тебе чашку кофе, сидя у тебя на коленях, в
+ * открытом шелковом платье…"). So the prompt now says it outright: the clothing
+ * comes from the scene, not from the references, and with no outfit named the
+ * model picks one that fits instead of copying the photo.
  */
 function buildPairPrompt(context: string, body = "", ownerBody = ""): string {
   const herFigure = body ? ` The woman's figure: ${body}.` : "";
   const hisFigure = ownerBody ? ` The man's figure: ${ownerBody}.` : "";
-  return `${PAIR_FACES}${herFigure}${hisFigure} ${context}. Photorealistic photo of the two of them together, both fully in frame, natural.`;
+  const clothing =
+    " Take the clothing for both of them from this scene, not from the reference photos: " +
+    "if it names an outfit, use it; if not, choose one that fits the scene.";
+  return `${PAIR_FACES}${herFigure}${hisFigure} ${context}.${clothing} Photorealistic photo of the two of them together, both fully in frame, natural.`;
 }
 
 export interface SelfieToolConfig {
@@ -173,10 +184,10 @@ export class SelfieTool implements Tool {
     "Сцену описывай по порядку и только тем, что можно нарисовать: 1) ЧТО НА ТЕБЕ — вещь, её покрой и цвет (распахнута, поверх чего, длина) или что снято; 2) ПОЗА — где ты и как расположена каждая часть тела, что в руках; 3) ВОКРУГ — предметы, мебель, постель, что видно в кадре; 4) СВЕТ и время суток. Общие слова («интимно», «красиво», «атмосферно») не рисуются — их генератор дорисует сам, как ему вздумается. Чем конкретнее назван каждый пункт, тем точнее кадр. Пиши под движок, который рисует: это Qwen Image, и ему нужен именно такой подробный описательный текст — каждая названная деталь доходит до кадра, а неназванную он додумает по-своему. Если кадр подхватит облако (редко, когда локальный движок недоступен) — ему этого текста тоже хватит. " +
     "Каждый раз делай кадр непохожим на предыдущий. Кадр и ориентацию выбирай под сцену, не по шаблону: крупный план (mode=direct) или полный рост (mode=mirror), ориентация — " + formatList() + " — для полного роста бери вытянутый, чтобы она помещалась целиком. " +
     "«Селфи», «фото», «покажи себя» — это просто снимок тебя, и позу выбираешь ТЫ: лежишь, сидишь, стоишь, обернулась — по сцене. Вытянутая рука с телефоном и взгляд в объектив не обязательны: это только один из ракурсов, и он надоел. Зеркало — только если сцена про зеркало, примерку или полный рост. " +
-    "ЕСЛИ В КАДРЕ ВЫ ВДВОЁМ — владелец просит «мы», «ты и я», «сфоткай нас», «обними меня», «покажи нас вместе» — поставь with_owner=true: тогда на кадре будете оба, его лицо берётся с его фото. context описывает сцену (где вы, что делаете — стоите рядом, обнимаетесь, целуетесь) и то, ЧТО НА КАЖДОМ ИЗ ВАС: и что на тебе, и что на нём (вещь, цвет, покрой — или что снято). Одежду его называй обязательно и каждый раз под сцену: без твоих слов движок берёт её прямо с его фото, и он выходит всегда в одном и том же. Назвал он сам, что на нём, — бери его формулировку; не назвал — придумай, как придумываешь своё. Кадр для двоих — квадрат (1:1) или горизонталь (4:3), выбери под сцену; вертикальный в паре не выйдет (станет квадратом). Такой кадр рисуется только локально. " +
+    "ЕСЛИ В КАДРЕ ВЫ ВДВОЁМ — владелец просит «мы», «ты и я», «сфоткай нас», «обними меня», «покажи нас вместе» — поставь with_owner=true: тогда на кадре будете оба, его лицо берётся с его фото. context для пары описывай теми же частями, что и своё селфи, по порядку: 1) ЧТО НА ТЕБЕ; 2) ЧТО НА НЁМ — обязательно, каждый раз под сцену (рубашка, футболка, свитер, голый торс, полотенце — что угодно по случаю); без твоих слов движок берёт его одежду прямо с его фото, и он выходит всегда в одном и том же; 3) ПОЗА — где вы и как (сидите, обнимаетесь, он держит тебя); 4) ВОКРУГ и СВЕТ. Назвал он сам, что на нём, — бери его формулировку; не назвал — придумай под сцену, как придумываешь своё. Кадр для двоих — квадрат (1:1) или горизонталь (4:3), выбери под сцену; вертикальный в паре не выйдет (станет квадратом). Такой кадр рисуется только локально. " +
     "Готовый кадр приходит к тебе в этом же ходу — смотри на него и говори по кадру, а не по своему промпту.";
   parameters = [
-    { name: "context", type: "string", description: "Описание ситуации (в кафе, в новом платье, на пляже)", required: true },
+    { name: "context", type: "string", description: "Сцена: что происходит, обстановка, свет и что на тебе; для пары (with_owner=true) — обязательно и что на нём", required: true },
     { name: "mode", type: "string", description: "mirror (полный рост, зеркало) или direct (крупный план). Бери под сцену; без него определится по контексту.", required: false },
     { name: "format", type: "string", description: `Ориентация: ${formatList()}. Выбери под сцену; без него — 3:4 для зеркала и 1:1 для крупного плана.`, required: false },
     { name: "with_owner", type: "boolean", description: "true — на кадре вы вдвоём (она и владелец). По умолчанию false — только она.", required: false },
