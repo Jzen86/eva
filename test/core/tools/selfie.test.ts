@@ -17,7 +17,7 @@ describe("SelfieTool", () => {
   it("has correct name and parameters", () => {
     const tool = new SelfieTool({ openrouterApiKey: "k", referencePhotoUrl: "https://example.com/photo.jpg" });
     expect(tool.name).toBe("selfie");
-    expect(tool.parameters).toHaveLength(4);
+    expect(tool.parameters).toHaveLength(5);
     expect(tool.parameters[0].name).toBe("context");
     expect(tool.parameters[0].required).toBe(true);
     expect(tool.parameters[1].name).toBe("mode");
@@ -25,15 +25,22 @@ describe("SelfieTool", () => {
     // with_owner is what turns a selfie into a frame with both of them in it.
     expect(tool.parameters[3].name).toBe("with_owner");
     expect(tool.parameters[3].type).toBe("boolean");
+    // His outfit is a slot of its own — the description asking for it was skipped
+    // twice, so a missing one is refused (see generatePair).
+    expect(tool.parameters[4].name).toBe("his_outfit");
+    expect(tool.parameters[4].required).toBe(false);
   });
 
-  it("tells her to name his clothing on a pair frame, so it is not copied from his photo", () => {
-    // The owner, 16.10: "почему я вечно в рубашке". The pair prompt carries no
-    // clothing and the man's face — and outfit — come from his reference photo,
-    // so the clothes can only change where hers do: in the scene she writes. The
-    // old text said context describes "ТОЛЬКО сцену" and never named his outfit.
+  it("gives his outfit its own slot, so a pair frame cannot copy it from his photo", () => {
+    // The owner, 16.10: "почему я вечно в рубашке". Nothing about his clothes was
+    // ever said, so the edit model copied them from his reference photo every
+    // frame. Asking her in the description was skipped twice (the live frames at
+    // 11:08 and 11:19 dressed only her), so the outfit became a parameter and an
+    // empty one is refused in generatePair. Measured on the live ComfyUI: a scene
+    // that names the outfit draws it, one that does not copies the photo.
     const tool = new SelfieTool({ openrouterApiKey: "k", referencePhotoUrl: "https://example.com/photo.jpg" });
     const d = tool.description;
+    expect(d).toContain("his_outfit");
     expect(d).toMatch(/что на нём/i);
     expect(d).toMatch(/его одежд/i);
     expect(d).toContain("с его фото");
@@ -338,6 +345,35 @@ describe("SelfieTool", () => {
     expect(generate).not.toHaveBeenCalled();
   });
 
+  it("refuses a pair frame once when his outfit is not named, then draws as-is", async () => {
+    // The empty slot is an error rather than a request, because the request was
+    // skipped twice. Filled, the outfit reaches the prompt (the test below); left
+    // empty, the model would copy his photo, so the frame is refused — once.
+    const her = path.join(os.tmpdir(), `eva-oh-her-${Date.now()}.jpg`);
+    const owner = path.join(os.tmpdir(), `eva-oh-own-${Date.now()}.jpg`);
+    fs.writeFileSync(her, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+    fs.writeFileSync(owner, Buffer.from([0xff, 0xd8, 0xff, 0xe1]));
+    const upload = vi.fn().mockResolvedValueOnce("eva_ref.jpg").mockResolvedValueOnce("eva_owner.jpg");
+    const generate = vi.fn().mockResolvedValue("data:image/png;base64,AAAA");
+    const tool = new SelfieTool({
+      openrouterApiKey: "or-key",
+      referencePath: her,
+      ownerReferencePath: owner,
+      comfy: { upload, generate } as unknown as ComfyClient,
+    });
+
+    const refused = await tool.execute({ context: "обнимаемся в кафе", with_owner: true });
+    expect(refused.success).toBe(false);
+    expect(refused.output).toContain("his_outfit");
+    expect(generate).not.toHaveBeenCalled();
+
+    // The very same try a second time is drawn anyway: a check she cannot satisfy
+    // must not trap her.
+    const drawn = await tool.execute({ context: "обнимаемся в кафе", with_owner: true });
+    expect(drawn.success).toBe(true);
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
   it("refuses a pair frame without ComfyUI — there is no cloud fallback for two real faces", async () => {
     const owner = path.join(os.tmpdir(), `eva-owner-${Date.now()}.jpg`);
     fs.writeFileSync(owner, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
@@ -372,7 +408,7 @@ describe("SelfieTool", () => {
       comfy: { upload, generate } as unknown as ComfyClient,
     });
 
-    const result = await tool.execute({ context: "обнимаемся в кафе", with_owner: true, format: "4:3" });
+    const result = await tool.execute({ context: "обнимаемся в кафе", with_owner: true, format: "4:3", his_outfit: "a bright red t-shirt" });
     expect(result.success).toBe(true);
     expect(result.mediaUrl).toBe("data:image/png;base64,AAAA");
     // A pair frame is local-only, so it always comes back to her as bytes.
@@ -390,14 +426,15 @@ describe("SelfieTool", () => {
     // that once made the model inflate her chest and drop the man; see e5544ea.
     expect(String(graph["5"].inputs.prompt)).toContain("A woman with a balanced figure");
     expect(String(graph["5"].inputs.prompt)).toContain("The man's figure: a man of athletic build");
-    // And the clothing is taken from the scene, not copied from the references:
-    // with nothing said, every frame reproduced his shirt from image 2 (16.10).
+    // His outfit is spent into the prompt as a garment. Measured on the live
+    // ComfyUI (16.10): a named outfit is drawn; an unnamed one copies his photo.
+    expect(String(graph["5"].inputs.prompt)).toContain("The man is wearing a bright red t-shirt");
     expect(String(graph["5"].inputs.prompt)).toContain("not from the reference photos");
     // The requested frame reaches the local graph for a pair shot too — but the
     // pair narrows the set: landscape stays, and a portrait becomes a square.
     expect(graph["9"].inputs).toMatchObject({ width: 1024, height: 768 });
 
-    await tool.execute({ context: "стоим в парке", with_owner: true, format: "3:4" });
+    await tool.execute({ context: "стоим в парке", with_owner: true, format: "3:4", his_outfit: "grey sweatpants" });
     const tall = generate.mock.calls[1][0] as Record<string, { inputs: Record<string, unknown> }>;
     expect(tall["9"].inputs).toMatchObject({ width: 1024, height: 1024 });
 

@@ -86,21 +86,22 @@ const PAIR_FACES =
  * His figure stays words-only (`ownerBody`) because the photo already carries the
  * body; only the outfit was missing a place to be said.
  *
- * The scene is not enough on its own, though. The first live frame after the
- * description was changed still showed the same shirt: she named her own dress and
- * said nothing about his, and the note is a request the model can skip (16.10,
- * 11:08 — `context` was "протягиваю тебе чашку кофе, сидя у тебя на коленях, в
- * открытом шелковом платье…"). So the prompt now says it outright: the clothing
- * comes from the scene, not from the references, and with no outfit named the
- * model picks one that fits instead of copying the photo.
+ * The scene alone was not enough, and a sentence telling the model not to copy the
+ * photo did not help either. Measured on the live ComfyUI (16.10): a frame whose
+ * scene named his outfit drew exactly that ("a bright red short-sleeve t-shirt"),
+ * and the same frame with his outfit left out copied the reference again. So the
+ * text works — it just has to *carry a garment*, and she never supplied one, twice.
+ * The outfit is therefore its own parameter (`his_outfit`), and `generatePair`
+ * refuses an empty one; here it only has to be spent, with the reference's
+ * clothing named as not the source.
  */
-function buildPairPrompt(context: string, body = "", ownerBody = ""): string {
+function buildPairPrompt(context: string, body = "", ownerBody = "", hisOutfit = ""): string {
   const herFigure = body ? ` The woman's figure: ${body}.` : "";
   const hisFigure = ownerBody ? ` The man's figure: ${ownerBody}.` : "";
+  const hisClothes = hisOutfit ? ` The man is wearing ${hisOutfit}.` : "";
   const clothing =
-    " Take the clothing for both of them from this scene, not from the reference photos: " +
-    "if it names an outfit, use it; if not, choose one that fits the scene.";
-  return `${PAIR_FACES}${herFigure}${hisFigure} ${context}.${clothing} Photorealistic photo of the two of them together, both fully in frame, natural.`;
+    " Take the clothing for both of them from this description, not from the reference photos.";
+  return `${PAIR_FACES}${herFigure}${hisFigure}${hisClothes} ${context}.${clothing} Photorealistic photo of the two of them together, both fully in frame, natural.`;
 }
 
 export interface SelfieToolConfig {
@@ -184,13 +185,14 @@ export class SelfieTool implements Tool {
     "Сцену описывай по порядку и только тем, что можно нарисовать: 1) ЧТО НА ТЕБЕ — вещь, её покрой и цвет (распахнута, поверх чего, длина) или что снято; 2) ПОЗА — где ты и как расположена каждая часть тела, что в руках; 3) ВОКРУГ — предметы, мебель, постель, что видно в кадре; 4) СВЕТ и время суток. Общие слова («интимно», «красиво», «атмосферно») не рисуются — их генератор дорисует сам, как ему вздумается. Чем конкретнее назван каждый пункт, тем точнее кадр. Пиши под движок, который рисует: это Qwen Image, и ему нужен именно такой подробный описательный текст — каждая названная деталь доходит до кадра, а неназванную он додумает по-своему. Если кадр подхватит облако (редко, когда локальный движок недоступен) — ему этого текста тоже хватит. " +
     "Каждый раз делай кадр непохожим на предыдущий. Кадр и ориентацию выбирай под сцену, не по шаблону: крупный план (mode=direct) или полный рост (mode=mirror), ориентация — " + formatList() + " — для полного роста бери вытянутый, чтобы она помещалась целиком. " +
     "«Селфи», «фото», «покажи себя» — это просто снимок тебя, и позу выбираешь ТЫ: лежишь, сидишь, стоишь, обернулась — по сцене. Вытянутая рука с телефоном и взгляд в объектив не обязательны: это только один из ракурсов, и он надоел. Зеркало — только если сцена про зеркало, примерку или полный рост. " +
-    "ЕСЛИ В КАДРЕ ВЫ ВДВОЁМ — владелец просит «мы», «ты и я», «сфоткай нас», «обними меня», «покажи нас вместе» — поставь with_owner=true: тогда на кадре будете оба, его лицо берётся с его фото. context для пары описывай теми же частями, что и своё селфи, по порядку: 1) ЧТО НА ТЕБЕ; 2) ЧТО НА НЁМ — обязательно, каждый раз под сцену (рубашка, футболка, свитер, голый торс, полотенце — что угодно по случаю); без твоих слов движок берёт его одежду прямо с его фото, и он выходит всегда в одном и том же; 3) ПОЗА — где вы и как (сидите, обнимаетесь, он держит тебя); 4) ВОКРУГ и СВЕТ. Назвал он сам, что на нём, — бери его формулировку; не назвал — придумай под сцену, как придумываешь своё. Кадр для двоих — квадрат (1:1) или горизонталь (4:3), выбери под сцену; вертикальный в паре не выйдет (станет квадратом). Такой кадр рисуется только локально. " +
+    "ЕСЛИ В КАДРЕ ВЫ ВДВОЁМ — владелец просит «мы», «ты и я», «сфоткай нас», «обними меня», «покажи нас вместе» — поставь with_owner=true: тогда на кадре будете оба, его лицо берётся с его фото. context описывает сцену (где вы, что делаете, обстановка, свет) и что на тебе; а что НА НЁМ — в отдельном параметре his_outfit, и он для пары обязателен: назови коротко и каждый раз под сцену (футболка, рубашка нараспашку, свитер, голый торс, полотенце на бёдрах — что угодно по случаю). Почему нельзя пропустить: без твоих слов движок берёт его одежду прямо с его фото, и он выходит всегда в одном и том же. Назвал он сам, что на нём, — бери его формулировку; не назвал — придумай под сцену, как придумываешь своё. Кадр для двоих — квадрат (1:1) или горизонталь (4:3), выбери под сцену; вертикальный в паре не выйдет (станет квадратом). Такой кадр рисуется только локально. " +
     "Готовый кадр приходит к тебе в этом же ходу — смотри на него и говори по кадру, а не по своему промпту.";
   parameters = [
-    { name: "context", type: "string", description: "Сцена: что происходит, обстановка, свет и что на тебе; для пары (with_owner=true) — обязательно и что на нём", required: true },
+    { name: "context", type: "string", description: "Сцена: что происходит, обстановка, свет и что на тебе", required: true },
     { name: "mode", type: "string", description: "mirror (полный рост, зеркало) или direct (крупный план). Бери под сцену; без него определится по контексту.", required: false },
     { name: "format", type: "string", description: `Ориентация: ${formatList()}. Выбери под сцену; без него — 3:4 для зеркала и 1:1 для крупного плана.`, required: false },
     { name: "with_owner", type: "boolean", description: "true — на кадре вы вдвоём (она и владелец). По умолчанию false — только она.", required: false },
+    { name: "his_outfit", type: "string", description: "Для кадра вдвоём (with_owner=true) — что НА НЁМ, коротко: «чёрная футболка», «рубашка нараспашку», «голый торс», «полотенце на бёдрах». Обязательно для пары: без неё движок берёт его одежду прямо с его фото, и он выходит в том же, что на снимке.", required: false },
   ];
 
   readonly config: SelfieToolConfig;
@@ -203,6 +205,16 @@ export class SelfieTool implements Tool {
    * drawn as written, because a check that can never be satisfied would trap her.
    */
   private rejectedOnce = "";
+
+  /**
+   * The last pair scene refused for a missing `his_outfit`, as `outfit|context`.
+   *
+   * The same one-shot escape as above, for the same reason. Unlike the prompt
+   * check this one guards something the owner asked for directly ("почему я вечно
+   * в рубашке"): the outfit has to be said, because the model copies his photo
+   * otherwise. But a missing slot is still her mistake to fix, not a wall.
+   */
+  private rejectedOutfitOnce = "";
 
   constructor(config: SelfieToolConfig) {
     this.config = config;
@@ -283,7 +295,7 @@ export class SelfieTool implements Tool {
     // local ComfyUI or an honest refusal, never a stranger's face. Checked
     // before the key, because a pair frame needs no key.
     if (params.with_owner === true || params.with_owner === "true") {
-      return this.generatePair(context, String(params.format ?? ""));
+      return this.generatePair(context, String(params.format ?? ""), String(params.his_outfit ?? "").trim());
     }
 
     if (!this.config.openrouterApiKey) {
@@ -342,7 +354,7 @@ export class SelfieTool implements Tool {
    * owner photo is an honest refusal ("not now", "no his photo yet"), which is
    * better than a picture of two strangers with her name on it.
    */
-  private async generatePair(context: string, format: string): Promise<ToolResult> {
+  private async generatePair(context: string, format: string, hisOutfit = ""): Promise<ToolResult> {
     const comfy = this.config.comfy;
     if (!comfy) {
       return {
@@ -362,7 +374,30 @@ export class SelfieTool implements Tool {
       return { success: false, output: "Нет моего референс-фото — сначала /setphoto с моим лицом." };
     }
 
-    const prompt = buildPairPrompt(context, this.config.body ?? "", this.config.ownerBody ?? "");
+    // His outfit cannot be left to chance. With nothing named, the edit model
+    // keeps what his reference photo shows, and every frame reproduced the same
+    // shirt (owner, 16.10: "почему я вечно в рубашке"). Asking her to name it in
+    // the description was skipped twice, so the empty slot is an error instead.
+    // Once: a second identical attempt is drawn anyway, so a check she cannot
+    // satisfy never traps her (same shape as the prompt check above).
+    if (!hisOutfit) {
+      const key = `outfit|${context}`;
+      if (this.rejectedOutfitOnce === key) {
+        console.log("📸 Парный кадр: одежда его не названа повторно — рисую как есть");
+        this.rejectedOutfitOnce = "";
+      } else {
+        this.rejectedOutfitOnce = key;
+        return {
+          success: false,
+          output:
+            "Для кадра вдвоём назови, что НА НЁМ, в параметре his_outfit — одна короткая фраза: " +
+            "«чёрная футболка», «рубашка нараспашку», «голый торс», «полотенце на бёдрах». " +
+            "Без неё движок берёт его одежду прямо с его фото, и он выходит одинаковым в каждом кадре.",
+        };
+      }
+    }
+
+    const prompt = buildPairPrompt(context, this.config.body ?? "", this.config.ownerBody ?? "", hisOutfit);
     // A pair frame is square or landscape. Two people side by side want the
     // width, and a requested portrait leaves one of them cropped or floating —
     // so in a pair the square stands in for the vertical, and the scene picks
