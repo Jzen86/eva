@@ -27,6 +27,18 @@ describe("SelfieTool", () => {
     expect(tool.parameters[3].type).toBe("boolean");
   });
 
+  it("tells her to name his clothing on a pair frame, so it is not copied from his photo", () => {
+    // The owner, 16.10: "почему я вечно в рубашке". The pair prompt carries no
+    // clothing and the man's face — and outfit — come from his reference photo,
+    // so the clothes can only change where hers do: in the scene she writes. The
+    // old text said context describes "ТОЛЬКО сцену" and never named his outfit.
+    const tool = new SelfieTool({ openrouterApiKey: "k", referencePhotoUrl: "https://example.com/photo.jpg" });
+    const d = tool.description;
+    expect(d).toMatch(/что на каждом из вас/i);
+    expect(d).toMatch(/одежду его называй/i);
+    expect(d).toContain("прямо с его фото");
+  });
+
   it("returns error when the OpenRouter key is missing", async () => {
     const tool = new SelfieTool({ openrouterApiKey: "", referencePhotoUrl: "https://example.com/photo.jpg" });
     const result = await tool.execute({ context: "в кафе" });
