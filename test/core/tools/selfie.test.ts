@@ -233,13 +233,14 @@ describe("SelfieTool", () => {
 
     const graph = generate.mock.calls[0][0] as Record<string, { inputs: Record<string, unknown> }>;
     expect(graph["5"].inputs.prompt).toContain("Woman with a balanced figure, a flat stomach");
-    expect(graph["9"].inputs).toMatchObject({ width: 1024, height: 768 });
+    expect(graph["9"].inputs).toMatchObject({ width: 896, height: 672 });
 
-    // A format later added to the table must survive here too: this whitelist went
-    // stale once and silently dropped 2:3 back to 3:4.
-    await tool.execute({ context: "в парке", format: "2:3", mode: "mirror" });
+    // Any name in the table must survive this whitelist: it went stale once and
+    // silently dropped a format back to the mode's default. 1:1 is not the mirror
+    // default, so passing it through is exactly what this checks.
+    await tool.execute({ context: "в парке", format: "1:1", mode: "mirror" });
     const second = generate.mock.calls[1][0] as Record<string, { inputs: Record<string, unknown> }>;
-    expect(second["9"].inputs).toMatchObject({ width: 672, height: 1024 });
+    expect(second["9"].inputs).toMatchObject({ width: 896, height: 896 });
 
     fs.unlinkSync(file);
   });
@@ -437,11 +438,11 @@ describe("SelfieTool", () => {
     expect(String(graph["5"].inputs.prompt)).toContain("not from the reference photos");
     // The requested frame reaches the local graph for a pair shot too — but the
     // pair narrows the set: landscape stays, and a portrait becomes a square.
-    expect(graph["9"].inputs).toMatchObject({ width: 1024, height: 768 });
+    expect(graph["9"].inputs).toMatchObject({ width: 896, height: 672 });
 
     await tool.execute({ context: "стоим в парке", with_owner: true, format: "3:4", his_outfit: "grey sweatpants" });
     const tall = generate.mock.calls[1][0] as Record<string, { inputs: Record<string, unknown> }>;
-    expect(tall["9"].inputs).toMatchObject({ width: 1024, height: 1024 });
+    expect(tall["9"].inputs).toMatchObject({ width: 896, height: 896 });
 
     fs.unlinkSync(her);
     fs.unlinkSync(owner);

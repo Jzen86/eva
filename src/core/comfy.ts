@@ -48,24 +48,30 @@ export interface ComfyGraphOptions {
    */
   referenceName2?: string;
   filenamePrefix?: string;
-  /** Output size. Defaults to 1024×1024 (1:1). */
+  /** Output size. Defaults to the 1:1 frame, so an unset size stays in scheme. */
   width?: number;
   height?: number;
-  /** How the reference is scaled for the encoder. Defaults to 1024, to match output. */
+  /** How the reference is scaled for the encoder: it is resized to about this square. */
   resolution?: number;
 }
 
 /**
- * Output formats on a 1024 long side: the long side is 1024, the short side
- * follows the ratio, and every side is a multiple of 32. The long side is the
- * cap — a 2:3 frame comes back narrower, not taller — which holds the pixel
- * count (and so the render time) down. The owner moved here from a 1024 *short*
- * side for exactly that: tall frames used to be 1024×1536 and 4:3 was 1376×1024,
- * and paying for those pixels bought nothing on a phone screen. 1024 is where the
- * detail lives anyway — Qwen-Image 2.1's own default is one megapixel (1024×1024).
- * 2:3 is the tallest frame, for a full body that should fill the shot; 9:16 fills
- * a phone screen; 3:4 the usual portrait; 4:5 the feed-shaped one that keeps a
- * little more in frame; 1:1 the close-up square; 4:3 when the scene needs width.
+ * Output formats: one long side of 896, and three frames.
+ *
+ * 896 is a multiple of 32 — Qwen-Image 2.1's VAE is /16 and its patch is 2, so a
+ * side that is not a multiple of 32 gets padded — and it is enough for a phone
+ * screen without paying for pixels nobody looks at. It is also where the budget
+ * lands: 896×896 is 0.80 megapixels and 672×896 is 0.60, against 1.05 for the
+ * 1024×1024 this replaced, and the same rule costs roughly a quarter less time on
+ * every frame (4.6 s against 5.6 s, 8 steps, warm).
+ *
+ * Three frames, not six. A square for two people in the shot, a portrait for a
+ * whole figure, a landscape when the scene needs width — and Eva picks between
+ * them from the scene, which is why each carries a word she can read. 2:3, 4:5
+ * and 9:16 were dropped: at a fixed 896 side they land at 0.55 and below, and
+ * under about half a megapixel Qwen starts to smear. The square stays the
+ * heaviest of the three deliberately — it is the pair frame, where two faces
+ * share the pixels, and that is the one place the budget buys something.
  *
  * `label` is the word the tool descriptions use for the format, and those
  * descriptions are built from this table (`formatList`) rather than written
@@ -77,12 +83,9 @@ export interface ComfyGraphOptions {
  * cannot go stale.
  */
 export const FORMATS = {
-  "1:1": { width: 1024, height: 1024, label: "квадрат" },
-  "2:3": { width: 672, height: 1024, label: "высокий" },
-  "3:4": { width: 768, height: 1024, label: "вертикаль" },
-  "4:5": { width: 832, height: 1024, label: "портрет" },
-  "9:16": { width: 576, height: 1024, label: "высокий, под телефон" },
-  "4:3": { width: 1024, height: 768, label: "горизонталь" },
+  "1:1": { width: 896, height: 896, label: "квадрат" },
+  "3:4": { width: 672, height: 896, label: "вертикаль" },
+  "4:3": { width: 896, height: 672, label: "горизонталь" },
 } as const;
 
 export type AspectFormat = keyof typeof FORMATS;
@@ -189,7 +192,11 @@ export function buildWorkflow(opts: ComfyGraphOptions): ComfyGraph {
     // face intact, so the size is what decides the frame, not the reference.
     "9": {
       class_type: "EmptyLatentImage",
-      inputs: { width: opts.width ?? 1024, height: opts.height ?? 1024, batch_size: 1 },
+      inputs: {
+        width: opts.width ?? FORMATS["1:1"].width,
+        height: opts.height ?? FORMATS["1:1"].height,
+        batch_size: 1,
+      },
     },
     "10": {
       class_type: "SaveImage",

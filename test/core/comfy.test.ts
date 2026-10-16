@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildWorkflow, sizeFor, cloudSizeFor, COMFY_UNET, TURBO_SIGMAS } from "../../src/core/comfy.js";
+import { buildWorkflow, sizeFor, cloudSizeFor, COMFY_UNET, TURBO_SIGMAS, FORMATS } from "../../src/core/comfy.js";
 
 describe("buildWorkflow", () => {
   it("builds a text-only graph with no reference node", () => {
@@ -76,44 +76,53 @@ describe("buildWorkflow", () => {
     expect(Object.values(g).some((n) => "scheduler" in n.inputs)).toBe(false);
   });
 
-  it("sizes the frame from an empty latent, 1024 by default", () => {
+  it("sizes the frame from an empty latent, the 1:1 frame by default", () => {
     // The encoder's own latent output is the *reference's* size (square), so it
     // would pin every frame to 1:1 and ignore the requested ratio. The empty
-    // latent is what decides the frame.
+    // latent is what decides the frame, and its default comes from the table — an
+    // unset size must not quietly land outside the scheme.
     const g = buildWorkflow({ prompt: "x", seed: 1 });
     expect(g["9"].class_type).toBe("EmptyLatentImage");
-    expect(g["9"].inputs).toMatchObject({ width: 1024, height: 1024 });
+    expect(g["9"].inputs).toMatchObject({ width: 896, height: 896 });
     expect(g["7"].inputs.latent_image).toEqual(["9", 0]);
     expect(g["5"].inputs.resolution).toBe(1024);
   });
 
   it("renders every format from the requested size", () => {
+    // One long side, 896, and every side a multiple of 32: the ratio decides the
+    // short side, the scheme decides the long one.
     const portrait = buildWorkflow({ prompt: "x", seed: 1, ...sizeFor("3:4") });
-    expect(portrait["9"].inputs).toMatchObject({ width: 768, height: 1024 });
+    expect(portrait["9"].inputs).toMatchObject({ width: 672, height: 896 });
     const landscape = buildWorkflow({ prompt: "x", seed: 1, ...sizeFor("4:3") });
-    expect(landscape["9"].inputs).toMatchObject({ width: 1024, height: 768 });
-    // Same 1024 long side, every side a multiple of 32, the short side follows
-    // the ratio.
-    expect(sizeFor("4:5")).toEqual({ width: 832, height: 1024 });
-    expect(sizeFor("9:16")).toEqual({ width: 576, height: 1024 });
-    // The tallest frame, for a full body that should fill the shot.
-    expect(sizeFor("2:3")).toEqual({ width: 672, height: 1024 });
+    expect(landscape["9"].inputs).toMatchObject({ width: 896, height: 672 });
+    // The square is the pair frame and stays the heaviest of the three on
+    // purpose: two faces share its pixels, and it is the one frame where the
+    // budget buys something.
+    expect(sizeFor("1:1")).toEqual({ width: 896, height: 896 });
+    for (const key of Object.keys(FORMATS)) {
+      const f = sizeFor(key);
+      expect(Math.max(f.width, f.height)).toBe(896);
+      expect(f.width % 32).toBe(0);
+      expect(f.height % 32).toBe(0);
+      // Under half a megapixel Qwen smears; over one the phone screen ignores
+      // what we paid for.
+      expect((f.width * f.height) / 1e6).toBeGreaterThan(0.5);
+      expect((f.width * f.height) / 1e6).toBeLessThan(1);
+    }
   });
 
   it("falls back to 1:1 on an unknown format", () => {
     // Literal, not FORMATS["1:1"]: the table now carries a label as well as a
     // size, and `sizeFor` deliberately returns only the two numbers — it gets
     // spread into the graph.
-    expect(sizeFor("16:9")).toEqual({ width: 1024, height: 1024 });
-    expect(sizeFor(undefined)).toEqual({ width: 1024, height: 1024 });
+    expect(sizeFor("16:9")).toEqual({ width: 896, height: 896 });
+    expect(sizeFor(undefined)).toEqual({ width: 896, height: 896 });
   });
 
   it("sends the cloud a size its endpoints accept", () => {
+    // The cloud endpoints take a short list, so the frame travels as its shape.
     expect(cloudSizeFor(sizeFor("1:1"))).toBe("1024x1024");
-    expect(cloudSizeFor(sizeFor("2:3"))).toBe("1024x1536");
-    expect(cloudSizeFor(sizeFor("9:16"))).toBe("1024x1536");
     expect(cloudSizeFor(sizeFor("3:4"))).toBe("1024x1536");
-    expect(cloudSizeFor(sizeFor("4:5"))).toBe("1024x1536");
     expect(cloudSizeFor(sizeFor("4:3"))).toBe("1536x1024");
   });
 });

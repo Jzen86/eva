@@ -61,6 +61,6 @@ describe("the format list", () => {
   it("keeps sizeFor to the two numbers", () => {
     // It gets spread into the graph, so a label riding along would be a stray
     // field inside a workflow node.
-    expect(Object.keys(sizeFor("9:16")).sort()).toEqual(["height", "width"]);
+    expect(Object.keys(sizeFor("3:4")).sort()).toEqual(["height", "width"]);
   });
 });
