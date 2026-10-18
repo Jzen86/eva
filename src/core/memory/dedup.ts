@@ -290,9 +290,23 @@ export async function learnInsight(
     confidence?: number;
     /** Run synchronously inside the insert transaction (e.g. retire a corrected row). */
     afterWrite?: (id: number) => void;
+    /**
+     * Rows that must not count as "already there".
+     *
+     * The one case is a correction: the caller is replacing #N, and the new text
+     * usually *is* the old fact, restated because its class or wording was wrong
+     * ("график 2/2" filed as an episode, meant as a profile line). Without this the
+     * dedup refuses the replacement as a repeat of what it replaces, and since the
+     * retirement runs only after a successful write, the correction can never land
+     * — the row stays wrong forever. Excluding the target is safe precisely because
+     * it is about to be retired.
+     */
+    excludeFromDedup?: number[];
   } = {},
 ): Promise<LearnOutcome> {
-  const known = opts.known ?? getAllKnowledge();
+  const all = opts.known ?? getAllKnowledge();
+  const excluded = new Set(opts.excludeFromDedup ?? []);
+  const known = excluded.size > 0 ? all.filter((row) => !excluded.has(row.id)) : all;
   // The whole row, not only its sentence: for a case, the moment is the identity
   // and two moments that read alike are allowed to both be true. See identityOf.
   const duplicate = await findDuplicate(input, {

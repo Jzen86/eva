@@ -218,6 +218,25 @@ describe("dates and subjects", () => {
 });
 
 describe("memory tool, case fields", () => {
+  /**
+   * A standing arrangement is a profile line, and this is the case that said so.
+   *
+   * The owner, 18.10: «пытался в разговорной манере записать про работу, про
+   * график. Она это учла, но в память не записалось» — she filed the 2/2 schedule
+   * as an episode, so `/profile` kept saying "работа — пока не знаю" while the fact
+   * sat in the base. Both prompts taught "периодичность → не анкета" («раз в день»),
+   * and a schedule read as exactly that. The description is where she decides, so
+   * the rule is stated there and the section list stays the one from /profile.
+   */
+  it("tells her a standing work schedule is a profile line", () => {
+    const tool = createMemoryTool();
+    expect(tool.description).toContain("2/2");
+    expect(tool.description).toMatch(/standing arrangement/i);
+    // The section names are the dossier's, exactly — a profile row under a topic
+    // that is not in the list renders as a hole in /profile.
+    expect(tool.description).toContain("'работа', 'где живёт', 'тело и привычки', 'досуг'");
+  });
+
   it("refuses a case with no state rather than storing a rule", async () => {
     const tool = createMemoryTool();
 
@@ -359,9 +378,18 @@ describe("memory tool, a corrected fact", () => {
     expect(searchKnowledge("энергетики", 5).map((r) => r.id)).not.toContain(oldId);
   });
 
-  it("keeps the old fact when the new one is refused as a duplicate", async () => {
-    // The order matters. Retiring first and writing second would leave the base
-    // with neither version of the fact.
+  it("lets a correction restate the fact it replaces, and retires it as corrected", async () => {
+    // 18.10, and this is the case that changed the rule. The point of a correction
+    // is often that the fact was filed in the wrong class: his 2/2 work schedule
+    // went in as an episode, while `/profile` renders only profile rows, so it was
+    // invisible there for good. Re-saving it word for word was refused — the dedup
+    // counted the row *being replaced* as already holding the fact — and since the
+    // retirement runs only after a successful write, the wrong class could never be
+    // fixed. What the old assertion here protected was the retirement order, and
+    // that is untouched: the new row is written first, the old one is retired by it,
+    // and `superseded_by` says which row took its place. A duplicate that is a
+    // *different* live row still refuses the write, because the exclusion is only
+    // ever the id the caller named.
     const tool = createMemoryTool();
     await tool.execute({ action: "save", content: "Марк пьёт энергетики 10-15 лет", topic: "привычки" });
     const oldId = getAll()[0].id;
@@ -370,12 +398,23 @@ describe("memory tool, a corrected fact", () => {
       action: "save",
       content: "Марк пьёт энергетики 10-15 лет",
       topic: "привычки",
+      kind: "profile",
       supersedes: String(oldId),
     });
 
     expect(result.success).toBe(true);
-    const row = byId(oldId);
-    expect(row.superseded_at).toBeNull();
+    // Queried straight from the table: getAll() is the live view, and this row is
+    // deliberately no longer live.
+    const row = getDB()
+      .prepare("SELECT superseded_at, superseded_by FROM knowledge WHERE id = ?")
+      .get(oldId) as { superseded_at: number | null; superseded_by: number | null };
+    expect(row.superseded_at).not.toBeNull();
+    const replacement = getAll().find((r) => r.id !== oldId)!;
+    expect(row.superseded_by).toBe(replacement.id);
+    const kind = getDB()
+      .prepare("SELECT kind FROM knowledge WHERE id = ?")
+      .get(replacement.id) as { kind: string };
+    expect(kind.kind).toBe("profile");
   });
 
   it("says so when the row it was told to retire is not live", async () => {

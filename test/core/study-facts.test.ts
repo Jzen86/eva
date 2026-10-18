@@ -94,6 +94,15 @@ describe("study: what a session may leave in the base", () => {
     }>;
   }
 
+  it("tells the model that a standing schedule belongs in the questionnaire", async () => {
+    // Same case as the memory tool's: the 2/2 schedule came back as an episode
+    // because the prompt taught "периодичность → событие" with «раз в день» as the
+    // example. The prompt is where study decides, so the rule lives here too.
+    const { prompt } = await session(JSON.stringify({ facts: [] }));
+    expect(prompt).toContain("2/2");
+    expect(prompt).toMatch(/график работы/i);
+  });
+
   it("stores a conversation's subject and how it ended", async () => {
     const { result } = await session(
       JSON.stringify({

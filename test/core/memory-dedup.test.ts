@@ -153,6 +153,45 @@ describe("learnInsight", () => {
     if (!again.written) expect(again.duplicate?.id).toBe(1);
   });
 
+  /**
+   * Correcting a class means saying the same fact again, in the other slot.
+   *
+   * The live case (18.10): he described his work schedule in conversation, she
+   * filed it as an episode, and `/profile` went on saying "работа — пока не знаю"
+   * because only `kind=profile` rows are rendered there. Re-saving it as a profile
+   * line was refused — the dedup saw the episode as already holding the fact — and
+   * the retirement runs only after a successful write, so the row stayed wrong for
+   * good. The row being replaced must not testify against its own replacement.
+   */
+  it("lets a correction restate the entry it replaces", async () => {
+    const first = await learnInsight(
+      { topic: "работа", insight: "График работы 2/2: два рабочих дня, два выходных.", source: "memory_tool" },
+      { known: [] },
+    );
+    expect(first.written).toBe(true);
+    const id = (first as { id: number }).id;
+
+    // Without the exclusion this is the repeat it looks like.
+    const refused = await learnInsight(
+      { topic: "работа", insight: "График работы 2/2: два рабочих дня, два выходных.", source: "memory_tool" },
+      { known: getAllKnowledge() },
+    );
+    expect(refused.written).toBe(false);
+
+    const asProfile = await learnInsight(
+      {
+        topic: "работа",
+        insight: "График работы 2/2: два рабочих дня, два выходных.",
+        source: "memory_tool",
+        kind: "profile",
+      },
+      { known: getAllKnowledge(), excludeFromDedup: [id] },
+    );
+    expect(asProfile.written).toBe(true);
+    const rows = getAllKnowledge().filter((r) => r.superseded_at == null);
+    expect(rows.filter((r) => r.kind === "profile")).toHaveLength(1);
+  });
+
   /** The point of routing every writer through one function. */
   it("is the only path that can tell two writers apart", async () => {
     await learnInsight(

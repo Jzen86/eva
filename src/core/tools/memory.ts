@@ -148,6 +148,10 @@ async function handleSave(
       },
       {
         embedding,
+        // The row being corrected does not count as a repeat of its own
+        // replacement: correcting a class means saying the same fact again in the
+        // other slot, and the dedup would otherwise refuse it (see learnInsight).
+        excludeFromDedup: correctionId === null ? undefined : [correctionId],
         afterWrite:
           correctionId === null
             ? undefined
@@ -262,8 +266,12 @@ export function createMemoryTool(opts: MemoryToolOptions = {}): Tool {
       "2) A fact about him: content alone ('не любит айфоны'). Set kind=\"profile\" " +
       "for these, and only for what stays true — ask yourself: if tomorrow were the " +
       "opposite, would the line still be true? 'Пьёт энергетики' survives it; 'сегодня " +
-      "устал', 'с L-теанином', 'раз в день' do not, and those are episodes. A profile " +
-      "entry is one fact, in one line, with no 'сказал', 'уточнил', 'объяснил' and no " +
+      "устал', 'с L-теанином', 'раз в день' do not, and those are episodes. A standing " +
+      "arrangement is the other way round: a work schedule ('работает 2/2: два дня рабочих, " +
+      "два выходных'), the shift pattern, the hour he gets up for a shift — those are profile " +
+      "lines under 'работа', and they hold for months. What makes 'раз в день' an episode is " +
+      "being one moment's circumstance, not being regular. A profile entry is one fact, in one line, " +
+      "with no 'сказал', 'уточнил', 'объяснил' and no " +
       "cause and effect — it is read as a questionnaire, not as a retelling. Its topic " +
       "comes from this list, exactly: 'работа', 'где живёт', 'тело и привычки', 'досуг', " +
       "'люди', 'деньги и планы', 'вкусы'. Every section is about him: how you are built, " +
