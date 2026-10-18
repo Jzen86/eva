@@ -204,6 +204,15 @@ export interface EngineDeps {
      * presence before using it, exactly as it does with `hasRole`.
      */
     proxied?(name: string): LLMClient;
+    /**
+     * A role's client with no fallback chain: exactly the configured model, whose
+     * failures reach the caller — the router's `role()`.
+     *
+     * Optional for the same reason as `proxied`, and used by the digest: a chain
+     * would walk it onto whatever the router is degraded to, which is the chat's
+     * model, not a model chosen for this job.
+     */
+    role?(name: string): LLMClient;
   };
   config: PromptConfig;
   tools: ToolRegistry;
@@ -1105,12 +1114,23 @@ export class Engine {
      * such refusal also pushed the live chat onto the fallback chain and told him
      * "временно работаю на …" — two jobs, one chain, and the wrong one won.
      *
+     * The role is taken **without its fallback chain**, and that is deliberate.
+     * The chain walks on to the global fallbacks, and it does not matter which
+     * role asked: `targetFor` hands out the degraded ref to every role once the
+     * router is degraded. So a refused chat reply was enough to put the digest
+     * back on Google — which is the model that refuses this very prompt (seen live
+     * on the first merge after the role appeared: `Роль "compaction": перепробовано:
+     * google/gemini-3.1-flash-lite … PROHIBITED_CONTENT`, i.e. the digest waited a
+     * turn for a model chosen exactly so that it would not be Google). No chain
+     * means: this model, or the merge does not happen — and a skipped merge is
+     * cheap and already handled (`mergeOldestChunks` logs it and stops).
+     *
      * Optional on purpose, and it falls back to `fast()`: the repository is a
      * base, not an instance, and a config that says nothing about compaction keeps
      * behaving exactly as it did.
      */
-    if (this.deps.llm.proxied && (this.deps.llm.hasRole?.("compaction") ?? false)) {
-      return this.deps.llm.proxied("compaction");
+    if (this.deps.llm.role && (this.deps.llm.hasRole?.("compaction") ?? false)) {
+      return this.deps.llm.role("compaction");
     }
     return this.deps.llm.fast();
   }

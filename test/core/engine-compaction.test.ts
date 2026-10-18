@@ -157,7 +157,15 @@ describe("engine: compaction", () => {
     const client = {
       fast: () => ({ chat: liveChat }),
       strong: () => ({ chat: liveChat }),
-      proxied: (name: string) => ({ chat: name === "compaction" ? digestChat : liveChat }),
+      // The digest asks for the role itself, not for a chain: a chain walks on to
+      // the global fallbacks, and a degraded router hands those out to every role —
+      // observed live on 18.10, when the first merge went to Google (the model this
+      // role exists to avoid) because a chat reply had been refused a turn earlier.
+      role: (name: string) => {
+        expect(name).toBe("compaction");
+        return { chat: digestChat };
+      },
+      proxied: () => ({ chat: liveChat }),
       hasRole: (n: string) => n === "compaction",
     };
     const engine = new Engine({ llm: client, config: testConfig, tools: new ToolRegistry() });

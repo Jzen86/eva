@@ -320,6 +320,42 @@ describe("LLMRouter", () => {
     router.destroy();
   });
 
+  /**
+   * Why the digest asks for a role instead of a chain.
+   *
+   * `chainFor` starts from `targetFor`, and `targetFor` hands the degraded ref to
+   * **any** role once the router is degraded — the flag is one for the whole
+   * router, set when some role's primary failed. So a chain on the compaction role
+   * walks onto whatever the chat is degraded to: seen live on 18.10, the first
+   * digest merge landed on a Google model that refuses that prompt, because a chat
+   * reply had been refused a minute earlier — exactly the model the role exists to
+   * avoid. `role()` has no chain: the digest gets its own model or nothing, and
+   * "nothing" is already handled (the merge is skipped and logged).
+   */
+  it("gives role() its own model even while the router is degraded", async () => {
+    const cfg = {
+      ...BASE_CFG,
+      models: { ...BASE_CFG.models, checks: { provider: "test", model: "checks-1" } },
+    };
+    const { router, calls } = makeRouter(async (ref) => {
+      if (ref.model === "fast-1") throw apiError(500, "fast is down");
+      return mockResponse("ok");
+    }, cfg);
+
+    await router.fast().chat([{ role: "user", content: "x" }]);
+    expect(router.mode).toBe("degraded");
+
+    const res = await router.role("checks").chat([{ role: "user", content: "x" }]);
+    expect(res.text).toBe("ok");
+    expect(calls.at(-1)).toBe("checks-1");
+
+    // For comparison: the proxied form, which the digest deliberately does not use,
+    // is handed the degraded model instead of the role's own.
+    await router.proxied("checks").chat([{ role: "user", content: "x" }]);
+    expect(calls.at(-1)).toBe("free-1");
+    router.destroy();
+  });
+
   it("gives up with a readable error when nothing works", async () => {
     const { router } = makeRouter(async () => {
       throw apiError(500, "everything is on fire");
