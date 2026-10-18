@@ -49,6 +49,12 @@ describe("SelfieTool", () => {
     // (measured on the live engine, 16.10 — the owner flagged the explicit frame
     // as the one that actually kissed).
     expect(d).toContain("плотно прижаты к губам");
+    // 18.10: asked to "проверить" selfie, pictures and voice in one message — a
+    // 69-message turn and a prompt of 38.7k tokens — she answered with a plan and a
+    // stage direction ("(Генерирую…)") and called no tool at all: the owner got a
+    // promise with nothing behind it, and the frame that would have justified the
+    // words never existed. The description is where she reads what a call is.
+    expect(d).toContain("без вызова тулза");
   });
 
   it("returns error when the OpenRouter key is missing", async () => {

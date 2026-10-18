@@ -122,6 +122,10 @@ describe("ImageGenTool", () => {
     expect(linked.mediaUrl).toBe("https://cdn.example/car.png");
     expect(linked.output).not.toContain("приложен к этому же ходу");
     expect(cloud.description).toContain("приходит к тебе в этом же ходу");
+    // Same rule as the selfie's: an announced picture that was never asked for is
+    // a picture that does not exist, and the promise is exactly what the owner was
+    // left holding on 18.10.
+    expect(cloud.description).toContain("без вызова тулза");
 
     vi.unstubAllGlobals();
   });
