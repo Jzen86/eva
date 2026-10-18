@@ -61,8 +61,14 @@ describe("SelfieTool", () => {
     // shirts in plainly intimate scenes). Measured on the live ComfyUI: the reference
     // does *not* force it — "bare chest" in the text drew a bare chest, "серая
     // футболка" drew a grey one — so the rule belongs where she chooses: here.
-    expect(d).toContain("не одевай его по привычке");
-    expect(d).toContain("голый торс");
+    // 18.10, second pass, in the owner's words: "надо чтоб она сама решала, голый я,
+    // одетый, во что одетый" and, when I wrote a rule tying his state to hers, "тут
+    // нет зависимости и рамок: она одета = я одет, она голая = я голый" — both naked,
+    // both dressed, one of each, whatever the scene is. So the sentence states the
+    // freedom and the duty (name it), not a pairing.
+    expect(d).toMatch(/Связи между вами нет/i);
+    expect(d).toMatch(/оба голые, оба одетые/i);
+    expect(d).toMatch(/Это твоё решение/i);
   });
 
   it("returns error when the OpenRouter key is missing", async () => {
