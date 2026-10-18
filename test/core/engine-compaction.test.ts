@@ -144,6 +144,38 @@ describe("engine: compaction", () => {
     expect(countMessages(user)).toBeGreaterThan(45);
   });
 
+  it("folds the digest on its own model when the config names one", async () => {
+    // Talking and folding are two jobs. The fold carries messages that have
+    // fallen out of the window — including an intimate conversation a content
+    // filter refuses to look at — so running it on the chat model cost both
+    // things at once: the merge was refused, and the live role was pushed onto
+    // the fallback chain (and told the owner so) on every attempt.
+    const user = "digest-role";
+    seedTurns(user, 45);
+    const liveChat = vi.fn().mockImplementation(async () => ({ text: "живой ответ", stopReason: "end_turn" }));
+    const digestChat = vi.fn().mockImplementation(async () => ({ text: "Сводка про первые вопросы.", stopReason: "end_turn" }));
+    const client = {
+      fast: () => ({ chat: liveChat }),
+      strong: () => ({ chat: liveChat }),
+      proxied: (name: string) => ({ chat: name === "compaction" ? digestChat : liveChat }),
+      hasRole: (n: string) => n === "compaction",
+    };
+    const engine = new Engine({ llm: client, config: testConfig, tools: new ToolRegistry() });
+
+    for (let i = 0; i < 25; i++) {
+      await engine.process({ channelName: "test", userId: user, text: `ещё ${i}`, timestamp: Date.now() });
+    }
+    await engine.process({ channelName: "test", userId: user, text: "и ещё", timestamp: Date.now() });
+
+    expect(loadSummary(user)).toContain("Сводка про первые вопросы");
+    expect(digestChat).toHaveBeenCalled();
+    // The fold is the request with nothing but the material in it. It must never
+    // be the chat model's: the whole point of the role is that the two jobs stop
+    // sharing a chain.
+    const foldOnChatModel = liveChat.mock.calls.filter((c) => (c[0] as LLMMessage[]).length === 1);
+    expect(foldOnChatModel).toHaveLength(0);
+  });
+
   it("does not take the history away from a turn that is still running", async () => {
     // The fold is in flight when the turn that triggered it reaches its tool,
     // and it lands there: between the call and its result, while the engine is

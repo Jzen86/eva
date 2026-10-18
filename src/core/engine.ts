@@ -1077,9 +1077,10 @@ export class Engine {
    * The budget was a property of the prompt; what fills a conversation and what
    * is about to be lost is the number of messages in it.
    *
-   * It runs after the cut, off the critical path, on the fast model: a failure
-   * here costs the old messages their summary, which is a far smaller loss than
-   * refusing to answer. The next message waits for it at the top of
+   * It runs after the cut, off the critical path, on the digest's own model when
+   * `models.compaction` exists and on the fast model otherwise (`digestClient`): a
+   * failure here costs the old messages their summary, which is a far smaller loss
+   * than refusing to answer. The next message waits for it at the top of
    * `processLocked`, which is what puts the finished digest into that prompt.
    *
    * It writes the digest and nothing else. A fold does not delete rows or touch
@@ -1089,10 +1090,35 @@ export class Engine {
    * wrote the history mid-turn" hazard `turnLocks` exists for, and a fold that
    * only appends a summary has no reason to write to the history at all.
    */
+  private digestClient(): LLMClient {
+    /*
+     * The digest has a model of its own when the config names one, and that is
+     * not the same decision as "which model talks to the owner".
+     *
+     * A conversation and a memory fold are different jobs. Talking is the thing
+     * the owner judges her by, and the model that does it is his call. Folding the
+     * digest is maintenance that carries whatever fell out of the window —
+     * *including what a content filter refuses to look at*: both Google flash-lite
+     * models answer this install's merge prompt with
+     * `content_filter: PROHIBITED_CONTENT` (reproduced 4/4 on both), because the
+     * chunks summarise an intimate conversation. While this ran on `fast()`, every
+     * such refusal also pushed the live chat onto the fallback chain and told him
+     * "временно работаю на …" — two jobs, one chain, and the wrong one won.
+     *
+     * Optional on purpose, and it falls back to `fast()`: the repository is a
+     * base, not an instance, and a config that says nothing about compaction keeps
+     * behaving exactly as it did.
+     */
+    if (this.deps.llm.proxied && (this.deps.llm.hasRole?.("compaction") ?? false)) {
+      return this.deps.llm.proxied("compaction");
+    }
+    return this.deps.llm.fast();
+  }
+
   private startCompaction(userId: string): void {
     if (this.compactionInFlight.has(userId)) return;
     const started = Date.now();
-    const promise = compactHistory(userId, this.deps.llm.fast(), MAX_HISTORY)
+    const promise = compactHistory(userId, this.digestClient(), MAX_HISTORY)
       .then((result) => {
         const summary = loadHistory(userId).summary;
         if (summary) this.summaries.set(userId, summary);

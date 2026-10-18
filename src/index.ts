@@ -171,7 +171,7 @@ async function main() {
     // thing anyone reads at boot is this line — so "did my new role apply?"
     // looked unanswered when it was answered. The familiar names come first for
     // readability; anything a config adds later is appended rather than dropped.
-    const roleOrder = ["fast", "strong", "study", "checks", "embed", "image"];
+    const roleOrder = ["fast", "strong", "study", "checks", "compaction", "embed", "image"];
     const configured = Object.keys(registry.rolesList()).sort(
       (a, b) => {
         const ia = roleOrder.indexOf(a);
