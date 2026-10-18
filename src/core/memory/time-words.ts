@@ -231,7 +231,28 @@ export function gapFacts(fromTs: number, toTs: number, offsetHours: number): Gap
   };
 }
 
-/** Days since the epoch in his zone — a date he would recognise, not UTC's. */
+/**
+ * Take the engine's own clock out of a reply that came back wearing it.
+ *
+ * The window stamps every line so the age of a message is visible, and a model that
+ * reads forty lines of "[15:45] …" will eventually write one of its own: on 18.10 she
+ * answered "[19:18] Ой, да шучу я, шучу…" — and the owner read it as the interface
+ * leaking into the conversation. The clause asking her not to repeat the mark was
+ * already in the prompt, so the wish is replaced with a rule: one or more leading
+ * stamps are removed before the reply is stored and before it is delivered. A stamp
+ * anywhere else in the text is left alone — nobody puts one in the middle by accident,
+ * and cutting sentences out of her answer would be worse than the artefact.
+ */
+export function stripReplyStamp(text: string): string {
+  let out = text;
+  for (;;) {
+    const match = /^\s*\[\d{2}:\d{2}\]\s*|^\s*\[\d{2}\.\d{2} \d{2}:\d{2}\]\s*/.exec(out);
+    if (!match) return out;
+    out = out.slice(match[0].length);
+  }
+}
+
+/** Days since the epoch in his zone - a date he would recognise, not UTC's. */
 function localDay(timestamp: number, offsetHours: number): number {
   return Math.floor((timestamp + offsetHours * 3600) / 86_400);
 }

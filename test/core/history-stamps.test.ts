@@ -4,6 +4,7 @@ import os from "os";
 import fs from "fs";
 import crypto from "crypto";
 import { stampHistory } from "../../src/core/prompt.js";
+import { stripReplyStamp } from "../../src/core/memory/time-words.js";
 import { getDB, closeDB } from "../../src/core/memory/db.js";
 import { Engine } from "../../src/core/engine.js";
 import { ToolRegistry } from "../../src/core/tools/registry.js";
@@ -64,12 +65,62 @@ describe("the clock on the window", () => {
     expect(Array.isArray(out[3].content)).toBe(true);
   });
 
-  it("does not touch what is stored — only what she is handed", () => {
-    // The stamp is a rendering of the request. The row keeps his words, so the memory
+  it("does not touch what is stored — only what she is handed", () => {    // The stamp is a rendering of the request. The row keeps his words, so the memory
     // never learns that he writes with brackets, and the archive stays his.
     const out = stampHistory([{ role: "user", content: "ага", at: at(15, 45) }], TZ, NOW);
     expect(out[0].content).toContain("[15:45]");
     expect((out[0] as { at?: number }).at).toBe(at(15, 45));
+  });
+
+  /**
+   * And the same clock must not come back in her reply.
+   *
+   * A model that reads forty lines of "[15:45] …" writes one of its own: on 18.10 two of
+   * her answers began "[19:18] …" and the owner saw the mark in the chat. The prompt
+   * already asked her not to — asking did not hold, so the engine takes it off. Twice in
+   * one text is possible (stored once, stamped again on the way out), hence the loop.
+   */
+  it("takes the engine's own mark off a reply that came back wearing it", () => {
+    expect(stripReplyStamp("[19:18] Ой, да шучу я, шучу.")).toBe("Ой, да шучу я, шучу.");
+    expect(stripReplyStamp("[19:18] [19:18] дважды")).toBe("дважды");
+    expect(stripReplyStamp("[18.10 19:18] с датой тоже")).toBe("с датой тоже");
+    // Her own punctuation is hers: a bracket in the middle stays, and so does a line
+    // that merely looks like a time without being one.
+    expect(stripReplyStamp("ок, [19:18] внутри — не метка")).toBe("ок, [19:18] внутри — не метка");
+    expect(stripReplyStamp("обычный ответ")).toBe("обычный ответ");
+  });
+});
+
+describe("her reply never carries the mark", () => {
+  let dbPath: string;
+
+  beforeEach(() => {
+    dbPath = path.join(os.tmpdir(), `eva-nostamp-${crypto.randomUUID()}.db`);
+    getDB(dbPath);
+  });
+
+  afterEach(() => {
+    closeDB();
+    for (const suffix of ["", "-wal", "-shm"]) {
+      try { fs.unlinkSync(dbPath + suffix); } catch {}
+    }
+  });
+
+  it("strips it from what goes to him and from what is stored", async () => {
+    const chat = async () => ({ text: "[19:18] Иди ко мне, кот!", stopReason: "end_turn" as const });
+    const engine = new Engine({
+      llm: { fast: () => ({ chat }), strong: () => ({ chat }) },
+      config: { name: "Ева", timezoneOffsetHours: 4 },
+      tools: new ToolRegistry(),
+    });
+
+    const out = await engine.process({ channelName: "telegram", userId: "u1", text: "привет", timestamp: Date.now() });
+    expect(out.text).toBe("Иди ко мне, кот!");
+
+    const stored = getDB()
+      .prepare("SELECT content FROM conversations WHERE role = 'assistant'")
+      .get() as { content: string };
+    expect(stored.content).toBe("Иди ко мне, кот!");
   });
 });
 

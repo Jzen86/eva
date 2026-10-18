@@ -1,5 +1,5 @@
 import { buildPersonalityPrompt } from "./personality.js";
-import { gapPassage, stampMoment } from "./memory/time-words.js";
+import { gapPassage, stampMoment, stripReplyStamp } from "./memory/time-words.js";
 import type { LiveMessage, TimeSeam } from "./memory/conversations.js";
 import type { LLMMessage } from "./llm/types.js";
 

@@ -3,6 +3,7 @@ import type { LLMClient, LLMMessage, ContentPart, ToolDefinition } from "./llm/t
 import type { ToolRegistry } from "./tools/registry.js";
 import type { ToolResult } from "./tools/types.js";
 import { buildSystemPrompt, buildTimeSeams, buildTurnContext, stampHistory, type PromptConfig } from "./prompt.js";
+import { stripReplyStamp } from "./memory/time-words.js";
 import { userFilesPath } from "./user-files.js";
 import {
   getConfigPath,
@@ -382,6 +383,10 @@ export class Engine {
     // replaces the old one, so an older, untouched proposal does not re-prompt.
     const parkedBefore = peek(msg.userId)?.createdAt ?? 0;
     const out = await this.runExclusive(msg.userId, () => this.processLocked(msg, onProgress));
+    // The clock the window carries does not belong in her reply; see stripReplyStamp.
+    // Stripped here as well as in `saveMessage`, so the delivered text and the stored
+    // one are the same words.
+    out.text = stripReplyStamp(out.text);
     const parked = peek(msg.userId);
     if (parked && parked.createdAt > parkedBefore) {
       return {

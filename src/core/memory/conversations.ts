@@ -1,6 +1,6 @@
 import { getDB, readMeta, writeMeta } from "./db.js";
 import { alignHistory } from "../llm/history.js";
-import { gapPassage, stampMoment, GAP_THRESHOLD_MIN } from "./time-words.js";
+import { gapPassage, stampMoment, stripReplyStamp, GAP_THRESHOLD_MIN } from "./time-words.js";
 import type { LLMMessage, ContentPart, ToolUseRequest } from "../llm/types.js";
 
 /**
@@ -48,7 +48,14 @@ export function saveMessage(
   toolCalls?: ToolUseRequest[],
 ): number {
   const db = getDB();
-  const contentStr = typeof content === "string" ? content : JSON.stringify(content);
+  // Her own marks never reach the archive: the request she is handed carries a clock in
+  // front of every line (`stampHistory`), and a model handed that pattern does what a
+  // model does with patterns — on 18.10 she began answering with "[19:18] …" of her own
+  // accord. Prefixing is the request's business; the reply, stored or delivered, is her
+  // words. The rule is applied here rather than asked for in a prompt clause, because
+  // the clause was already there and the brackets came anyway.
+  const contentRaw = typeof content === "string" ? content : JSON.stringify(content);
+  const contentStr = role === "assistant" ? stripReplyStamp(contentRaw) : contentRaw;
   const toolCallsStr = toolCalls && toolCalls.length > 0 ? JSON.stringify(toolCalls) : null;
   const result = db
     .prepare(
