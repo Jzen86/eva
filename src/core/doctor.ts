@@ -36,6 +36,7 @@ import type { ModelRef, ProviderRegistry } from "./llm/registry.js";
 import { counted, plural } from "./memory/stem-ru.js";
 import { hasReferencePhoto, describeReferencePhoto, hasOwnerReferencePhoto, describeOwnerReferencePhoto } from "./reference-photo.js";
 import { voiceBackendAvailable } from "./tools/voice.js";
+import { scheduleLine } from "./work-schedule.js";
 
 export type Severity = "ok" | "warn" | "bad";
 
@@ -299,6 +300,33 @@ function configSection(configPath: string): DoctorSection {
           "Без него я не знаю, кому отвечать. Плюс ключ строкой молча выбрасывается при загрузке — пиши числом.",
         ),
   );
+
+  // His working cycle, and what it says about today — the half of the arrangement
+  // that is counted rather than remembered (`work-schedule.ts`). Printed with the
+  // answer for today on purpose: the cycle in the config and the sentence she is
+  // given are two different things, and only this line shows both. Silent when no
+  // cycle is configured: a base install is not missing anything it should have had.
+  const schedule = config.agent?.schedule;
+  if (schedule) {
+    const line = scheduleLine(
+      {
+        workDays: schedule.work_days,
+        restDays: schedule.rest_days,
+        anchor: String(schedule.anchor),
+        shift: schedule.shift,
+      },
+      Date.now(),
+      config.agent?.timezone_offset_hours ?? 4,
+    );
+    checks.push(
+      ok(
+        "config.schedule",
+        `${schedule.work_days}/${schedule.rest_days}, отсчёт от ${String(schedule.anchor)}` +
+          (schedule.shift ? `, смена ${schedule.shift}` : "") +
+          (line ? ` — ${line.replace("Его график: ", "")}` : ""),
+      ),
+    );
+  }
 
   return { title: "Конфиг", checks };
 }

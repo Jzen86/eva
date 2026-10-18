@@ -151,7 +151,10 @@ const configSchema = z.object({
       .object({
         work_days: z.number().int().min(1).max(60),
         rest_days: z.number().int().min(0).max(60),
-        anchor: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        anchor: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .describe("Первый день цикла. В YAML — в кавычках: иначе это дата, а не строка."),
         shift: z.string().optional(),
       })
       .optional(),

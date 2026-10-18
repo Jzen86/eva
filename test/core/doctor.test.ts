@@ -47,6 +47,24 @@ memory:
   max_knowledge: 200
 `;
 
+/**
+ * The same config with a working cycle, for the one check that answers "what has the
+ * engine been told about today". Anchored on the date the live install uses, and quoted
+ * the way the schema requires — an unquoted date is a YAML date, not a string.
+ */
+const CONFIG_WITH_SHIFT = GOOD_CONFIG.replace(
+  "agent:\n  name: Ева\n",
+  `agent:
+  name: Ева
+  timezone_offset_hours: 4
+  schedule:
+    work_days: 2
+    rest_days: 2
+    anchor: "2026-10-18"
+    shift: "8:00-22:00"
+`,
+);
+
 /** Every check, flattened — asserting on sections means renaming titles breaks tests. */
 function allChecks(report: DoctorReport): Check[] {
   return report.sections.flatMap((s) => s.checks);
@@ -115,6 +133,26 @@ describe("doctor", () => {
     writeConfig(GOOD_CONFIG.replace("  owner_id: 42\n", ""));
     const report = await runDoctor({ configPath });
     expect(find(report, "config.owner")?.severity).toBe("bad");
+  });
+
+  it("prints the working cycle and what it says about today", async () => {
+    // The half of the arrangement that is counted rather than remembered: the config
+    // holds the cycle, the engine words today, and this check is the only place both
+    // are visible at once — the line she is given is built per turn and never logged.
+    writeConfig(CONFIG_WITH_SHIFT);
+    const report = await runDoctor({ configPath });
+    const check = find(report, "config.schedule");
+    expect(check?.severity).toBe("ok");
+    expect(String(check?.detail)).toContain("2/2");
+    expect(String(check?.detail)).toContain("смена 8:00-22:00");
+    expect(String(check?.detail)).toMatch(/\d{2}\.\d{2}\.\d{4}/);
+    expect(String(check?.detail)).toMatch(/рабочий день|выходной/);
+  });
+
+  it("stays quiet about a schedule when the config has none", async () => {
+    writeConfig(GOOD_CONFIG);
+    const report = await runDoctor({ configPath });
+    expect(find(report, "config.schedule")).toBeUndefined();
   });
 
   it("warns when there is a name but no character", async () => {
