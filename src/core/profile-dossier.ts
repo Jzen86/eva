@@ -47,6 +47,21 @@ export const PROFILE_SECTIONS = [
   "вкусы",
 ] as const;
 
+/**
+ * How long one line of the dossier is allowed to be.
+ *
+ * Not a formatting preference. The dossier is in front of her in every single
+ * request, and it is read as a questionnaire — "любит энергетики", "играет в
+ * «Территорию фермеров» в «Одноклассниках»" (the owner's own examples, 18.10). A
+ * line that tells a story costs the same tokens and gets used less: the
+ * "предпочитает целенаправленно указывать ракурсы для генерации…" he threw out said
+ * one thing in 193 characters. 120 is measured against what has to fit: a taste line
+ * runs 15–60, a video card with its model 54, and a working cycle in its compact form
+ * — "График работы 2/2, отсчёт от 18.10.2026 (первый день рабочий), смена 8–22" — 74.
+ * Anything a model writes past that is a retelling, which is what this refuses.
+ */
+export const PROFILE_LINE_LIMIT = 120;
+
 /** What a section with nothing known in it says. */
 const HOLE = "— пока не знаю";
 

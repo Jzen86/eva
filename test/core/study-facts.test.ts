@@ -6,7 +6,7 @@ import crypto from "crypto";
 import { getDB, closeDB } from "../../src/core/memory/db.js";
 import { runStudy } from "../../src/core/memory/study-runner.js";
 import { addKnowledge } from "../../src/core/memory/knowledge.js";
-import { PROFILE_SECTIONS } from "../../src/core/profile-dossier.js";
+import { PROFILE_SECTIONS, PROFILE_LINE_LIMIT } from "../../src/core/profile-dossier.js";
 import {
   saveMessage,
   studyCursor,
@@ -101,6 +101,28 @@ describe("study: what a session may leave in the base", () => {
     const { prompt } = await session(JSON.stringify({ facts: [] }));
     expect(prompt).toContain("2/2");
     expect(prompt).toMatch(/график работы/i);
+  });
+
+  it("refuses a dossier line that tells a story instead of a fact", async () => {
+    // The owner's acceptance test for the dossier is a short line — "любит энергетики",
+    // "играет в «Территорию фермеров» в «Одноклассниках»" — and the writer is a model:
+    // "please be brief" alone produced the 140-character "предпочитает целенаправленно
+    // указывать ракурсы…" he threw out on 18.10. So the briefness is mechanical: the
+    // row is refused with its length, not trimmed and not stored.
+    const long =
+      "Предпочитает целенаправленно указывать ракурсы для генерации: анфас с лёгким наклоном камеры сверху, " +
+      "боковой план и перспектива «стоящий над сидящим», а также подробно описывать сцену и свет.";
+    expect(long.length).toBeGreaterThan(PROFILE_LINE_LIMIT);
+    const { result } = await session(
+      JSON.stringify({
+        facts: [{ topic: "вкусы", fact: long, kind: "profile" }],
+      }),
+    );
+
+    const report = String(result.report);
+    expect(report).toContain("строка анкеты");
+    expect(report).toContain("анкета пишется коротко");
+    expect(rows()).toHaveLength(0);
   });
 
   it("stores a conversation's subject and how it ended", async () => {

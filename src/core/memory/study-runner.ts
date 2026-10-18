@@ -47,7 +47,7 @@ import {
   trimKnowledge,
   type KnowledgeRow,
 } from "./knowledge.js";
-import { BLOCK_LABELS as BLOCK_LABELS_FROM_DOSSIER } from "../profile-dossier.js";
+import { BLOCK_LABELS as BLOCK_LABELS_FROM_DOSSIER, PROFILE_LINE_LIMIT } from "../profile-dossier.js";
 import { findLexicalDuplicate, learnInsight, type EmbeddingEndpoint } from "./dedup.js";
 import { retireKnowledge, type KnowledgeKind } from "./knowledge.js";
 import {
@@ -317,6 +317,21 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
         continue;
       }
 
+      // A profile line is a questionnaire answer, not a retelling: it is always in
+      // front of her, so a story there costs every future prompt and gets used less.
+      // The owner's examples are the length ("любит энергетики"), and the guard is
+      // the mechanical half of the style the two prompts ask for — the writer is a
+      // model, and "please be brief" alone already produced the 140-character line
+      // he threw out. Refused rather than truncated: she writes the session's report
+      // and sees the reason, and the row can be written properly next run.
+      const kind = normalizeKind(f.kind);
+      if (kind === "profile" && f.fact.length > PROFILE_LINE_LIMIT) {
+        refused.push(
+          `«${truncate(f.fact, 60)}» — строка анкеты ${f.fact.length} символов, анкета пишется коротко: до ${PROFILE_LINE_LIMIT}`,
+        );
+        continue;
+      }
+
       const outcome = await learnInsight(
         {
           topic: f.topic,
@@ -327,7 +342,7 @@ export async function runStudy(opts: StudyRunOptions): Promise<StudyRunResult> {
           // would make "мы говорили об этом вчера" a falsehood the base tells
           // about itself.
           timestamp: generated.coveredAt,
-          kind: normalizeKind(f.kind),
+          kind,
           ...(f.conclusion ? { conclusion: f.conclusion } : {}),
           ...(c.her_move ? { her_move: c.her_move } : {}),
           ...(c.context ? { context: c.context } : {}),
@@ -501,6 +516,10 @@ function buildStudyMessages(
     "              Строка профиля — факт, а не рассказ: «Работает на складе, ночная смена»,",
     "              а не «он уточнил, что…». Без «сказал/уточнил/объяснил», без причины и",
     "              следствия, в одну строку — её читают как анкету, а не как переписку.",
+    "              И строка короткая: «любит энергетики», «любит одежду с глубоким декольте»,",
+    "              «играет в „Территорию фермеров“ в „Одноклассниках“». Без «предпочитает",
+    "              целенаправленно», без «чисто визуально», без объяснений — чем короче строка,",
+    "              тем вернее она применяется.",
     "              Поле conclusion — только для событий, у факта о человеке его быть не должно.",
     "              И только то, что верно ВСЕГДА. Проверь себя: если завтра будет наоборот,",
     "              строка останется правдой? «Пьёт энергетики» — да. «С L-теанином»,",

@@ -13,6 +13,7 @@ import {
   KNOWLEDGE_PROMPT_LIMIT,
 } from "../../src/core/memory/knowledge";
 import { createMemoryTool } from "../../src/core/tools/memory";
+import { PROFILE_LINE_LIMIT } from "../../src/core/profile-dossier";
 import { retireKnowledge } from "../../src/core/memory/knowledge";
 import { learnInsight } from "../../src/core/memory/dedup";
 import { SqliteShim } from "../shim/better-sqlite3";
@@ -241,6 +242,27 @@ describe("memory tool, case fields", () => {
     // The owner's own test for a line, and the five sections are what survived it
     // (18.10: "тело и привычки — бред", money never came up in a conversation).
     expect(tool.description).toMatch(/could it be used in any message/i);
+    // The cap and the correction duty are enforced, and both are named in the
+    // description so she does not spend a call learning them.
+    expect(tool.description).toMatch(new RegExp(`capped at ${PROFILE_LINE_LIMIT} characters`));
+    expect(tool.description).toMatch(/an edit to make now/i);
+  });
+
+  it("refuses a dossier line that is a retelling, and says how long it may be", async () => {
+    const tool = createMemoryTool();
+    const long =
+      "Предпочитает целенаправленно указывать ракурсы для генерации: анфас с лёгким наклоном камеры сверху, " +
+      "боковой план и перспектива «стоящий над сидящим», а также подробно описывать сцену и свет.";
+    const result = await tool.execute({ action: "save", content: long, topic: "вкусы", kind: "profile" });
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("profile_too_long");
+    expect(String(result.output)).toContain(String(long.length));
+    expect(getAll()).toHaveLength(0);
+
+    // The same text as an episode is fine: the cap is about the dossier, which is in
+    // front of her in every request, not about the archive.
+    const asEpisode = await tool.execute({ action: "save", content: long, topic: "разовое", kind: "episode" });
+    expect(asEpisode.success).toBe(true);
   });
 
   it("refuses a case with no state rather than storing a rule", async () => {

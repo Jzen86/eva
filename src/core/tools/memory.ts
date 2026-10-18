@@ -7,6 +7,7 @@ import {
 } from "../memory/knowledge.js";
 import { learnInsight, type EmbeddingEndpoint } from "../memory/dedup.js";
 import { retireKnowledge } from "../memory/knowledge.js";
+import { PROFILE_LINE_LIMIT } from "../profile-dossier.js";
 import { getDB } from "../memory/db.js";
 
 function requireString(
@@ -74,6 +75,22 @@ async function handleSave(
     typeof params.topic === "string" && params.topic.trim()
       ? params.topic.trim()
       : "general";
+
+  // A dossier line is a questionnaire answer, not a retelling — the same cap the
+  // study writer enforces (see PROFILE_LINE_LIMIT). Refused rather than trimmed:
+  // she is in a conversation and can write it again in one line, and a silently
+  // shortened fact would be a fact nobody wrote. The rest of the kinds are free:
+  // a rule or a lesson is allowed to explain itself.
+  if (kind === "profile" && insight.length > PROFILE_LINE_LIMIT) {
+    return {
+      success: false,
+      error: "profile_too_long",
+      output:
+        `Not saved: a dossier line is short — this one is ${insight.length} characters, the limit is ` +
+        `${PROFILE_LINE_LIMIT}. Write the fact alone, without the story: 'любит энергетики', ` +
+        `'играет в «Территорию фермеров» в «Одноклассниках»'. Say it again in one line.`,
+    };
+  }
 
   // A case is anything that records her doing something and him answering it.
   // The fields are optional so a plain fact about a person still saves, but the
@@ -275,6 +292,10 @@ export function createMemoryTool(opts: MemoryToolOptions = {}): Tool {
       "18.10.2026: 18–19 рабочие, 20–21 выходные, смена днём до 20:00') — she reads it to " +
       "decide what is even possible right now, and a cycle without an anchor can be counted " +
       "no way at all. A profile entry is one fact, in one line, " +
+      "and the line is short: 'любит энергетики', 'любит одежду с глубоким декольте', " +
+      "'играет в «Территорию фермеров» в «Одноклассниках»'. No 'предпочитает " +
+      "целенаправленно', no 'чисто визуально', no reason attached — the shorter the line, " +
+      "the more of it she actually uses. " +
       "with no 'сказал', 'уточнил', 'объяснил' and no " +
       "cause and effect — it is read as a questionnaire, not as a retelling. Its topic " +
       "comes from this list, exactly: 'работа', 'где живёт', 'досуг', 'окружение', " +
@@ -283,7 +304,12 @@ export function createMemoryTool(opts: MemoryToolOptions = {}): Tool {
       "a profile line. The list is short on purpose, and each line has to pass one test: " +
       "could it be used in any message ('это по сути в каждом сообщении может " +
       "использоваться')? What you know about a friend, an animal or a relative belongs here " +
-      "too, under 'окружение', by name and by who they are to him. If a sharper fact replaces an older one, pass " +
+      "too, under 'окружение', by name and by who they are to him. Two things about a " +
+      "dossier line are enforced rather than asked for: it is capped at " + PROFILE_LINE_LIMIT +
+      " characters (a retelling is refused, not trimmed and not accepted), and when he says " +
+      "one of those lines is wrong or extra, that is an edit to make now, not a note for " +
+      "later — search it, write the right one with supersedes, drop what is not true " +
+      "(action=delete). He should not have to say it twice. If a sharper fact replaces an older one, pass " +
       "the old entry's #ID in supersedes — the older line must not linger beside the new " +
       "one and disagree with it. Everything else is kind=\"episode\" (the default): what " +
       "happened, what was discussed or decided, with the subject as the topic.\n" +
