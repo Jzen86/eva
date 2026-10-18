@@ -302,6 +302,50 @@ describe("Compaction", () => {
     ]);
   });
 
+  it("keeps the fold when the merge cannot be answered at all", async () => {
+    // Refusing the merge is not a hypothetical. On this install both Google
+    // flash-lite models answer the digest-merge prompt with
+    // `finish_reason: content_filter: PROHIBITED_CONTENT` (8 runs out of 8) when
+    // the digest covers an intimate conversation, and the OpenRouter fallback
+    // behind them times out — so the call does not come back empty, it throws.
+    // Throwing out of `compactHistory` cost the fold its own completion: the
+    // digest stayed oversized, the same merge was asked for again on the next
+    // turn, and every attempt burned the whole chain on the way.
+    let folds = 0;
+    const llm = vi.fn().mockImplementation(async (messages: LLMMessage[]) => {
+      const prompt = messages[0].content as string;
+      if (prompt.includes("Объедини их")) {
+        throw new Error("Модель вернула пустой ответ (finish_reason: content_filter: PROHIBITED_CONTENT)");
+      }
+      return {
+        text: folds++ === 0 ? "A".repeat(15_000) : "B".repeat(15_000),
+        stopReason: "end_turn",
+        usage: { promptTokens: 100, completionTokens: 5 },
+      };
+    });
+    const client = { chat: llm } as unknown as Parameters<typeof compactHistory>[1];
+
+    for (let i = 0; i < 16; i++) {
+      saveMessage("u1", "tg", "user", `Question ${i}`);
+      saveMessage("u1", "tg", "assistant", `Answer ${i}`);
+    }
+    await compactHistory("u1", client, WINDOW);
+    for (let i = 0; i < 6; i++) {
+      saveMessage("u1", "tg", "user", `Question ${i}`);
+      saveMessage("u1", "tg", "assistant", `Answer ${i}`);
+    }
+
+    // The second fold is the one that pushes the digest past its budget and asks
+    // for a merge; the merge is refused, and the fold must still be reported as
+    // done rather than thrown away with the refusal.
+    const result = await compactHistory("u1", client, WINDOW);
+    expect(result).not.toBeNull();
+    expect(loadSummaryChunks("u1").map((c) => c.summary)).toEqual([
+      "A".repeat(15_000),
+      "B".repeat(15_000),
+    ]);
+  });
+
   it("cuts on a turn boundary, so nothing is left answering a call that is gone", async () => {
     saveMessage("u1", "tg", "user", "Q1");
     saveMessage("u1", "tg", "assistant", "", undefined, [{ id: "tc1", name: "test", arguments: {} }]);

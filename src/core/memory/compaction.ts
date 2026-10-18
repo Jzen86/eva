@@ -165,10 +165,14 @@ ${oldText}
  *
  * Merging is the one place the digest is rewritten, so it happens as rarely as it
  * can: only when the digest is genuinely oversized, only on the oldest pair, and
- * a merge that fails or comes back empty stops the whole thing rather than
- * leaving the chunks half-retired. A chunk lost here is the one real loss in this
- * design, and it is bounded by how long it takes to fill 24k characters of
- * digest.
+ * a merge that comes back empty — or that no model in the chain will answer — stops
+ * the merging rather than leaving the chunks half-retired. A chunk lost here is the
+ * one real loss in this design, and it is bounded by how long it takes to fill 24k
+ * characters of digest.
+ *
+ * Stopping is deliberately local: the caller's fold is already in the table by the
+ * time this runs, so a refused merge leaves the digest over budget but the
+ * conversation working, and the next fold tries the same pair again.
  */
 async function mergeOldestChunks(userId: string, llm: LLMClient): Promise<void> {
   const db = getDB();
@@ -180,10 +184,12 @@ async function mergeOldestChunks(userId: string, llm: LLMClient): Promise<void> 
     if (total <= MAX_DIGEST_CHARS) return;
 
     const [older, newer] = chunks;
-    const response = await llm.chat([
-      {
-        role: "user",
-        content: `Ты — помощник, который суммаризирует разговоры.
+    let response: Awaited<ReturnType<LLMClient["chat"]>>;
+    try {
+      response = await llm.chat([
+        {
+          role: "user",
+          content: `Ты — помощник, который суммаризирует разговоры.
 
 Два куска хронологического саммари одного разговора, ранний и следующий за ним:
 
@@ -195,8 +201,29 @@ ${newer.summary}
 
 Объедини их в один связный текст, сохранив все факты, решения, имена, даты и
 предпочтения пользователя. Не выдумывай. Пиши кратко, по-русски, без вступлений.`,
-      },
-    ]);
+        },
+      ]);
+    } catch (err) {
+      // A merge is upkeep of the digest, not the fold the caller asked for: the
+      // fold that just went through is already recorded and its rows are still
+      // in the table untouched. So a merge that cannot be answered at all must
+      // stop the merging, not the compaction — throwing out of here threw the
+      // completed fold away with it, left the digest exactly as oversized as it
+      // was, and asked for the same refused merge again on the next turn.
+      //
+      // This is not a hypothetical on a live install: a digest that summarises
+      // an intimate conversation is refused by both Google flash-lite models
+      // (`finish_reason: content_filter: PROHIBITED_CONTENT`, reproduced on
+      // this install's own digest), and the model behind them in the chain is
+      // slow enough to time out, so the call throws rather than coming back
+      // empty. The rows of the digest are the user's own words — the digest
+      // cannot be made acceptable, so the merge has to be the part that gives.
+      console.warn(
+        "Digest merge skipped:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return;
+    }
     const merged = response.text.trim();
     if (!merged) return;
 
