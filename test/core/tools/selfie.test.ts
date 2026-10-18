@@ -55,6 +55,14 @@ describe("SelfieTool", () => {
     // promise with nothing behind it, and the frame that would have justified the
     // words never existed. The description is where she reads what a call is.
     expect(d).toContain("без вызова тулза");
+    // 18.10: with a shirt in his reference photo she started dressing him in it even
+    // in bed — she reads his outfit from the scene and was naming a t-shirt by habit
+    // (`his_outfit` over the previous day: 9 t-shirts to 7 bare torsos, some of the
+    // shirts in plainly intimate scenes). Measured on the live ComfyUI: the reference
+    // does *not* force it — "bare chest" in the text drew a bare chest, "серая
+    // футболка" drew a grey one — so the rule belongs where she chooses: here.
+    expect(d).toContain("не одевай его по привычке");
+    expect(d).toContain("голый торс");
   });
 
   it("returns error when the OpenRouter key is missing", async () => {
