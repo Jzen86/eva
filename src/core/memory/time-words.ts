@@ -196,7 +196,15 @@ export interface GapFacts {
   crossedDay: boolean;
   /** Whether any of the pause fell into the night — the difference between "пропал" and "спал". */
   touchedNight: boolean;
-  /** When the previous message was: DD.MM in his zone. */
+  /**
+   * When the previous message was: `DD.MM HH:MM` in his zone.
+   *
+   * The clock, not only the day. The live failure of 18.10: a two-hour break, a notice
+   * that said "Сейчас 18.10, вечер" and "прошло около двух часов", and an answer built
+   * as if it were 15:50 — she anchored on the last message she could see and ignored
+   * the arithmetic. "15:50" is a number a model can compare against 18:00; "день" is
+   * not.
+   */
   fromDate: string;
   /** И то же мгновение словами: вечер, ночь, утро, день. */
   fromDayPart: string;
@@ -215,9 +223,9 @@ export function gapFacts(fromTs: number, toTs: number, offsetHours: number): Gap
     label: humanGap(seconds),
     crossedDay: localDay(fromTs, offsetHours) !== localDay(toTs, offsetHours),
     touchedNight: touchesNight(fromTs, toTs, offsetHours),
-    fromDate: shortDate(fromTs, offsetHours),
+    fromDate: stampMoment(fromTs, offsetHours),
     fromDayPart: dayPart(fromTs, offsetHours),
-    toDate: shortDate(toTs, offsetHours),
+    toDate: stampMoment(toTs, offsetHours),
     toDayPart: dayPart(toTs, offsetHours),
     passage: gapPassage(fromTs, toTs, offsetHours),
   };

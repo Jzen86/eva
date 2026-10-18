@@ -77,7 +77,8 @@ describe("gapFacts", () => {
     expect(facts.label).toBe("почти сутки");
     expect(facts.crossedDay).toBe(true);
     expect(facts.touchedNight).toBe(true);
-    expect(facts.fromDate).toBe("29.09");
+    expect(facts.fromDate).toMatch(/^29\.09 \d{2}:\d{2}$/);
+    expect(facts.fromDate).not.toBe("29.09");
     expect(facts.fromDayPart).toBe("вечер");
   });
 
@@ -206,9 +207,9 @@ describe("the pause in the prompt", () => {
     label: "почти сутки",
     crossedDay: true,
     touchedNight: true,
-    fromDate: "29.09",
+    fromDate: "29.09 20:16",
     fromDayPart: "вечер",
-    toDate: "30.09",
+    toDate: "30.09 12:40",
     toDayPart: "день",
     passage: "прошла вся ночь и уже полдня",
     prevRole: "assistant",
@@ -223,7 +224,7 @@ describe("the pause in the prompt", () => {
     expect(prompt).toContain("## Время между сообщениями");
     expect(prompt).toContain("он: «скоро вернусь»");
     expect(prompt).toContain("ты: «жду»");
-    expect(prompt).toContain("Сейчас 30.09, день");
+    expect(prompt).toContain("Сейчас 30.09 12:40, день");
     expect(prompt).toContain("прошла вся ночь и уже полдня");
     expect(prompt).toContain("не говори так, будто он всё ещё в прежнем занятии");
     expect(prompt).toContain("спроси, как спалось и что он уже поделал сегодня");
@@ -312,7 +313,7 @@ describe("Engine time gap", () => {
     expect(system).toContain("Время между сообщениями");
     expect(system).toContain("он: «😘скоро вернусь»");
     expect(system).toContain("ты: «Жду, кот, возвращайся быстрее»");
-    expect(system).toContain("Сейчас 04.10, день");
+    expect(system).toContain("Сейчас 04.10");
     expect(system).toContain("прошла вся ночь и уже полдня");
     expect(system).toContain("не говори так, будто он всё ещё в прежнем занятии");
     expect(system.lastIndexOf("## Время между сообщениями"))
