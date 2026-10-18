@@ -84,6 +84,16 @@ describe("the clock on the window", () => {
     expect(stripReplyStamp("[19:18] Ой, да шучу я, шучу.")).toBe("Ой, да шучу я, шучу.");
     expect(stripReplyStamp("[19:18] [19:18] дважды")).toBe("дважды");
     expect(stripReplyStamp("[18.10 19:18] с датой тоже")).toBe("с датой тоже");
+    // The artefact arrives however the model feels like writing it: an emoji or a dash
+    // in front is the same mark, and so is a newline.
+    expect(stripReplyStamp("🖤 [19:18] и с эмодзи")).toBe("🖤 и с эмодзи");
+    expect(stripReplyStamp("- [19:18] и списком")).toBe("- и списком");
+    expect(stripReplyStamp("\n[19:18] и с новой строки")).toBe("и с новой строки");
+    // And the live 19:44 case: the banner first, the mark starting the paragraph after it
+    // — a check on the whole text never saw that one.
+    expect(stripReplyStamp("✅ Модель снова отвечает — вернулась на неё.\n\n[19:44] Ой, шучу я.")).toBe(
+      "✅ Модель снова отвечает — вернулась на неё.\n\nОй, шучу я.",
+    );
     // Her own punctuation is hers: a bracket in the middle stays, and so does a line
     // that merely looks like a time without being one.
     expect(stripReplyStamp("ок, [19:18] внутри — не метка")).toBe("ок, [19:18] внутри — не метка");

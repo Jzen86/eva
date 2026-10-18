@@ -244,12 +244,24 @@ export function gapFacts(fromTs: number, toTs: number, offsetHours: number): Gap
  * and cutting sentences out of her answer would be worse than the artefact.
  */
 export function stripReplyStamp(text: string): string {
-  let out = text;
-  for (;;) {
-    const match = /^\s*\[\d{2}:\d{2}\]\s*|^\s*\[\d{2}\.\d{2} \d{2}:\d{2}\]\s*/.exec(out);
-    if (!match) return out;
-    out = out.slice(match[0].length);
-  }
+  // Line by line, because the mark does not always start the *message*: on 18.10 at
+  // 19:44 the reply was the router's banner, a blank line, and then "[19:44] Ой, …" —
+  // the model's own bracket sat at the start of a paragraph, where a whole-text check
+  // never looks. The decoration in front is allowed to be punctuation, whitespace or an
+  // emoji ("🖤 [19:18]" is the same artefact) but never a letter: a word before the
+  // bracket means she is talking about a time rather than wearing one.
+  const STAMP = /^([^\p{L}\p{N}\n]*?)(?:\[\d{2}:\d{2}\]|\[\d{2}\.\d{2} \d{2}:\d{2}\])\s*/u;
+  return text
+    .split("\n")
+    .map((line) => {
+      let out = line;
+      for (;;) {
+        if (!STAMP.test(out)) return out;
+        out = out.replace(STAMP, "$1");
+      }
+    })
+    .join("\n")
+    .trimStart();
 }
 
 /** Days since the epoch in his zone - a date he would recognise, not UTC's. */
