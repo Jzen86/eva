@@ -31,14 +31,19 @@ import type { KnowledgeRow } from "./memory/knowledge.js";
  * instead of inventing a topic each time. Rows whose topic is not one of these
  * still render — under their own heading, after the canonical ones — because a
  * row that exists must never become invisible to the person reading the dossier.
+ *
+ * Rewritten on the owner's reading of the whole dossier (18.10): "тело и привычки
+ * — бред" (an energy drink is a taste, not physiology), "люди" was too vague for
+ * what he actually wanted there (animals, friends, relatives), and money and plans
+ * never made it into a conversation he could point at. The five that remain are the
+ * ones he named as needed, and the closing line of his list is the test for each:
+ * "это по сути в каждом сообщении может использоваться".
  */
 export const PROFILE_SECTIONS = [
   "работа",
   "где живёт",
-  "тело и привычки",
   "досуг",
-  "люди",
-  "деньги и планы",
+  "окружение",
   "вкусы",
 ] as const;
 

@@ -277,10 +277,13 @@ export function createMemoryTool(opts: MemoryToolOptions = {}): Tool {
       "no way at all. A profile entry is one fact, in one line, " +
       "with no 'сказал', 'уточнил', 'объяснил' and no " +
       "cause and effect — it is read as a questionnaire, not as a retelling. Its topic " +
-      "comes from this list, exactly: 'работа', 'где живёт', 'тело и привычки', 'досуг', " +
-      "'люди', 'деньги и планы', 'вкусы'. Every section is about him: how you are built, " +
+      "comes from this list, exactly: 'работа', 'где живёт', 'досуг', 'окружение', " +
+      "'вкусы'. Every section is about him: how you are built, " +
       "what models your generation uses, what you can do — not a fact about him, and not " +
-      "a profile line. If a sharper fact replaces an older one, pass " +
+      "a profile line. The list is short on purpose, and each line has to pass one test: " +
+      "could it be used in any message ('это по сути в каждом сообщении может " +
+      "использоваться')? What you know about a friend, an animal or a relative belongs here " +
+      "too, under 'окружение', by name and by who they are to him. If a sharper fact replaces an older one, pass " +
       "the old entry's #ID in supersedes — the older line must not linger beside the new " +
       "one and disagree with it. Everything else is kind=\"episode\" (the default): what " +
       "happened, what was discussed or decided, with the subject as the topic.\n" +
@@ -309,7 +312,7 @@ export function createMemoryTool(opts: MemoryToolOptions = {}): Tool {
       { name: "action", type: "string", description: "One of: search, save, delete, list", required: true },
       { name: "query", type: "string", description: "Search query (required for action=search; results include the entry's #ID)" },
       { name: "content", type: "string", description: "Knowledge content to save (required for action=save)" },
-      { name: "topic", type: "string", description: "Topic tag for the entry (optional, default: general). For kind=profile use one of the seven sections listed above" },
+      { name: "topic", type: "string", description: "Topic tag for the entry (optional, default: general). For kind=profile use one of the five sections listed above" },
       {
         name: "kind",
         type: "string",

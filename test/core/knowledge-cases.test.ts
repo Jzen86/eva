@@ -237,7 +237,10 @@ describe("memory tool, case fields", () => {
     expect(tool.description).toMatch(/the date it starts from/i);
     // The section names are the dossier's, exactly — a profile row under a topic
     // that is not in the list renders as a hole in /profile.
-    expect(tool.description).toContain("'работа', 'где живёт', 'тело и привычки', 'досуг'");
+    expect(tool.description).toContain("'работа', 'где живёт', 'досуг', 'окружение'");
+    // The owner's own test for a line, and the five sections are what survived it
+    // (18.10: "тело и привычки — бред", money never came up in a conversation).
+    expect(tool.description).toMatch(/could it be used in any message/i);
   });
 
   it("refuses a case with no state rather than storing a rule", async () => {
