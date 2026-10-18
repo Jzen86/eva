@@ -2,7 +2,7 @@ import type { IncomingMessage, OutgoingMessage, ProgressCallback } from "./types
 import type { LLMClient, LLMMessage, ContentPart, ToolDefinition } from "./llm/types.js";
 import type { ToolRegistry } from "./tools/registry.js";
 import type { ToolResult } from "./tools/types.js";
-import { buildSystemPrompt, buildTimeSeams, buildTurnContext, type PromptConfig } from "./prompt.js";
+import { buildSystemPrompt, buildTimeSeams, buildTurnContext, stampHistory, type PromptConfig } from "./prompt.js";
 import { userFilesPath } from "./user-files.js";
 import {
   getConfigPath,
@@ -468,6 +468,21 @@ export class Engine {
     }
     let history = this.histories.get(userId)!;
 
+    /**
+     * The moment of this turn, in seconds — the clock every message it adds carries.
+     *
+     * So the request built at the end of the turn can say when each line happened
+     * (`stampHistory`): messages loaded from the table bring the row's own timestamp,
+     * and the ones this turn pushes are all this moment, give or take the seconds it
+     * takes to think. Without it, everything from one process's life reads as "just
+     * now" — the live failure of 18.10, where a morning of server work was called
+     * "ты только что ковырял" eight hours later, and a six-hour figure from 15:36 came
+     * back unchanged at 18:00.
+     */
+    const turnSeconds = Math.floor((msg.timestamp ?? Date.now()) / 1000);
+    /** His hours, for the clock in front of the lines of the window (`stampHistory`). */
+    const tzOffsetHours = this.liveConfig().timezoneOffsetHours ?? 4;
+
     // Drop the pictures shown to her during the previous turn. They exist so she
     // can judge what she just generated; keeping them would charge image tokens
     // on every later message of the session. See the feedback push below.
@@ -514,9 +529,9 @@ export class Engine {
           image_url: { url: `data:image/jpeg;base64,${b64}` },
         })),
       ];
-      history.push({ role: "user", content: parts });
+      history.push({ role: "user", content: parts, at: turnSeconds });
     } else {
-      history.push({ role: "user", content: textContent });
+      history.push({ role: "user", content: textContent, at: turnSeconds });
     }
 
     saveMessage(userId, msg.channelName, "user", textContent);
@@ -576,12 +591,12 @@ export class Engine {
           // These are instructions to one call.)
           const finalMessages: LLMMessage[] = [
             { role: "system", content: systemPrompt },
-            ...history,
+            ...stampHistory(history, tzOffsetHours),
             { role: "user", content: "Времени мало. Ответь на основе того, что уже удалось сделать. Не вызывай инструменты." },
           ];
           const finalResponse = await llm.chat(finalMessages);
           const text = finalResponse.text || "Не удалось завершить задачу полностью, но вот что получилось.";
-          history.push({ role: "assistant", content: text });
+          history.push({ role: "assistant", content: text, at: turnSeconds });
           saveMessage(userId, msg.channelName, "assistant", text);
           return { text, mediaUrl: lastMediaUrl, mediaPath: lastMediaPath, ...(media.length ? { media } : {}) };
         }
@@ -597,7 +612,7 @@ export class Engine {
 
         const request: LLMMessage[] = [
           { role: "system", content: systemPrompt },
-          ...history,
+          ...stampHistory(history, tzOffsetHours),
         ];
 
         const histSize = historyChars(history);
@@ -634,7 +649,7 @@ export class Engine {
         // a single turn itself goes enormous, and then all it can do is stop.
         if (response.usage && response.usage.promptTokens > MAX_PROMPT_TOKENS) {
           const text = response.text || "Достигнут лимит контекста. Вот что удалось найти.";
-          history.push({ role: "assistant", content: text });
+          history.push({ role: "assistant", content: text, at: turnSeconds });
           saveMessage(userId, msg.channelName, "assistant", text);
           console.log(JSON.stringify({
             tag: "engine:limit",
@@ -668,7 +683,7 @@ export class Engine {
                     : emptyReply(this.liveConfig().gender);
             }
           }
-          history.push({ role: "assistant", content: text });
+          history.push({ role: "assistant", content: text, at: turnSeconds });
           saveMessage(userId, msg.channelName, "assistant", text);
 
           return { text, mediaUrl: lastMediaUrl, mediaPath: lastMediaPath, ...(media.length ? { media } : {}) };
@@ -790,6 +805,10 @@ export class Engine {
                   { type: "text", text: IMAGE_FEEDBACK_NOTE },
                   { type: "image_url", image_url: { url: preview.dataUrl } },
                 ],
+                // The one push that must keep its identity: the list below is compared
+                // by reference at the top of the next turn, so a copy here would leave
+                // the picture in the history — and its base64 in every later request.
+                at: turnSeconds,
               };
               history.push(feedback);
               const shown = this.imageFeedback.get(userId) ?? [];
@@ -827,7 +846,7 @@ export class Engine {
           ];
           const finalResponse = await llm.chat(finalMessages);
           const text = finalResponse.text || `Инструмент "${overused[0]}" использован ${overused[1]} раз, но не удалось сформировать ответ.`;
-          history.push({ role: "assistant", content: text });
+          history.push({ role: "assistant", content: text, at: turnSeconds });
           saveMessage(userId, msg.channelName, "assistant", text);
           return { text, mediaUrl: lastMediaUrl, mediaPath: lastMediaPath, ...(media.length ? { media } : {}) };
         }
@@ -844,7 +863,7 @@ export class Engine {
       ];
       const wrapResponse = await llm.chat(wrapMessages);
       const text = wrapResponse.text || "Вот что удалось сделать.";
-      history.push({ role: "assistant", content: text });
+      history.push({ role: "assistant", content: text, at: turnSeconds });
       saveMessage(userId, msg.channelName, "assistant", text);
       return { text, mediaUrl: lastMediaUrl, mediaPath: lastMediaPath, ...(media.length ? { media } : {}) };
     } catch (err) {
@@ -873,7 +892,7 @@ export class Engine {
         ];
         const recoveryResponse = await llm.chat(recoveryMessages);
         const text = recoveryResponse.text || "Прости, что-то у меня зависло. Повтори, пожалуйста!";
-        history.push({ role: "assistant", content: text });
+        history.push({ role: "assistant", content: text, at: turnSeconds });
         saveMessage(userId, msg.channelName, "assistant", text);
         // Whatever the turn managed to make before it broke goes out with the
         // apology. The apology is a lie if the frame it answers about is thrown away.
@@ -881,7 +900,7 @@ export class Engine {
       } catch {
         // If even the recovery LLM call fails, use a simple message
         const text = "Прости, что-то у меня зависло. Повтори, пожалуйста!";
-        history.push({ role: "assistant", content: text });
+        history.push({ role: "assistant", content: text, at: turnSeconds });
         saveMessage(userId, msg.channelName, "assistant", text);
         return { text, mediaUrl: lastMediaUrl, mediaPath: lastMediaPath, ...(media.length ? { media } : {}) };
       }

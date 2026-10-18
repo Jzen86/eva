@@ -115,6 +115,9 @@ export function loadHistory(
     const msg: LLMMessage = {
       role: row.role as LLMMessage["role"],
       content: row.content,
+      // The moment the row carries, for the clock the request is built with. The
+      // provider never sees it — the mapper builds its own objects.
+      at: row.timestamp,
     };
 
     if (toolCalls && toolCalls.length > 0) {

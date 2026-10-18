@@ -1,6 +1,7 @@
 import { buildPersonalityPrompt } from "./personality.js";
 import { gapPassage, stampMoment } from "./memory/time-words.js";
 import type { LiveMessage, TimeSeam } from "./memory/conversations.js";
+import type { LLMMessage } from "./llm/types.js";
 
 /**
  * The moment, in words a model can use.
@@ -166,9 +167,50 @@ export function buildTimeSeams(seams: TimeSeam[], offsetHours: number): string {
 ${lines.join("\n")}`;
 }
 
+/**
+ * The clock in front of the lines of the window.
+ *
+ * A window of forty messages arrives as one feed, and nothing in it says when any of
+ * them happened: an hour-old conversation and this minute's read the same, which is how
+ * a morning of server work got called "ты только что ковырял" eight hours later (18.10)
+ * and how a "шесть с половиной часов" from 15:36 came back unchanged at 18:00. The
+ * seams block names the *pauses* it can find — at most three, and none at all inside a
+ * stretch that ran without a break; a stamp on every line costs about a hundred and
+ * fifty tokens per request and cannot miss.
+ *
+ * Messages without a moment are left alone rather than guessed at, and so are tool
+ * results and pictures: they are not things either of them said, and a clock on them
+ * would be a clock on the machinery. Text only — a message carrying image parts stays
+ * as it is, because the stamp would sit on the image instead of the words.
+ */
+export function stampHistory(messages: LLMMessage[], offsetHours: number, now = Date.now()): LLMMessage[] {
+  const today = localDay(now / 1000, offsetHours);
+  return messages.map((m) => {
+    if (typeof m.content !== "string" || !m.content.trim()) return m;
+    if (m.role !== "user" && m.role !== "assistant") return m;
+    if (!m.at) return m;
+
+    const stamp = localDay(m.at, offsetHours) === today
+      ? clockOnly(m.at, offsetHours)
+      : stampMoment(m.at, offsetHours);
+    return { ...m, content: `[${stamp}] ${m.content}` };
+  });
+}
+
+/** `HH:MM` in his zone. */
+function clockOnly(timestamp: number, offsetHours: number): string {
+  const d = new Date((timestamp + offsetHours * 3600) * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+}
+
+/** Days since the epoch in his zone, for "is this the same day as now". */
+function localDay(timestamp: number, offsetHours: number): number {
+  return Math.floor((timestamp + offsetHours * 3600) / 86_400);
+}
+
 /** Turn-specific context, appended after memories and summaries and before the query. */
-export function buildTurnContext(userMessage?: string, gap?: GapNotice): string {
-  const parts: string[] = [];
+export function buildTurnContext(userMessage?: string, gap?: GapNotice): string {  const parts: string[] = [];
   if (gap) parts.push(buildGapNotice(gap));
   if (userMessage) parts.push(`## Текущий запрос\n\n${userMessage}`);
   return parts.join("\n\n");
@@ -263,7 +305,7 @@ ${genderBlock}
   // Also: cheap to state, and it is the difference between an answer that carries
   // a date and one that quietly guesses.
   const now = new Date();
-  prompt += `\nСейчас: ${formatMoment(now, config.timezoneOffsetHours ?? 4)}. Если спрашивают про «последнее», «новое», «актуальное» — считай ответ устаревшим, если в нём нет даты или версии новее этого года. Про цифры, версии, даты и цены всегда сверяйся через web и говори, когда сверила.`;
+  prompt += `\nСейчас: ${formatMoment(now, config.timezoneOffsetHours ?? 4)}. Если спрашивают про «последнее», «новое», «актуальное» — считай ответ устаревшим, если в нём нет даты или версии новее этого года. Про цифры, версии, даты и цены всегда сверяйся через web и говори, когда сверила. В начале реплик в квадратных скобках стоит их время — это метка для тебя, в своих ответах её не повторяй; сверяй с ней, сколько времени прошло, прежде чем говорить «только что», «всего ничего» или называть срок.`;
 
   /**
    * A note the owner wrote, mixed into most turns but not every one.

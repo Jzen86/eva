@@ -27,6 +27,17 @@ export interface LLMMessage {
   toolCalls?: ToolUseRequest[];
   /** ID of the tool call this message is a result for (role=tool only). */
   toolCallId?: string;
+  /**
+   * When this message happened, in seconds.
+   *
+   * Never sent to a provider — `toProviderMessages` builds its own objects — it is
+   * the engine's own note, and the request it feeds is built with a clock in front of
+   * each line (`stampHistory`). Without it the forty messages of a window arrive as one
+   * feed with no seams, and an hour-old conversation reads as this minute's: measured
+   * live on 18.10, when she called a working day that had happened in the morning "ты
+   * только что ковырял" and quoted a six-hour figure that was true six hours earlier.
+   */
+  at?: number;
 }
 
 /** A chunk emitted during streaming. */
