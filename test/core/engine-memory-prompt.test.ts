@@ -164,6 +164,12 @@ describe("memory in the prompt", () => {
     expect(system).toContain("Что я о нём знаю");
     expect(system).toContain("Не любит зелёный цвет");
     expect(system).toMatch(/опирайся на запись, а не на свой вкус/);
+    // And the third responsibility, from the owner's own example (18.10): "сегодня я
+    // работаю, и она не станет говорить идём посидим на диване, это невозможно" — a
+    // standing arrangement has to be checked against the clock before anything is
+    // proposed, or the offer is made to an empty room.
+    expect(system).toMatch(/сверься с ним и с текущим временем/);
+    expect(system).toMatch(/предложение в пустоту/);
     // An episode is not part of the always-on block: it is looked up when the
     // conversation comes near it.
     expect(system).not.toContain("мы любим шампиньоны");

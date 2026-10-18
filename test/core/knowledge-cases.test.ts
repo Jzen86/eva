@@ -232,6 +232,9 @@ describe("memory tool, case fields", () => {
     const tool = createMemoryTool();
     expect(tool.description).toContain("2/2");
     expect(tool.description).toMatch(/standing arrangement/i);
+    // Counting starts from the anchor: a cycle with no date in it cannot be read
+    // against the calendar at all.
+    expect(tool.description).toMatch(/the date it starts from/i);
     // The section names are the dossier's, exactly — a profile row under a topic
     // that is not in the list renders as a hole in /profile.
     expect(tool.description).toContain("'работа', 'где живёт', 'тело и привычки', 'досуг'");

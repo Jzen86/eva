@@ -270,7 +270,11 @@ export function createMemoryTool(opts: MemoryToolOptions = {}): Tool {
       "arrangement is the other way round: a work schedule ('работает 2/2: два дня рабочих, " +
       "два выходных'), the shift pattern, the hour he gets up for a shift — those are profile " +
       "lines under 'работа', and they hold for months. What makes 'раз в день' an episode is " +
-      "being one moment's circumstance, not being regular. A profile entry is one fact, in one line, " +
+      "being one moment's circumstance, not being regular. Write such a line so the day can be " +
+      "counted from it: the cycle, the date it starts from, and the hours ('2/2, отсчёт от " +
+      "18.10.2026: 18–19 рабочие, 20–21 выходные, смена днём до 20:00') — she reads it to " +
+      "decide what is even possible right now, and a cycle without an anchor can be counted " +
+      "no way at all. A profile entry is one fact, in one line, " +
       "with no 'сказал', 'уточнил', 'объяснил' and no " +
       "cause and effect — it is read as a questionnaire, not as a retelling. Its topic " +
       "comes from this list, exactly: 'работа', 'где живёт', 'тело и привычки', 'досуг', " +
