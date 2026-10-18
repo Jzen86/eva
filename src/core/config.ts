@@ -137,6 +137,25 @@ const configSchema = z.object({
      */
     timezone_offset_hours: z.number().int().min(-12).max(14).default(4),
     /**
+     * His working cycle, when he has one (`work-schedule.ts`).
+     *
+     * The dossier keeps the rule — "2/2, с 8 до 22" — because a rule is true for
+     * months. Whether *today* is a working day is true for one day, so it is counted
+     * here, per turn, in the owner's hours: the alternative was a small model doing
+     * modular date arithmetic, and the day it gets that wrong is the day she invites
+     * him to the couch in the middle of his shift. Without this block nothing changes;
+     * `anchor` is the first day of the cycle and the one field that cannot be guessed,
+     * since a pattern without a phase has no answer.
+     */
+    schedule: z
+      .object({
+        work_days: z.number().int().min(1).max(60),
+        rest_days: z.number().int().min(0).max(60),
+        anchor: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        shift: z.string().optional(),
+      })
+      .optional(),
+    /**
      * Minutes of silence before a pause is worth telling her about.
      *
      * Ten minutes is not nothing to a person — "ты где был?" is a real thing to

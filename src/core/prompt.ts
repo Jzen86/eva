@@ -52,6 +52,17 @@ export interface PromptConfig {
   /** Hours to add to UTC for the date she is given. The box is not in the owner's timezone. */
   timezoneOffsetHours?: number;
   /**
+   * His working cycle, if he has one: the engine counts today from it and puts the
+   * answer in the prompt (`work-schedule.ts`). The dossier keeps the rule — "2/2,
+   * с 8 до 22" — and the day itself is computed, because a day is not a fact.
+   */
+  workSchedule?: {
+    workDays: number;
+    restDays: number;
+    anchor: string;
+    shift?: string;
+  };
+  /**
    * Minutes of silence that count as a pause. Absent means `GAP_THRESHOLD_MIN`
    * — the engine decides with this number, the prompt only words the result.
    */

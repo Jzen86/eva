@@ -14,6 +14,7 @@ import {
 } from "./config.js";
 import { searchKnowledge, renderKnowledge, KNOWLEDGE_PROMPT_LIMIT, profileKnowledge, knowledgeOfKind } from "./memory/knowledge.js";
 import { renderProfileDossier, renderFlatBlock, PROFILE_RULE, RULES_RULE, LESSON_RULE } from "./profile-dossier.js";
+import { scheduleLine } from "./work-schedule.js";
 import { REPORT_SHAPE } from "./watch-reports.js";
 import { previewImage, isInlineImage } from "./image-preview.js";
 import { saveMessage, loadHistory, extractText, previousLiveExchange, recentSeams } from "./memory/conversations.js";
@@ -294,6 +295,14 @@ export class Engine {
         },
         personalitySliders: getPersonalitySliders(config),
         timezoneOffsetHours: config.agent?.timezone_offset_hours,
+        workSchedule: config.agent?.schedule
+          ? {
+              workDays: config.agent.schedule.work_days,
+              restDays: config.agent.schedule.rest_days,
+              anchor: config.agent.schedule.anchor,
+              shift: config.agent.schedule.shift,
+            }
+          : undefined,
         gapThresholdMinutes: config.agent?.gap_threshold_min,
         owner: config.owner,
         filesVaultPath: userFilesPath(),
@@ -995,6 +1004,11 @@ export class Engine {
         if (profile) {
           prompt += `\n\n## Что я о нём знаю\n\n${profile}\n\n${PROFILE_RULE}`;
         }
+        // Today, counted from his cycle — the one part of the arrangement that cannot
+        // live in the dossier, since it is true for a day and not for months. Without
+        // a schedule in the config this is nothing at all.
+        const today = scheduleLine(live.workSchedule, incomingAt, live.timezoneOffsetHours ?? 0);
+        if (today) prompt += `\n\n${today}`;
         const rules = renderFlatBlock(knowledgeOfKind("rules"));
         if (rules) {
           prompt += `\n\n## Как с ним работать\n\n${rules}\n\n${RULES_RULE}`;

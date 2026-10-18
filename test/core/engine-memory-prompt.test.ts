@@ -175,6 +175,39 @@ describe("memory in the prompt", () => {
     expect(system).not.toContain("мы любим шампиньоны");
   });
 
+  it("puts today's shift in front of her, counted from the cycle in the config", async () => {
+    // The dossier holds the rule ("2/2, с 8 до 22"); the day itself is counted here,
+    // because a day changes at midnight and a small model doing modular date
+    // arithmetic gets it wrong exactly when it matters — the owner's own reason:
+    // "сегодня я работаю, и она не станет говорить идём посидим на диване".
+    const engine = new Engine({
+      llm: captureLlm(),
+      config: {
+        ...testConfig,
+        timezoneOffsetHours: 4,
+        workSchedule: { workDays: 2, restDays: 2, anchor: "2026-10-18", shift: "8:00–22:00" },
+      },
+      tools: new ToolRegistry(),
+    });
+
+    await engine.process({
+      channelName: "test",
+      userId: "mem-shift",
+      text: "привет",
+      timestamp: Date.UTC(2026, 9, 18, 6),
+    });
+
+    const system = String(captured[0]?.[0]?.content);
+    expect(system).toContain("Его график: сегодня 18.10.2026");
+    expect(system).toContain("рабочий день, смена 8:00–22:00");
+  });
+
+  it("says nothing about a schedule when the config has none", async () => {
+    const engine = new Engine({ llm: captureLlm(), config: testConfig, tools: new ToolRegistry() });
+    await engine.process({ channelName: "test", userId: "mem-noshift", text: "привет", timestamp: Date.now() });
+    expect(String(captured[0]?.[0]?.content)).not.toContain("Его график");
+  });
+
   it("gives a check the skeleton of a report, and a conversation none", async () => {
     // The owner asked for a structure he can verify — what was checked, what was found,
     // what she recommends, the verdict — and for it in her own words rather than as a form:
