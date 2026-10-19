@@ -79,8 +79,15 @@ const MAX_CHAT_ROWS = 400;
  * Sized to what the old twenty-message window cost, so moving from a window to a
  * cursor does not grow the prompt — the same budget just buys the messages that
  * have not been read instead of the messages that happen to be newest.
+ *
+ * Raised to 20k on 19.10 at the owner's word: her replies are long, so 12k of
+ * transcript bought only fourteen messages, and a study run read a torn fragment —
+ * which is how "назови причёску в промте" became the memory row "названы в
+ * сопроводительном тексте". The cursor already guarantees nothing is skipped, so
+ * this buys coherence inside one run, not coverage; the study model is qwen and
+ * cheap enough that the owner called the cost negligible.
  */
-const MAX_CHAT_TOTAL_CHARS = 12000;
+const MAX_CHAT_TOTAL_CHARS = 20000;
 /**
  * Cap for the rolling summary. Generous relative to one message, because it
  * stands in for everything that has already scrolled out of the window — but
