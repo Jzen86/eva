@@ -167,8 +167,10 @@ describe("study: the read cursor", () => {
     // counts as read: a batch cut from the front would leave the dropped messages
     // below the mark and the pointer claiming they had been read. Cut from the
     // back and the pointer stays true and the remainder waits its turn.
+    // Forty messages of ~900 characters, because one run now reads 20k of
+    // transcript (raised 19.10) — with the old 12k the same test used 25.
     const marks = Array.from(
-      { length: 25 },
+      { length: 40 },
       (_, i) => `МЕТКА-${String(i).padStart(2, "0")}` + "я".repeat(900),
     );
     say(marks);
@@ -179,19 +181,19 @@ describe("study: the read cursor", () => {
     // The oldest went in, the newest was held back, and the pointer stopped at
     // the last one that actually went in.
     expect(first.prompt).toContain("МЕТКА-00");
-    expect(first.prompt).not.toContain("МЕТКА-24");
+    expect(first.prompt).not.toContain("МЕТКА-39");
     expect(firstCursor).toBeLessThan(marks.length);
 
     // Nothing was lost: the next session picks up exactly where it stopped.
     const second = await session();
-    expect(second.prompt).toContain("МЕТКА-24");
+    expect(second.prompt).toContain("МЕТКА-39");
     expect(second.prompt).not.toContain("МЕТКА-00");
   });
 
   it("says so in the report when a batch did not fit", async () => {
     // A chat producing more than one budget an hour has to look like a backlog,
     // not like nothing happening.
-    say(Array.from({ length: 25 }, (_, i) => `МЕТКА-${String(i).padStart(2, "0")}` + "я".repeat(900)));
+    say(Array.from({ length: 40 }, (_, i) => `МЕТКА-${String(i).padStart(2, "0")}` + "я".repeat(900)));
 
     const chat = vi.fn().mockResolvedValue({ text: '{"facts": []}', stopReason: "end_turn" });
     const result = await runStudy({
