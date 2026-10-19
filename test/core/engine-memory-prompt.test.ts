@@ -7,6 +7,7 @@ import { Engine } from "../../src/core/engine.js";
 import { ToolRegistry } from "../../src/core/tools/registry.js";
 import { getDB, closeDB } from "../../src/core/memory/db.js";
 import { addKnowledge } from "../../src/core/memory/knowledge.js";
+import { recordScene } from "../../src/core/memory/scene-log.js";
 import type { LLMMessage } from "../../src/core/llm/types.js";
 
 /**
@@ -200,6 +201,34 @@ describe("memory in the prompt", () => {
     const system = String(captured[0]?.[0]?.content);
     expect(system).toContain("Его график: сегодня 18.10.2026");
     expect(system).toContain("рабочий день, смена 8:00–22:00");
+  });
+
+  it("puts her own last frames in front of her, and not in front of a check", async () => {
+    recordScene("frames-chat", "спальня, пучок, ухмылка, утро");
+    recordScene("frames-chat", "кухня, распущенные волосы, улыбка, вечер");
+
+    const engine = new Engine({ llm: captureLlm(), config: testConfig, tools: new ToolRegistry() });
+    await engine.process({ channelName: "test", userId: "frames-chat", text: "привет", timestamp: Date.now() });
+
+    const system = String(captured.at(-1)?.[0]?.content);
+    expect(system).toContain("Твои последние кадры");
+    expect(system).toContain("кухня, распущенные волосы");
+    expect(system).toContain("спальня, пучок");
+    // Newest first: the freshest frame is the one she is told hardest not to
+    // repeat, because that is the one she would otherwise reach for again.
+    expect(system.indexOf("кухня")).toBeLessThan(system.indexOf("спальня"));
+    expect(system).toMatch(/не должен повторять/);
+
+    // A check reads a log and a diff; there is no picture in it. The frames are
+    // kept out of it for the same reason the profile block is.
+    await engine.process({
+      channelName: "test",
+      userId: "frames-check",
+      text: "плановая проверка",
+      timestamp: Date.now(),
+      metadata: { scheduledTask: true, reportTask: true },
+    });
+    expect(String(captured.at(-1)?.[0]?.content)).not.toContain("Твои последние кадры");
   });
 
   it("says nothing about a schedule when the config has none", async () => {

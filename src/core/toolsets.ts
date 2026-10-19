@@ -48,6 +48,7 @@ import { SwitchModelTool } from "./tools/switch-model.js";
 import { DoctorTool } from "./tools/doctor.js";
 import { createMemoryTool } from "./tools/memory.js";
 import type { EmbeddingEndpoint } from "./memory/dedup.js";
+import { recordScene } from "./memory/scene-log.js";
 import type { ProviderRegistry } from "./llm/registry.js";
 import type { LLMRouter } from "./llm/router.js";
 import { getLLMApiKey, getConfigPath, type EvaConfig } from "./config.js";
@@ -327,6 +328,9 @@ export function buildTools(ctx: ToolsetContext): ToolsetResult {
         ...(body ? { body } : {}),
         ...(ownerBody ? { ownerBody } : {}),
         ...(comfy ? { comfy } : {}),
+        // Every drawn frame is remembered, so her next scene is not the same
+        // room again — see memory/scene-log.ts for what this was measured to fix.
+        sceneLog: recordScene,
       }),
       "keyed",
     );

@@ -105,6 +105,18 @@ export function getDB(dbPath?: string): Database.Database {
       timestamp INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
+    -- The scenes of the frames she has already made. Not knowledge about him and
+    -- not a conversation: it is a short log the engine reads back so the next
+    -- picture is not the same room, the same morning and the same smirk again.
+    -- See memory/scene-log.ts for the measurement that put it here.
+    CREATE TABLE IF NOT EXISTS scene_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      context TEXT NOT NULL,
+      mode TEXT NOT NULL DEFAULT '',
+      timestamp INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
     CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts
       USING fts5(stems, content='knowledge', content_rowid='id');
 
@@ -162,6 +174,7 @@ export function getDB(dbPath?: string): Database.Database {
   migrateSummaryChunks();
 
   db.exec("CREATE INDEX IF NOT EXISTS idx_conv_user ON conversations(user_id, timestamp)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_scene_user ON scene_log(user_id, id)");
 
   migrateKnowledgeSchema();
   migrateKnowledgeIndex();

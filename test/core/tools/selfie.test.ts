@@ -540,4 +540,86 @@ describe("SelfieTool", () => {
 
     vi.unstubAllGlobals();
   });
+
+  it("asks for all six parts of the scene by name", async () => {
+    // Measured live: she describes thoroughly but the *choices* stay put — the
+    // same room, the same morning, the same smirk — and a frame whose scene
+    // names hair, expression, clothing, pose, background and light is the one
+    // that actually changes on the generator. So the six are named here, each
+    // with examples, rather than left as "describe it in detail".
+    const tool = new SelfieTool({ openrouterApiKey: "k", referencePhotoUrl: "https://example.com/photo.jpg" });
+    const d = tool.description;
+    expect(d).toContain("ПРИЧЁСКА");
+    expect(d).toContain("ВЗГЛЯД");
+    expect(d).toContain("ЧТО НА ТЕБЕ");
+    expect(d).toContain("ПОЗА");
+    expect(d).toContain("ФОН");
+    expect(d).toContain("СВЕТ");
+    expect(d).toMatch(/шесть вещей/);
+    // And what a missing part costs: the engine fills it in with the default,
+    // which is exactly the frame she was trying not to repeat.
+    expect(d).toMatch(/дорисует его сам/);
+  });
+
+  it("remembers a scene it drew, and forgets one it refused", async () => {
+    const upload = vi.fn().mockResolvedValue("eva_ref.jpg");
+    const generate = vi.fn().mockResolvedValue("data:image/png;base64,AAAA");
+    const sceneLog = vi.fn();
+    const tool = new SelfieTool({
+      openrouterApiKey: "or-key",
+      referencePath: path.join(os.tmpdir(), "eva-no-such-reference.jpg"),
+      appearance: "A woman with a balanced figure",
+      comfy: { upload, generate } as unknown as ComfyClient,
+      sceneLog,
+    });
+
+    const drawn = await tool.execute({
+      context: "утро, распущенные волосы, мягкая улыбка, кухня, свитер",
+      mode: "direct",
+      _userId: "u1",
+    });
+    expect(drawn.success).toBe(true);
+    expect(sceneLog).toHaveBeenCalledTimes(1);
+    expect(sceneLog.mock.calls[0][0]).toBe("u1");
+    expect(sceneLog.mock.calls[0][1]).toContain("распущенные волосы");
+    expect(sceneLog.mock.calls[0][2]).toBe("direct");
+
+    // A refusal is not a frame she has to avoid repeating: the prompt check
+    // catches two lights that cannot both be true, and nothing is remembered.
+    sceneLog.mockClear();
+    const refused = await tool.execute({ context: "in the dark, sunny morning light", mode: "direct" });
+    expect(refused.success).toBe(false);
+    expect(sceneLog).not.toHaveBeenCalled();
+  });
+
+  it("remembers a pair frame as a scene too", async () => {
+    const her = path.join(os.tmpdir(), `eva-sc-her-${Date.now()}.jpg`);
+    const owner = path.join(os.tmpdir(), `eva-sc-own-${Date.now()}.jpg`);
+    fs.writeFileSync(her, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+    fs.writeFileSync(owner, Buffer.from([0xff, 0xd8, 0xff, 0xe1]));
+    const upload = vi.fn().mockResolvedValueOnce("eva_ref.jpg").mockResolvedValueOnce("eva_owner.jpg");
+    const generate = vi.fn().mockResolvedValue("data:image/png;base64,AAAA");
+    const sceneLog = vi.fn();
+    const tool = new SelfieTool({
+      openrouterApiKey: "or-key",
+      referencePath: her,
+      ownerReferencePath: owner,
+      comfy: { upload, generate } as unknown as ComfyClient,
+      sceneLog,
+    });
+
+    await tool.execute({
+      context: "вечер на балконе, оба в свитерах",
+      with_owner: true,
+      his_outfit: "grey sweater",
+      _userId: "u2",
+    });
+
+    expect(sceneLog).toHaveBeenCalledTimes(1);
+    expect(sceneLog.mock.calls[0][2]).toBe("pair");
+    expect(sceneLog.mock.calls[0][1]).toContain("балконе");
+
+    fs.unlinkSync(her);
+    fs.unlinkSync(owner);
+  });
 });

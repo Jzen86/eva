@@ -14,6 +14,7 @@ import {
   type EvaConfig,
 } from "./config.js";
 import { searchKnowledge, renderKnowledge, KNOWLEDGE_PROMPT_LIMIT, profileKnowledge, knowledgeOfKind } from "./memory/knowledge.js";
+import { recentScenes, renderRecentFrames, FRAME_VARIETY_RULE } from "./memory/scene-log.js";
 import { renderProfileDossier, renderFlatBlock, PROFILE_RULE, RULES_RULE, LESSON_RULE } from "./profile-dossier.js";
 import { scheduleLine } from "./work-schedule.js";
 import { REPORT_SHAPE } from "./watch-reports.js";
@@ -1040,6 +1041,27 @@ export class Engine {
         const lessons = renderFlatBlock(knowledgeOfKind("lesson"));
         if (lessons) {
           prompt += `\n\n## Чему он меня научил\n\n${lessons}\n\n${LESSON_RULE}`;
+        }
+      }
+    } catch {
+      // Memory not initialized yet — skip
+    }
+
+    // The frames she has already made — so the next scene is not that one again.
+    //
+    // Measured on the live install: with a list of suggested axes in the tool
+    // description, and even with explicit labels, the writer returned to the same
+    // room, the same morning and the same smirk; shown its own last frames and
+    // told not to repeat them, it spread across locations, poses, hairstyles and
+    // moods. Nothing here is new storage — the rows are what she already drew —
+    // and only the last few ride along, because the block is in front of her on
+    // every turn. Not on a check turn, like the blocks above: a report has no
+    // picture in it.
+    try {
+      if (!reportTurn) {
+        const frames = renderRecentFrames(recentScenes(chatId));
+        if (frames) {
+          prompt += `\n\n## Твои последние кадры\n\n${frames}\n\n${FRAME_VARIETY_RULE}`;
         }
       }
     } catch {

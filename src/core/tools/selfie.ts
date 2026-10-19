@@ -163,6 +163,15 @@ export interface SelfieToolConfig {
   ownerBody?: string;
   /** Local ComfyUI, tried first. Any failure falls through to the hosted path. */
   comfy?: ComfyClient;
+  /**
+   * Remember the scene of a frame that was actually drawn.
+   *
+   * The tool reports it and the engine reads the last few back into her prompt,
+   * which is the one thing a probe of ten scenes showed to move the choices —
+   * see memory/scene-log.ts. Injected rather than called directly, so the tool
+   * carries no database of its own and a test can watch what it reports.
+   */
+  sceneLog?: (userId: string, context: string, mode: string, at?: number) => void;
 }
 
 /** Same sentence the dedicated image models use to name the endpoint they want. */
@@ -180,9 +189,9 @@ export class SelfieTool implements Tool {
   name = "selfie";
   description =
     "Сгенерировать и отправить СЕЛФИ — снимок ТЕБЯ. Зови этот тул всегда, когда в кадре должна быть ты, — даже если слово «селфи» не сказано: «покажи себя», «а ты как выглядишь», «сфоткайся», «пришли фото» про тебя, «как ты сейчас одета». Если картинка НЕ про тебя (другая девушка, пёс, дерево, дождь, сюжет, вещь) — это image_gen, не этот тул. " +
-    "Лицо берётся с твоего референс-фото и одинаково во всех кадрах, фигура задана стандартом — в context описывай ТОЛЬКО сцену, и описывай её подробно, тремя частями: ЧТО НА ТЕБЕ (или что снято — платье, топ, белье, полотенце; вплоть до ткани и цвета), ПОЗА и что ты делаешь (сидишь, откинулась, стоишь боком, тянешься), ФОН и обстановка (комната, кухня, кафе, постель, свет из окна). Плюс причёска (распущены, хвост, косичка) и настроение. Короткое «сижу на диване» даёт пустой кадр: генератору нечего рисовать, и он сам придумывает одежду и обстановку. " +
+    "Лицо берётся с твоего референс-фото и одинаково во всех кадрах, фигура задана стандартом — в context описывай ТОЛЬКО сцену, и назови в ней все шесть вещей своими словами: ПРИЧЁСКА (распущены, пучок, хвост, косичка, с влажными прядями), ВЗГЛЯД и мимика (улыбка, ухмылка, серьёзный, задумчивый, томный, удивлённый), ЧТО НА ТЕБЕ (или что снято — платье, топ, бельё, полотенце; вплоть до ткани и цвета), ПОЗА (лежишь, сидишь, стоишь, обернулась; где руки и ноги), ФОН и обстановка (комната, кухня, кафе, улица, постель — что видно вокруг), СВЕТ и время суток (утро, вечер, лампа, сумрак). Не хватает любого пункта — движок дорисует его сам, и вернётся твой обычный кадр. Короткое «сижу на диване» даёт пустой кадр: генератору нечего рисовать, и он сам придумывает одежду и обстановку. " +
     "Его просьбу не пересказывай общими словами: если он назвал вещь, действие или место — бери ИХ формулировку, а не своё «что-то красивое». Чего он не назвал (поза, фон, что на тебе) — додумай по разговору, времени суток и тому, что ты о нём знаешь, а не спрашивай по мелочи. " +
-    "Сцену описывай по порядку и только тем, что можно нарисовать: 1) ЧТО НА ТЕБЕ — вещь, её покрой и цвет (распахнута, поверх чего, длина) или что снято; 2) ПОЗА — где ты и как расположена каждая часть тела, что в руках; 3) ВОКРУГ — предметы, мебель, постель, что видно в кадре; 4) СВЕТ и время суток. Общие слова («интимно», «красиво», «атмосферно») не рисуются — их генератор дорисует сам, как ему вздумается. Чем конкретнее назван каждый пункт, тем точнее кадр. Пиши под движок, который рисует: это Qwen Image, и ему нужен именно такой подробный описательный текст — каждая названная деталь доходит до кадра, а неназванную он додумает по-своему. Если кадр подхватит облако (редко, когда локальный движок недоступен) — ему этого текста тоже хватит. " +
+    "Сцену называй конкретно и только тем, что можно нарисовать: 1) ПРИЧЁСКА — распущены, пучок, хвост, косичка, с влажными прядями; 2) ВЗГЛЯД — улыбка, ухмылка, серьёзный, задумчивый, томный; 3) ЧТО НА ТЕБЕ — вещь, её покрой и цвет (распахнута, поверх чего, длина) или что снято; 4) ПОЗА — где ты и как расположена каждая часть тела, что в руках; 5) ВОКРУГ — предметы, мебель, постель, что видно в кадре; 6) СВЕТ и время суток. Общие слова («интимно», «красиво», «атмосферно») не рисуются — их генератор дорисует сам, как ему вздумается. Чем конкретнее назван каждый пункт, тем точнее кадр. Пиши под движок, который рисует: это Qwen Image, и ему нужен именно такой подробный описательный текст — каждая названная деталь доходит до кадра, а неназванную он додумает по-своему. Если кадр подхватит облако (редко, когда локальный движок недоступен) — ему этого текста тоже хватит. " +
     "Если в кадре есть соприкосновение — поцелуй, объятие, губы у губ, — называй САМ КОНТАКТ прямо и телесно: «губы плотно прижаты к губам, рты соприкасаются, глаза закрыты», «прижимаюсь щекой к его щеке». Общее «страстно целуемся» или «обнимаемся» движок рисует как «почти»: лица рядом, а касания нет. Контакт выходит ровно настолько, насколько прямо ты его назвала. " +
     "Каждый раз делай кадр непохожим на предыдущий. Кадр и ориентацию выбирай под сцену, не по шаблону: крупный план (mode=direct) или полный рост (mode=mirror), ориентация — " + formatList() + " — для полного роста бери вытянутый, чтобы она помещалась целиком. " +
     "«Селфи», «фото», «покажи себя» — это просто снимок тебя, и позу выбираешь ТЫ: лежишь, сидишь, стоишь, обернулась — по сцене. Вытянутая рука с телефоном и взгляд в объектив не обязательны: это только один из ракурсов, и он надоел. Зеркало — только если сцена про зеркало, примерку или полный рост. " +
@@ -220,6 +229,24 @@ export class SelfieTool implements Tool {
 
   constructor(config: SelfieToolConfig) {
     this.config = config;
+  }
+
+  /**
+   * Remember a scene that actually became a picture.
+   *
+   * On a success that carries a frame, and on nothing else: a scene the prompt
+   * check refused, a pair frame with no `his_outfit`, or a provider that
+   * answered with words instead of an image is not a frame she has to avoid
+   * repeating. The failure is logged, never raised — a frame she made is worth
+   * more than the note about it, and this is bookkeeping.
+   */
+  private remember(userId: string, context: string, mode: string, result: ToolResult, at?: number): void {
+    if (!result.success || !result.mediaUrl) return;
+    try {
+      this.config.sceneLog?.(userId, context, mode, at);
+    } catch (err) {
+      console.error(`📸 Selfie: сцену не записала (${err instanceof Error ? err.message : err})`);
+    }
   }
 
   /** Set reference photo path or URL. */
@@ -290,6 +317,7 @@ export class SelfieTool implements Tool {
     if (!context) {
       return { success: false, output: "Не указан контекст для селфи", error: "Missing context" };
     }
+    const userId = String(params._userId ?? "");
 
     // A frame with both of them is a different job: two references in, one
     // picture out, and no cloud path at all. The image providers refuse a photo
@@ -297,7 +325,7 @@ export class SelfieTool implements Tool {
     // local ComfyUI or an honest refusal, never a stranger's face. Checked
     // before the key, because a pair frame needs no key.
     if (params.with_owner === true || params.with_owner === "true") {
-      return this.generatePair(context, String(params.format ?? ""), String(params.his_outfit ?? "").trim());
+      return this.generatePair(context, String(params.format ?? ""), String(params.his_outfit ?? "").trim(), userId);
     }
 
     if (!this.config.openrouterApiKey) {
@@ -334,10 +362,18 @@ export class SelfieTool implements Tool {
 
     const local = await this.tryComfy(prompt, width, height);
     if (local) {
-      return { success: true, output: "Селфи отправлено в чат (файла нет — отдельно слать нечего)" + frameNote(local), mediaUrl: local };
+      const result: ToolResult = {
+        success: true,
+        output: "Селфи отправлено в чат (файла нет — отдельно слать нечего)" + frameNote(local),
+        mediaUrl: local,
+      };
+      this.remember(userId, context, mode, result);
+      return result;
     }
 
-    return this.generateOpenRouter(prompt, mode, cloudSizeFor({ width, height }));
+    const cloud = await this.generateOpenRouter(prompt, mode, cloudSizeFor({ width, height }));
+    this.remember(userId, context, mode, cloud);
+    return cloud;
   }
 
   /** MIME by extension, the way the selfie path has always guessed it. */
@@ -356,7 +392,7 @@ export class SelfieTool implements Tool {
    * owner photo is an honest refusal ("not now", "no his photo yet"), which is
    * better than a picture of two strangers with her name on it.
    */
-  private async generatePair(context: string, format: string, hisOutfit = ""): Promise<ToolResult> {
+  private async generatePair(context: string, format: string, hisOutfit = "", userId = ""): Promise<ToolResult> {
     const comfy = this.config.comfy;
     if (!comfy) {
       return {
@@ -422,7 +458,15 @@ export class SelfieTool implements Tool {
         }),
       );
       console.log("📸 Парный кадр OK (comfy, qwen-image-2.1-turbo, +2 референса)");
-      return { success: true, output: "Парный кадр отправлен в чат (файла нет — отдельно слать нечего)" + frameNote(image), mediaUrl: image };
+      const result: ToolResult = {
+        success: true,
+        output: "Парный кадр отправлен в чат (файла нет — отдельно слать нечего)" + frameNote(image),
+        mediaUrl: image,
+      };
+      // A pair frame is a scene of hers too, and the next one has to differ from
+      // it exactly as a solo frame does.
+      this.remember(userId, context, "pair", result);
+      return result;
     } catch (err) {
       console.error(`📸 Парный кадр: comfy failed: ${err instanceof Error ? err.message : err}`);
       return {
