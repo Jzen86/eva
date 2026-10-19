@@ -541,12 +541,12 @@ describe("SelfieTool", () => {
     vi.unstubAllGlobals();
   });
 
-  it("asks for all six parts of the scene by name", async () => {
-    // Measured live: she describes thoroughly but the *choices* stay put — the
-    // same room, the same morning, the same smirk — and a frame whose scene
-    // names hair, expression, clothing, pose, background and light is the one
-    // that actually changes on the generator. So the six are named here, each
-    // with examples, rather than left as "describe it in detail".
+  it("asks for all six parts of the scene, and does not ask her to differ from the last frame", async () => {
+    // Measured live: she describes a scene thoroughly but the *choices* stand
+    // still, and a frame whose scene names hair, expression, clothing, pose,
+    // background and light is the one that actually moves on the generator —
+    // with the reference attached, a short general prompt renders the reference
+    // as-is. So the six are named here, each with its examples.
     const tool = new SelfieTool({ openrouterApiKey: "k", referencePhotoUrl: "https://example.com/photo.jpg" });
     const d = tool.description;
     expect(d).toContain("ПРИЧЁСКА");
@@ -556,70 +556,22 @@ describe("SelfieTool", () => {
     expect(d).toContain("ФОН");
     expect(d).toContain("СВЕТ");
     expect(d).toMatch(/шесть вещей/);
-    // And what a missing part costs: the engine fills it in with the default,
-    // which is exactly the frame she was trying not to repeat.
-    expect(d).toMatch(/дорисует его сам/);
-  });
 
-  it("remembers a scene it drew, and forgets one it refused", async () => {
-    const upload = vi.fn().mockResolvedValue("eva_ref.jpg");
-    const generate = vi.fn().mockResolvedValue("data:image/png;base64,AAAA");
-    const sceneLog = vi.fn();
-    const tool = new SelfieTool({
-      openrouterApiKey: "or-key",
-      referencePath: path.join(os.tmpdir(), "eva-no-such-reference.jpg"),
-      appearance: "A woman with a balanced figure",
-      comfy: { upload, generate } as unknown as ComfyClient,
-      sceneLog,
-    });
+    // And whose choice it is. He asked for exactly this (19.10): "сама выбирать
+    // и описывать — внешность (волосы, выражение, позу, руки ноги), положение
+    // (сидя стоя лёжа, да хоть прыгая), обстановка (комната, парк, кафе, пляж),
+    // и свет". The choice is hers, the scene comes from the conversation, and the
+    // position is free — "хоть в прыжке" is his own example.
+    expect(d).toMatch(/выбираешь ТЫ САМА/);
+    expect(d).toMatch(/парк, пляж/);
+    expect(d).toMatch(/хоть в прыжке/);
 
-    const drawn = await tool.execute({
-      context: "утро, распущенные волосы, мягкая улыбка, кухня, свитер",
-      mode: "direct",
-      _userId: "u1",
-    });
-    expect(drawn.success).toBe(true);
-    expect(sceneLog).toHaveBeenCalledTimes(1);
-    expect(sceneLog.mock.calls[0][0]).toBe("u1");
-    expect(sceneLog.mock.calls[0][1]).toContain("распущенные волосы");
-    expect(sceneLog.mock.calls[0][2]).toBe("direct");
-
-    // A refusal is not a frame she has to avoid repeating: the prompt check
-    // catches two lights that cannot both be true, and nothing is remembered.
-    sceneLog.mockClear();
-    const refused = await tool.execute({ context: "in the dark, sunny morning light", mode: "direct" });
-    expect(refused.success).toBe(false);
-    expect(sceneLog).not.toHaveBeenCalled();
-  });
-
-  it("remembers a pair frame as a scene too", async () => {
-    const her = path.join(os.tmpdir(), `eva-sc-her-${Date.now()}.jpg`);
-    const owner = path.join(os.tmpdir(), `eva-sc-own-${Date.now()}.jpg`);
-    fs.writeFileSync(her, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
-    fs.writeFileSync(owner, Buffer.from([0xff, 0xd8, 0xff, 0xe1]));
-    const upload = vi.fn().mockResolvedValueOnce("eva_ref.jpg").mockResolvedValueOnce("eva_owner.jpg");
-    const generate = vi.fn().mockResolvedValue("data:image/png;base64,AAAA");
-    const sceneLog = vi.fn();
-    const tool = new SelfieTool({
-      openrouterApiKey: "or-key",
-      referencePath: her,
-      ownerReferencePath: owner,
-      comfy: { upload, generate } as unknown as ComfyClient,
-      sceneLog,
-    });
-
-    await tool.execute({
-      context: "вечер на балконе, оба в свитерах",
-      with_owner: true,
-      his_outfit: "grey sweater",
-      _userId: "u2",
-    });
-
-    expect(sceneLog).toHaveBeenCalledTimes(1);
-    expect(sceneLog.mock.calls[0][2]).toBe("pair");
-    expect(sceneLog.mock.calls[0][1]).toContain("балконе");
-
-    fs.unlinkSync(her);
-    fs.unlinkSync(owner);
+    // The scene is hers to take from the conversation, and that includes the same
+    // room five frames in a row when that is what the talk is about. The
+    // anti-repetition instruction that used to stand in this description was
+    // removed on the owner's decision (19.10): the seed already makes every frame
+    // a different picture, and a rule against repeating fights a conversation
+    // that is happening in one room.
+    expect(d).not.toContain("непохожим на предыдущий");
   });
 });
