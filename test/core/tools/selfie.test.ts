@@ -55,6 +55,13 @@ describe("SelfieTool", () => {
     const tool = new SelfieTool({ openrouterApiKey: "k", referencePhotoUrl: "https://example.com/photo.jpg" });
     expect(tool.parameters[1].required).toBe(true);
     expect(String(tool.parameters[1].description)).toContain("ОБЯЗАТЕЛЬНО в каждом кадре");
+    // Live experiment, started on the owner's word (19.10): the slot is filled
+    // every time and filled with the same value, so the *decision* is what is
+    // being changed, not the wording about hair. Measured over 20 requests per
+    // arm: 80% of frames with the hair gathered against 55% in the control — a
+    // hint, not proof (p≈0.1), which is why it is being judged on her live
+    // journal for a day instead of on another probe.
+    expect(String(tool.parameters[1].description)).toMatch(/прикинь 2.3 разные укладки/);
     expect(tool.description).toMatch(/заполняешь ВСЕГДА/);
     expect(tool.description).toMatch(/обязательный пункт каждого кадра/);
 
