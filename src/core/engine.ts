@@ -23,6 +23,7 @@ import { gapFacts, GAP_THRESHOLD_MIN, type GapFacts } from "./memory/time-words.
 import { compactHistory } from "./memory/compaction.js";
 import { alignHistory } from "./llm/history.js";
 import { LLMUnavailableError } from "./llm/router.js";
+import { failureSentence } from "./llm/errors.js";
 import { isHeavyToolCall } from "./tool-tiers.js";
 import { peek } from "./pending.js";
 import { TokenStore } from "../services/tokens.js";
@@ -875,14 +876,13 @@ export class Engine {
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.error("Engine error:", errorMsg);
 
+      // The reason has to survive into the sentence. A 503, a 429, a spent key and
+      // an empty 200 need different actions, and the old "что-то у меня зависло"
+      // told the owner nothing about which one it was (his ask, 19.10).
+      const fallback = `Блин, ${failureSentence(err)}`;
+
       // Try to let LLM explain what happened naturally
       try {
-        const errorContext = errorMsg.includes("timed out") ? "запрос к языковой модели завис — слишком долго думала"
-          : errorMsg.includes("billing") || errorMsg.includes("402") ? "закончились кредиты на API языковой модели"
-          : errorMsg.includes("rate") || errorMsg.includes("429") ? "слишком много запросов, API временно ограничил доступ"
-          : errorMsg.includes("503") || errorMsg.includes("502") ? "сервер языковой модели временно недоступен"
-          : `техническая проблема: ${errorMsg}`;
-
         // Last chance to leave the history in a state someone can answer: the
         // apology below is the last thing Eva says this turn, and if it goes
         // out on an unparseable history the user gets silence instead of it.
@@ -893,10 +893,10 @@ export class Engine {
         const recoveryMessages: LLMMessage[] = [
           { role: "system", content: systemPrompt },
           ...history,
-          { role: "user", content: `[Системное сообщение: произошла ошибка — ${errorContext}. Объясни пользователю своими словами что случилось, извинись и предложи попробовать ещё раз. Не используй технические термины. Будь краткой.]` },
+          { role: "user", content: `[Системное сообщение: произошла ошибка — ${failureSentence(err)} Передай ему это своими словами, в одном-двух предложениях: назови причину так, как она названа здесь, можно с кодом, и что делать. Коротко извинись. Других причин не выдумывай, ремарок не добавляй.]` },
         ];
         const recoveryResponse = await llm.chat(recoveryMessages);
-        const text = recoveryResponse.text || "Прости, что-то у меня зависло. Повтори, пожалуйста!";
+        const text = recoveryResponse.text || fallback;
         history.push({ role: "assistant", content: text, at: turnSeconds });
         saveMessage(userId, msg.channelName, "assistant", text);
         // Whatever the turn managed to make before it broke goes out with the
@@ -904,7 +904,7 @@ export class Engine {
         return { text, mediaUrl: lastMediaUrl, mediaPath: lastMediaPath, ...(media.length ? { media } : {}) };
       } catch {
         // If even the recovery LLM call fails, use a simple message
-        const text = "Прости, что-то у меня зависло. Повтори, пожалуйста!";
+        const text = fallback;
         history.push({ role: "assistant", content: text, at: turnSeconds });
         saveMessage(userId, msg.channelName, "assistant", text);
         return { text, mediaUrl: lastMediaUrl, mediaPath: lastMediaPath, ...(media.length ? { media } : {}) };

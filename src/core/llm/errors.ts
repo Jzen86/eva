@@ -118,3 +118,93 @@ export function isTransientError(err: unknown): boolean {
 export function isRetryableError(err: unknown): boolean {
   return isBillingError(err) || isTransientError(err) || err instanceof Error && err.name === "ModelTimeoutError";
 }
+
+/**
+ * What actually went wrong, in words a person can act on.
+ *
+ * The engine used to hand the recovery call one vague phrase ("что-то у меня
+ * зависло") and then tell the model not to use technical terms, so the owner got
+ * "повтори, пожалуйста" with no idea whether it was a hiccup, a spent quota or a
+ * dead key — and asked for the reason to be in the sentence (19.10). A 503, a
+ * 429, a timeout and an empty 200 need different actions: wait a minute, wait for
+ * the key, correct the model id, or just retry.
+ *
+ * The provider name comes from the model ids the router puts into its own failure
+ * message ("Перепробовано: google/gemini-…"), because that is the one string every
+ * layer above keeps.
+ */
+export type FailureKind =
+  | "timeout"
+  | "overloaded"
+  | "limit"
+  | "quota"
+  | "empty"
+  | "gone"
+  | "auth"
+  | "network"
+  | "unknown";
+
+const PROVIDER_NAMES: Record<string, string> = {
+  google: "Гугл",
+  openrouter: "Опенроутер",
+  deepseek: "Дипсик",
+  openai: "ОпенАИ",
+  anthropic: "Антропик",
+};
+
+export function failureReason(err: unknown): {
+  kind: FailureKind;
+  where: string | null;
+  code: number | null;
+} {
+  const msg = messageOf(err);
+  const provider = msg.match(/(google|openrouter|deepseek|openai|anthropic|opencode-go)\//);
+  const where = provider ? (PROVIDER_NAMES[provider[1]] ?? provider[1]) : null;
+  const codeMatch = msg.match(/\b(4\d{2}|5\d{2})\b/);
+  // The status lives on the error when the provider SDK threw it; the message is
+  // the only place it survives when the router wrapped it ("…Последняя ошибка:
+  // 503 status code"). Both are real paths, so both are read.
+  const code = statusOf(err) ?? (codeMatch ? Number(codeMatch[1]) : null);
+
+  const kind = ((): FailureKind => {
+    if (err instanceof EmptyResponseError || msg.includes("пустой ответ")) return "empty";
+    if (msg.includes("model timed out") || msg.includes("время вышло") || code === 408) return "timeout";
+    if (isBillingError(err)) return "quota";
+    if (code === 401 || code === 403) return "auth";
+    if (code === 404 || /model.*not found|does not exist/.test(msg)) return "gone";
+    if (code === 429) return "limit";
+    if (code !== null && SERVER_ERRORS.has(code)) return "overloaded";
+    if (statusOf(err) === null && NETWORK_PATTERNS.some((p) => msg.includes(p))) return "network";
+    if (/overloaded|high demand|unavailable/.test(msg)) return "overloaded";
+    return "unknown";
+  })();
+
+  return { kind, where, code };
+}
+
+/** One short sentence with the reason and what to do about it. */
+export function failureSentence(err: unknown): string {
+  const { kind, where, code } = failureReason(err);
+  const at = where ? `${where} ` : "";
+  const num = code ? ` (${code})` : "";
+  switch (kind) {
+    case "timeout":
+      return `${at}молчит — не ответила вовремя. Подожди немного и повтори, пожалуйста!`;
+    case "overloaded":
+      return `${at}моросит — перегрузка${num}. Подожди немного и повтори, пожалуйста!`;
+    case "limit":
+      return `${at}упёрлась в лимит запросов${num}. Подожди пару минут и повтори, пожалуйста!`;
+    case "quota":
+      return `${at}кончился лимит ключа${num} — мне надо это поправить, дай минуту.`;
+    case "empty":
+      return `${at}вернула пустой ответ. Повтори, пожалуйста!`;
+    case "gone":
+      return `${at}не отдаёт модель${num} — мне надо это поправить.`;
+    case "auth":
+      return `${at}не пускает по ключу${num} — мне надо это поправить.`;
+    case "network":
+      return "нет связи с моделью. Подожди немного и повтори, пожалуйста!";
+    default:
+      return "что-то сломалось на стороне модели. Повтори, пожалуйста!";
+  }
+}
