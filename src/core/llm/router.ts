@@ -39,9 +39,19 @@ const DEFAULTS = {
   // measured on the server: 14.2s and 18.9s on a one-line prompt, 9.6s on a
   // 36k-token one, with the odd 503 — so a 20s ceiling cut off answers that were
   // on their way, and the degradation banner read "недоступна" about a model
-  // that was merely slow. 30s covers the slow-but-alive case; past that the
+  // that was merely slow. 30s covered the slow-but-alive case; past that the
   // fallback (`gemini-3.1-flash-lite`, 2–3s) is the better answer anyway.
-  perModelTimeoutMs: 30_000,
+  //
+  // 45s since 19.10, on the owner's word. Measured again with her own key and a
+  // prompt the size of a live turn: 0.7s, then 10.0s on ~6k tokens, then 0.7s —
+  // no quota involved, and no 429 headers at all. The two failures that evening
+  // ("оборвался на стриме: Model timed out" on 3.5, then on 3.1) were the 30s
+  // ceiling meeting a slow endpoint, not a spent minute limit: waiting did not
+  // bring it back, and it was never gone. The chain has no third link (the owner
+  // removed it: paid models cost money and the free ones are weak at talking),
+  // so a timeout that both Googles hit costs the whole turn — a longer ceiling is
+  // the only free lever left, since neither the prompt nor the digest may shrink.
+  perModelTimeoutMs: 45_000,
   chainBudgetMs: 150_000,
   // How often to re-test the primary while degraded. Short, so a transient
   // stall costs a minute on the fallback rather than five.
