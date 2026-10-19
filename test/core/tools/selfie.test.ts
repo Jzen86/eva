@@ -566,6 +566,15 @@ describe("SelfieTool", () => {
     expect(d).toMatch(/парк, пляж/);
     expect(d).toMatch(/хоть в прыжке/);
 
+    // "Точнее" and "меньше дефолта" are the goal he named (19.10), asked for the
+    // only way a description can ask: name the concrete thing rather than the
+    // category, and notice the default instead of reaching for it by habit. Both
+    // are instructions, not refusals — the same bedroom is the right frame when
+    // the conversation is in it, which is why nothing here forbids repeating.
+    expect(d).toMatch(/не категорию, а как у тебя сейчас/);
+    expect(d).toMatch(/а не по привычке/);
+    expect(d).toMatch(/а не бери первое, что приходит в голову/);
+
     // The scene is hers to take from the conversation, and that includes the same
     // room five frames in a row when that is what the talk is about. The
     // anti-repetition instruction that used to stand in this description was
