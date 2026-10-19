@@ -54,7 +54,7 @@ function buildPrompt(context: string, mode: "mirror" | "direct", appearance = ""
   // — he asks for a photo of her and gets the arm's-length pose, because the code
   // said so, not because he wanted it. The pose and the framing come from the
   // scene she wrote (lying, sitting, standing, portrait or full length).
-  return `${opener}${figure} A realistic photo of her, ${context}, natural pose, face fully visible.`;
+  return `${opener}${figure} A realistic photo of her, ${context}, natural pose.`;
 }
 
 /**
