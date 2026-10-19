@@ -17,18 +17,25 @@ describe("SelfieTool", () => {
   it("has correct name and parameters", () => {
     const tool = new SelfieTool({ openrouterApiKey: "k", referencePhotoUrl: "https://example.com/photo.jpg" });
     expect(tool.name).toBe("selfie");
-    expect(tool.parameters).toHaveLength(5);
+    expect(tool.parameters).toHaveLength(7);
     expect(tool.parameters[0].name).toBe("context");
     expect(tool.parameters[0].required).toBe(true);
-    expect(tool.parameters[1].name).toBe("mode");
+    // Hair and the look come right after the scene, in slots of their own. They
+    // are the two things the reference photo supplies, so a frame that leaves
+    // them unsaid wears the photo's hair and the photo's face — see `faceNote`.
+    expect(tool.parameters[1].name).toBe("hair");
     expect(tool.parameters[1].required).toBe(false);
+    expect(tool.parameters[2].name).toBe("expression");
+    expect(tool.parameters[2].required).toBe(false);
+    expect(tool.parameters[3].name).toBe("mode");
+    expect(tool.parameters[3].required).toBe(false);
     // with_owner is what turns a selfie into a frame with both of them in it.
-    expect(tool.parameters[3].name).toBe("with_owner");
-    expect(tool.parameters[3].type).toBe("boolean");
+    expect(tool.parameters[5].name).toBe("with_owner");
+    expect(tool.parameters[5].type).toBe("boolean");
     // His outfit is a slot of its own — the description asking for it was skipped
     // twice, so a missing one is refused (see generatePair).
-    expect(tool.parameters[4].name).toBe("his_outfit");
-    expect(tool.parameters[4].required).toBe(false);
+    expect(tool.parameters[6].name).toBe("his_outfit");
+    expect(tool.parameters[6].required).toBe(false);
   });
 
   it("gives his outfit its own slot, so a pair frame cannot copy it from his photo", () => {
@@ -574,6 +581,9 @@ describe("SelfieTool", () => {
     expect(d).toMatch(/не категорию, а как у тебя сейчас/);
     expect(d).toMatch(/а не по привычке/);
     expect(d).toMatch(/а не бери первое, что приходит в голову/);
+    // And the two face attributes are pointed at their slots, so the scene does
+    // not carry a second, competing copy of them.
+    expect(d).toMatch(/ПРИЧЁСКА и ВЗГЛЯД идут отдельными параметрами/);
 
     // The scene is hers to take from the conversation, and that includes the same
     // room five frames in a row when that is what the talk is about. The
@@ -582,5 +592,50 @@ describe("SelfieTool", () => {
     // a different picture, and a rule against repeating fights a conversation
     // that is happening in one room.
     expect(d).not.toContain("непохожим на предыдущий");
+  });
+
+  it("puts her hair and her look in the frame, and names the one that was left to the photo", async () => {
+    // The owner's complaint (19.10): "причёска и выражение почти не меняются, без
+    // явного требования". Measured on the live install, she was not silent about
+    // them — she wrote them, and always the same value ("messy hair", a smirk) —
+    // so they became slots: named per frame, and carried into the generator prompt
+    // as sentences of their own. Never a refusal, the frame is drawn either way;
+    // a slot left empty is named in the answer, so the corrected call can follow.
+    const upload = vi.fn().mockResolvedValue("eva_ref.jpg");
+    const generate = vi.fn().mockResolvedValue("data:image/png;base64,AAAA");
+    const tool = new SelfieTool({
+      openrouterApiKey: "or-key",
+      referencePath: path.join(os.tmpdir(), "eva-no-such-reference.jpg"),
+      appearance: "A woman with a balanced figure",
+      comfy: { upload, generate } as unknown as ComfyClient,
+    });
+
+    const named = await tool.execute({
+      context: "кухня, серый свитер, сижу на полу",
+      hair: "низкий пучок, пара прядей выбилась у виска",
+      expression: "широкая улыбка, щурится от света",
+    });
+    expect(named.success).toBe(true);
+    const graph = generate.mock.calls[0][0] as Record<string, { inputs: Record<string, unknown> }>;
+    expect(String(graph["5"].inputs.prompt)).toContain("Hair: низкий пучок");
+    expect(String(graph["5"].inputs.prompt)).toContain("Expression: широкая улыбка");
+    expect(named.output).not.toContain("Не названо");
+
+    const silent = await tool.execute({ context: "спальня, лежу на боку" });
+    expect(silent.success).toBe(true);
+    // Drawn anyway — a soft requirement, not a ban — and told what the photo
+    // decided for her.
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(silent.output).toContain("Не названо");
+    expect(silent.output).toContain("hair");
+    expect(silent.output).toContain("expression");
+    const second = generate.mock.calls[1][0] as Record<string, { inputs: Record<string, unknown> }>;
+    expect(String(second["5"].inputs.prompt)).not.toContain("Hair:");
+
+    // Said once for the same scene: the note is there to get the next call right,
+    // not to argue with a frame that already exists.
+    const again = await tool.execute({ context: "спальня, лежу на боку" });
+    expect(again.success).toBe(true);
+    expect(again.output).not.toContain("Не названо");
   });
 });
