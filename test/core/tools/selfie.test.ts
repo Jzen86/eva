@@ -17,62 +17,18 @@ describe("SelfieTool", () => {
   it("has correct name and parameters", () => {
     const tool = new SelfieTool({ openrouterApiKey: "k", referencePhotoUrl: "https://example.com/photo.jpg" });
     expect(tool.name).toBe("selfie");
-    expect(tool.parameters).toHaveLength(7);
+    expect(tool.parameters).toHaveLength(5);
     expect(tool.parameters[0].name).toBe("context");
     expect(tool.parameters[0].required).toBe(true);
-    // Hair and the look come right after the scene, in slots of their own. They
-    // are the two things the reference photo supplies, so a frame that leaves
-    // them unsaid wears the photo's hair and the photo's face — see `faceNote`.
-    // Hair is required since 19.10: as an optional slot she simply skipped it, and
-    // her own example of a call ("… sitting at the desk with an angry, scowling
-    // expression … wearing a black crop top, dim moody indoor lighting") names no
-    // hair at all — "волосы она указывает, только если я ей явно прикажу" (owner,
-    // 19.10). A required property cannot be left out of the call, so the default
-    // is switched off at the source rather than argued with in the answer.
-    expect(tool.parameters[1].name).toBe("hair");
-    expect(tool.parameters[1].required).toBe(true);
-    expect(tool.parameters[2].name).toBe("expression");
-    expect(tool.parameters[2].required).toBe(false);
-    expect(tool.parameters[3].name).toBe("mode");
-    expect(tool.parameters[3].required).toBe(false);
+    expect(tool.parameters[1].name).toBe("mode");
+    expect(tool.parameters[1].required).toBe(false);
     // with_owner is what turns a selfie into a frame with both of them in it.
-    expect(tool.parameters[5].name).toBe("with_owner");
-    expect(tool.parameters[5].type).toBe("boolean");
+    expect(tool.parameters[3].name).toBe("with_owner");
+    expect(tool.parameters[3].type).toBe("boolean");
     // His outfit is a slot of its own — the description asking for it was skipped
     // twice, so a missing one is refused (see generatePair).
-    expect(tool.parameters[6].name).toBe("his_outfit");
-    expect(tool.parameters[6].required).toBe(false);
-  });
-
-  it("demands the hairstyle in the call itself, and no longer suggests one", () => {
-    // Owner, 19.10: "надо научить еву в обязательном порядке описывать волосы
-    // вместе с остальным. В её запросах генератору". The slot had been optional, and
-    // optional is what happened on the live install: 0 of 23 frames named a hair
-    // at all, and her own example of a generator request carried an expression, a
-    // crop top and the light — but no hair. So the field is required now, and said
-    // to be required in both places she reads: the tool description and the
-    // parameter description.
-    const tool = new SelfieTool({ openrouterApiKey: "k", referencePhotoUrl: "https://example.com/photo.jpg" });
-    expect(tool.parameters[1].required).toBe(true);
-    expect(String(tool.parameters[1].description)).toContain("ОБЯЗАТЕЛЬНО в каждом кадре");
-    // Live experiment, started on the owner's word (19.10): the slot is filled
-    // every time and filled with the same value, so the *decision* is what is
-    // being changed, not the wording about hair. Measured over 20 requests per
-    // arm: 80% of frames with the hair gathered against 55% in the control — a
-    // hint, not proof (p≈0.1), which is why it is being judged on her live
-    // journal for a day instead of on another probe.
-    expect(String(tool.parameters[1].description)).toMatch(/прикинь 2.3 разные укладки/);
-    expect(tool.description).toMatch(/заполняешь ВСЕГДА/);
-    expect(tool.description).toMatch(/обязательный пункт каждого кадра/);
-
-    // And the sample answer is gone. It was mine, and she used it verbatim: on the
-    // deploy of f987b36 the live frames came back four times with exactly "низкий
-    // пучок, пара прядей выбилась у виска" — the sentence below — and the owner's
-    // verdict on the whole feature was "теперь у нее 2 прически всего". A copyable
-    // example is a default with extra steps. The *form* is still asked for (how it
-    // is set, what holds it, what came loose); the content stays hers.
-    expect(tool.description).not.toContain("низкий пучок, пара прядей");
-    expect(tool.description).toMatch(/как он уложен, чем держится и что выбилось/);
+    expect(tool.parameters[4].name).toBe("his_outfit");
+    expect(tool.parameters[4].required).toBe(false);
   });
 
   it("gives his outfit its own slot, so a pair frame cannot copy it from his photo", () => {
@@ -583,96 +539,5 @@ describe("SelfieTool", () => {
     expect(cloud.description).toContain("приходит к тебе в этом же ходу");
 
     vi.unstubAllGlobals();
-  });
-
-  it("asks for all six parts of the scene, and does not ask her to differ from the last frame", async () => {
-    // Measured live: she describes a scene thoroughly but the *choices* stand
-    // still, and a frame whose scene names hair, expression, clothing, pose,
-    // background and light is the one that actually moves on the generator —
-    // with the reference attached, a short general prompt renders the reference
-    // as-is. So the six are named here, each with its examples.
-    const tool = new SelfieTool({ openrouterApiKey: "k", referencePhotoUrl: "https://example.com/photo.jpg" });
-    const d = tool.description;
-    expect(d).toContain("ПРИЧЁСКА");
-    expect(d).toContain("ВЗГЛЯД");
-    expect(d).toContain("ЧТО НА ТЕБЕ");
-    expect(d).toContain("ПОЗА");
-    expect(d).toContain("ФОН");
-    expect(d).toContain("СВЕТ");
-    expect(d).toMatch(/шесть вещей/);
-
-    // And whose choice it is. He asked for exactly this (19.10): "сама выбирать
-    // и описывать — внешность (волосы, выражение, позу, руки ноги), положение
-    // (сидя стоя лёжа, да хоть прыгая), обстановка (комната, парк, кафе, пляж),
-    // и свет". The choice is hers, the scene comes from the conversation, and the
-    // position is free — "хоть в прыжке" is his own example.
-    expect(d).toMatch(/выбираешь ТЫ САМА/);
-    expect(d).toMatch(/парк, пляж/);
-    expect(d).toMatch(/хоть в прыжке/);
-
-    // "Точнее" and "меньше дефолта" are the goal he named (19.10), asked for the
-    // only way a description can ask: name the concrete thing rather than the
-    // category, and notice the default instead of reaching for it by habit. Both
-    // are instructions, not refusals — the same bedroom is the right frame when
-    // the conversation is in it, which is why nothing here forbids repeating.
-    expect(d).toMatch(/не категорию, а как у тебя сейчас/);
-    expect(d).toMatch(/а не по привычке/);
-    expect(d).toMatch(/а не бери первое, что приходит в голову/);
-    // And the two face attributes are pointed at their slots, so the scene does
-    // not carry a second, competing copy of them.
-    expect(d).toMatch(/ПРИЧЁСКА и ВЗГЛЯД идут отдельными параметрами/);
-
-    // The scene is hers to take from the conversation, and that includes the same
-    // room five frames in a row when that is what the talk is about. The
-    // anti-repetition instruction that used to stand in this description was
-    // removed on the owner's decision (19.10): the seed already makes every frame
-    // a different picture, and a rule against repeating fights a conversation
-    // that is happening in one room.
-    expect(d).not.toContain("непохожим на предыдущий");
-  });
-
-  it("puts her hair and her look in the frame, and names the one that was left to the photo", async () => {
-    // The owner's complaint (19.10): "причёска и выражение почти не меняются, без
-    // явного требования". Measured on the live install, she was not silent about
-    // them — she wrote them, and always the same value ("messy hair", a smirk) —
-    // so they became slots: named per frame, and carried into the generator prompt
-    // as sentences of their own. Never a refusal, the frame is drawn either way;
-    // a slot left empty is named in the answer, so the corrected call can follow.
-    const upload = vi.fn().mockResolvedValue("eva_ref.jpg");
-    const generate = vi.fn().mockResolvedValue("data:image/png;base64,AAAA");
-    const tool = new SelfieTool({
-      openrouterApiKey: "or-key",
-      referencePath: path.join(os.tmpdir(), "eva-no-such-reference.jpg"),
-      appearance: "A woman with a balanced figure",
-      comfy: { upload, generate } as unknown as ComfyClient,
-    });
-
-    const named = await tool.execute({
-      context: "кухня, серый свитер, сижу на полу",
-      hair: "низкий пучок, пара прядей выбилась у виска",
-      expression: "широкая улыбка, щурится от света",
-    });
-    expect(named.success).toBe(true);
-    const graph = generate.mock.calls[0][0] as Record<string, { inputs: Record<string, unknown> }>;
-    expect(String(graph["5"].inputs.prompt)).toContain("Hair: низкий пучок");
-    expect(String(graph["5"].inputs.prompt)).toContain("Expression: широкая улыбка");
-    expect(named.output).not.toContain("Не названо");
-
-    const silent = await tool.execute({ context: "спальня, лежу на боку" });
-    expect(silent.success).toBe(true);
-    // Drawn anyway — a soft requirement, not a ban — and told what the photo
-    // decided for her.
-    expect(generate).toHaveBeenCalledTimes(2);
-    expect(silent.output).toContain("Не названо");
-    expect(silent.output).toContain("hair");
-    expect(silent.output).toContain("expression");
-    const second = generate.mock.calls[1][0] as Record<string, { inputs: Record<string, unknown> }>;
-    expect(String(second["5"].inputs.prompt)).not.toContain("Hair:");
-
-    // Said once for the same scene: the note is there to get the next call right,
-    // not to argue with a frame that already exists.
-    const again = await tool.execute({ context: "спальня, лежу на боку" });
-    expect(again.success).toBe(true);
-    expect(again.output).not.toContain("Не названо");
   });
 });

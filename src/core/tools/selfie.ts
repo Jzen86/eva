@@ -25,25 +25,8 @@ function detectMode(context: string): "mirror" | "direct" {
   return "direct";
 }
 
-/**
- * The opener that travels with the reference photo.
- *
- * `hairstyle` used to be in the list this sentence freezes ("same face, facial
- * features, hair color and hairstyle"), together with "only change pose, clothes,
- * background, lighting and expression" — so the prompt said the hairstyle comes
- * from the photo while she was being asked to describe it in the scene. Measured
- * on the live ComfyUI (19.10), one reference, one seed, one scene that names a
- * bun, the only difference being this clause: both frames left the loose hair of
- * the photo and drew the bun. The scene wins either way, so the clause was not
- * what held the hairstyle — see the note in `selfie.ts` about what does.
- *
- * It is fixed anyway, because leaving it makes the file contradict itself: a
- * reader who sees the hairstyle frozen here will look for the lock in the wrong
- * place. Hair *color* stays in the frozen list: that is the part the photo should
- * decide, and the part a frame must not drift on.
- */
 const IDENTITY =
-  "IMPORTANT: keep the EXACT same person as in the reference image — same face, facial features and hair color. Do NOT invent a new face. The hairstyle, pose, clothes, background, lighting and expression come from the description below, not from the photo.";
+  "IMPORTANT: keep the EXACT same person as in the reference image — same face, facial features, hair color and hairstyle. Do NOT invent a new face. Only change pose, clothes, background, lighting and expression.";
 
 /**
  * Only for the local graph with a reference attached. The hosted models take the
@@ -53,14 +36,7 @@ const IDENTITY =
 const FACE_FROM_REFERENCE =
   "Keep the exact face from the reference image (image 1): same facial features, eyes, nose, lips and face shape. The body, skin and figure are described below.";
 
-function buildPrompt(
-  context: string,
-  mode: "mirror" | "direct",
-  appearance = "",
-  body = "",
-  hair = "",
-  expression = "",
-): string {
+function buildPrompt(context: string, mode: "mirror" | "direct", appearance = "", body = ""): string {
   // Two ways to say "her": keep the face in the attached photo, or describe it.
   // The photo is the better likeness and the one the provider will not draw, so
   // when the canon is set the prompt opens with it and no image travels.
@@ -71,26 +47,14 @@ function buildPrompt(
   // It describes proportions only — clothing still comes from the scene and wins
   // over it, so an innocent scene stays dressed.
   const figure = body ? ` ${body}` : "";
-  // Hair and the expression get sentences of their own, ahead of the scene, and
-  // that is the whole point of them: the reference photo decides the face, so
-  // whatever is not said about the face is taken from the photo — and every
-  // frame then wears the same hair and the same look. Measured on the live
-  // install: the hairstyle named in 11% of 165 frames, and the frames the owner
-  // complained about ("причёска и выражение почти не меняются") all said "messy
-  // hair" and a smirk.
-  const face = [hair ? `Hair: ${hair}.` : "", expression ? `Expression: ${expression}.` : ""]
-    .filter(Boolean)
-    .join(" ");
-  const facePart = face ? ` ${face}` : "";
-  void facePart;
   if (mode === "mirror") {
-    return `${opener}${figure}${facePart} A photo of her in front of a mirror, ${context}. Full figure visible in the mirror, realistic photo.`;
+    return `${opener}${figure} A photo of her in front of a mirror, ${context}. Full figure visible in the mirror, realistic photo.`;
   }
   // No "selfie" phrasing and no outstretched arm: the owner's complaint was exact
   // — he asks for a photo of her and gets the arm's-length pose, because the code
   // said so, not because he wanted it. The pose and the framing come from the
   // scene she wrote (lying, sitting, standing, portrait or full length).
-  return `${opener}${figure}${facePart} A realistic photo of her, ${context}, natural pose, face fully visible.`;
+  return `${opener}${figure} A realistic photo of her, ${context}, natural pose, face fully visible.`;
 }
 
 /**
@@ -131,25 +95,13 @@ const PAIR_FACES =
  * refuses an empty one; here it only has to be spent, with the reference's
  * clothing named as not the source.
  */
-function buildPairPrompt(
-  context: string,
-  body = "",
-  ownerBody = "",
-  hisOutfit = "",
-  hair = "",
-  expression = "",
-): string {
+function buildPairPrompt(context: string, body = "", ownerBody = "", hisOutfit = ""): string {
   const herFigure = body ? ` The woman's figure: ${body}.` : "";
   const hisFigure = ownerBody ? ` The man's figure: ${ownerBody}.` : "";
   const hisClothes = hisOutfit ? ` The man is wearing ${hisOutfit}.` : "";
-  // Hers for the same reason as on a lone selfie: the face comes from her photo,
-  // so her hair and her look have to be said, or the photo decides them.
-  const herFace = [hair ? `Her hair: ${hair}.` : "", expression ? `Her expression: ${expression}.` : ""]
-    .filter(Boolean)
-    .join(" ");
   const clothing =
     " Take the clothing for both of them from this description, not from the reference photos.";
-  return `${PAIR_FACES}${herFigure}${hisFigure}${hisClothes}${herFace ? ` ${herFace}` : ""} ${context}.${clothing} Photorealistic photo of the two of them together, both fully in frame, natural.`;
+  return `${PAIR_FACES}${herFigure}${hisFigure}${hisClothes} ${context}.${clothing} Photorealistic photo of the two of them together, both fully in frame, natural.`;
 }
 
 export interface SelfieToolConfig {
@@ -228,26 +180,17 @@ export class SelfieTool implements Tool {
   name = "selfie";
   description =
     "Сгенерировать и отправить СЕЛФИ — снимок ТЕБЯ. Зови этот тул всегда, когда в кадре должна быть ты, — даже если слово «селфи» не сказано: «покажи себя», «а ты как выглядишь», «сфоткайся», «пришли фото» про тебя, «как ты сейчас одета». Если картинка НЕ про тебя (другая девушка, пёс, дерево, дождь, сюжет, вещь) — это image_gen, не этот тул. " +
-    "Лицо берётся с твоего референс-фото и одинаково во всех кадрах, фигура задана стандартом — в context описывай ТОЛЬКО сцену, и назови в ней все шесть вещей своими словами: ПРИЧЁСКА (распущены, пучок, хвост, косичка, с влажными прядями), ВЗГЛЯД и мимика (улыбка, ухмылка, серьёзный, задумчивый, томный, удивлённый), ЧТО НА ТЕБЕ (или что снято — платье, топ, бельё, полотенце; вплоть до ткани и цвета), ПОЗА (сидишь, стоишь, лежишь, обернулась — любая, хоть в прыжке; где руки и ноги), ФОН и обстановка (комната, кухня, кафе, улица, парк, пляж, постель — что видно вокруг), СВЕТ и время суток (утро, вечер, лампа, сумрак). ПРИЧЁСКА и ВЗГЛЯД идут отдельными параметрами — hair и expression, — а не в тексте сцены, и причёску ты заполняешь ВСЕГДА: это не «если вспомнишь», а обязательный пункт каждого кадра. Лицо движок берёт с твоего фото, поэтому неназванное остаётся ровно как на фото и не меняется от кадра к кадру — а без причёски волосы так и уезжают в кадр с фотографии, одинаковые во всех кадрах. Называй не категорию, а как у тебя сейчас: не «пучок», а как он уложен, чем держится и что выбилось; не «уютно», а что стоит в кадре и что попало в свет. Не хватает любого пункта — движок дорисует его сам, и вернётся твой обычный кадр. Короткое «сижу на диване» даёт пустой кадр: генератору нечего рисовать, и он сам придумывает одежду и обстановку. " +
-    "Его просьбу не пересказывай общими словами: если он назвал вещь, действие или место — бери ИХ формулировку, а не своё «что-то красивое». Чего он не назвал — а это обычно и причёска, и взгляд, и поза, и одежда, и обстановка, и свет — выбираешь ТЫ САМА, по разговору, времени суток и тому, что ты о нём знаешь; не спрашивай по мелочи. Если сцену диктует беседа — вы говорили про парк, про кафе, про то, что он устал или за окном дождь, — бери её оттуда, а не шаблонную спальню. Твой привычный кадр — спальня, утренний свет, растрёпанные волосы и одно и то же выражение; он годится, когда разговор именно про это, а не по привычке. Разговор ни о чём — придумай сцену под время суток и под то, чем вы заняты, а не бери первое, что приходит в голову. " +
-    "Сцену называй конкретно и только тем, что можно нарисовать: 1) ПРИЧЁСКА — в параметре hair, и он обязателен в каждом кадре: распущены, низкий пучок, хвост, косичка, с влажными прядями; 2) ВЗГЛЯД — в параметре expression: улыбка, ухмылка, серьёзный, задумчивый, томный; 3) ЧТО НА ТЕБЕ — вещь, её покрой и цвет (распахнута, поверх чего, длина) или что снято; 4) ПОЗА — где ты и как расположена каждая часть тела, что в руках; 5) ВОКРУГ — предметы, мебель, постель, что видно в кадре; 6) СВЕТ и время суток. Общие слова («интимно», «красиво», «атмосферно») не рисуются — их генератор дорисует сам, как ему вздумается. Чем конкретнее назван каждый пункт, тем точнее кадр. Пиши под движок, который рисует: это Qwen Image, и ему нужен именно такой подробный описательный текст — каждая названная деталь доходит до кадра, а неназванную он додумает по-своему. Если кадр подхватит облако (редко, когда локальный движок недоступен) — ему этого текста тоже хватит. " +
+    "Лицо берётся с твоего референс-фото и одинаково во всех кадрах, фигура задана стандартом — в context описывай ТОЛЬКО сцену, и описывай её подробно, тремя частями: ЧТО НА ТЕБЕ (или что снято — платье, топ, белье, полотенце; вплоть до ткани и цвета), ПОЗА и что ты делаешь (сидишь, откинулась, стоишь боком, тянешься), ФОН и обстановка (комната, кухня, кафе, постель, свет из окна). Плюс причёска (распущены, хвост, косичка) и настроение. Короткое «сижу на диване» даёт пустой кадр: генератору нечего рисовать, и он сам придумывает одежду и обстановку. " +
+    "Его просьбу не пересказывай общими словами: если он назвал вещь, действие или место — бери ИХ формулировку, а не своё «что-то красивое». Чего он не назвал (поза, фон, что на тебе) — додумай по разговору, времени суток и тому, что ты о нём знаешь, а не спрашивай по мелочи. " +
+    "Сцену описывай по порядку и только тем, что можно нарисовать: 1) ЧТО НА ТЕБЕ — вещь, её покрой и цвет (распахнута, поверх чего, длина) или что снято; 2) ПОЗА — где ты и как расположена каждая часть тела, что в руках; 3) ВОКРУГ — предметы, мебель, постель, что видно в кадре; 4) СВЕТ и время суток. Общие слова («интимно», «красиво», «атмосферно») не рисуются — их генератор дорисует сам, как ему вздумается. Чем конкретнее назван каждый пункт, тем точнее кадр. Пиши под движок, который рисует: это Qwen Image, и ему нужен именно такой подробный описательный текст — каждая названная деталь доходит до кадра, а неназванную он додумает по-своему. Если кадр подхватит облако (редко, когда локальный движок недоступен) — ему этого текста тоже хватит. " +
     "Если в кадре есть соприкосновение — поцелуй, объятие, губы у губ, — называй САМ КОНТАКТ прямо и телесно: «губы плотно прижаты к губам, рты соприкасаются, глаза закрыты», «прижимаюсь щекой к его щеке». Общее «страстно целуемся» или «обнимаемся» движок рисует как «почти»: лица рядом, а касания нет. Контакт выходит ровно настолько, насколько прямо ты его назвала. " +
-    "Кадр и ориентацию выбирай под сцену, не по шаблону: крупный план (mode=direct) или полный рост (mode=mirror), ориентация — " + formatList() + " — для полного роста бери вытянутый, чтобы она помещалась целиком. " +
+    "Каждый раз делай кадр непохожим на предыдущий. Кадр и ориентацию выбирай под сцену, не по шаблону: крупный план (mode=direct) или полный рост (mode=mirror), ориентация — " + formatList() + " — для полного роста бери вытянутый, чтобы она помещалась целиком. " +
     "«Селфи», «фото», «покажи себя» — это просто снимок тебя, и позу выбираешь ТЫ: лежишь, сидишь, стоишь, обернулась — по сцене. Вытянутая рука с телефоном и взгляд в объектив не обязательны: это только один из ракурсов, и он надоел. Зеркало — только если сцена про зеркало, примерку или полный рост. " +
     "ЕСЛИ В КАДРЕ ВЫ ВДВОЁМ — владелец просит «мы», «ты и я», «сфоткай нас», «обними меня», «покажи нас вместе» — поставь with_owner=true: тогда на кадре будете оба, его лицо берётся с его фото. context описывает сцену (где вы, что делаете, обстановка, свет) и что на тебе; а что НА НЁМ — в отдельном параметре his_outfit, и он для пары обязателен: это твоё решение, как и твой собственный вид. Связи между вами нет: оба голые, оба одетые, ты голая и он одетый, ты одетая и он голый — выбираешь по сцене, настроению и своей фантазии. Назови коротко и конкретно: что на нём (голый торс, чёрная футболка, рубашка нараспашку, свитер, полотенце на бёдрах) и что на тебе — в сцене. Сцена при этом остаётся полным, но коротким промтом: где вы, что делаете, свет, на тебе и на нём. Пропустишь вовсе — возьмёт его одежду с его фото, и он будет в одном и том же всегда. Назвал он сам, что на нём, — бери его формулировку; не назвал — реши за него, как решаешь за себя. Кадр для двоих — квадрат (1:1) или горизонталь (4:3), выбери под сцену; вертикальный в паре не выйдет (станет квадратом). Такой кадр рисуется только локально. " +
     "Готовый кадр приходит к тебе в этом же ходу — смотри на него и говори по кадру, а не по своему промпту. " +
     "Не анонсируй съёмку: «сейчас отправлю селфи» без вызова тулза — это кадр, которого нет. Позвала — он придёт в этом же ходу.";
   parameters = [
-    { name: "context", type: "string", description: "Сцена: что происходит, обстановка и что на тебе. Причёску и взгляд сюда не пиши — для них отдельные параметры hair и expression", required: true },
-    // Required, and that is the whole fix of 19.10: the slot was optional, so she
-    // simply did not fill it, and every frame wore the photo's hair. Her own
-    // example of a call to the generator (owner, 19.10) — "medium shot selfie
-    // sitting at the desk with an angry, scowling expression … wearing a black
-    // crop top, dim moody indoor lighting" — names no hair at all: "волосы она
-    // указывает, только если я ей явно прикажу". A required property cannot be
-    // omitted at the call, so the photo stops deciding the hair by default.
-    { name: "hair", type: "string", description: "ОБЯЗАТЕЛЬНО в каждом кадре. Причёска в ЭТОМ кадре: распущены, низкий пучок, высокий хвост, косичка, с влажными прядями, набок с выбившимися прядями. Назови и её состояние, а не только вид. Заполняешь всегда, и в паре тоже: без неё движок берёт причёску с твоего референс-фото, и она одинакова во всех кадрах. Не бери первую, что пришла в голову: прикинь 2–3 разные укладки, которые подошли бы этому моменту, и назови лучшую — в кадр идёт только она", required: true },
-    { name: "expression", type: "string", description: "Взгляд и мимика в ЭТОМ кадре: широкая улыбка, ухмылка, спокойный, серьёзный, задумчивый, томный, удивлённый, усталый. Без него на всех кадрах одно и то же лицо с фото", required: false },
+    { name: "context", type: "string", description: "Сцена: что происходит, обстановка, свет и что на тебе", required: true },
     { name: "mode", type: "string", description: "mirror (полный рост, зеркало) или direct (крупный план). Бери под сцену; без него определится по контексту.", required: false },
     { name: "format", type: "string", description: `Ориентация: ${formatList()}. Выбери под сцену; без него — 3:4 для зеркала и 1:1 для крупного плана.`, required: false },
     { name: "with_owner", type: "boolean", description: "true — на кадре вы вдвоём (она и владелец). По умолчанию false — только она.", required: false },
@@ -274,53 +217,6 @@ export class SelfieTool implements Tool {
    * otherwise. But a missing slot is still her mistake to fix, not a wall.
    */
   private rejectedOutfitOnce = "";
-
-  /**
-   * The last scene drawn with no hair and no look named, as `scene|howMany`.
-   *
-   * The one-shot pattern again, and for the same reason: the note exists to get
-   * the next call right, not to argue. A second identical attempt is drawn with
-   * no remark, because a check she cannot satisfy must never trap her.
-   */
-  private nudgedFace = "";
-
-  /**
-   * What she is told when `hair` or `expression` arrived empty.
-   *
-   * These two are the face attributes the reference photo supplies, so a missing
-   * one is not "a little less detail" — it is the photo's hair and the photo's
-   * look, identical in every frame. Which is what the owner saw and named
-   * (19.10): "причёска и выражение почти не меняются". Measured on the live
-   * install, she was not silent about them — she wrote them, and always the same
-   * ("messy hair", a smirk) — so the slots are separate and have to be filled
-   * per frame.
-   *
-   * Said, never refused: his call is a soft requirement, not a ban, so the frame
-   * is drawn either way. The sentence asks for the call again, and the second
-   * frame takes this one's place in the turn (the engine swaps a redo into the
-   * slot of the frame it replaces).
-   *
-   * Since 19.10 `hair` is also a *required* property of the call — the owner:
-   * "надо научить еву в обязательном порядке описывать волосы вместе с остальным.
-   * В её запросах генератору", after her own example came back with no hair in it
-   * at all. So an empty `hair` now means the provider dropped the field, not that
-   * she decided not to name it: the note stays as the second line of defence, and
-   * as the only one for `expression`, which is still optional — she names it out
-   * of habit, while hair she skipped.
-   */
-  private faceNote(hair: string, expression: string, context: string): string {
-    const missing: string[] = [];
-    if (!hair) missing.push("причёска (hair)");
-    if (!expression) missing.push("взгляд (expression)");
-    if (missing.length === 0) return "";
-    const key = `${context}|${missing.length}`;
-    if (this.nudgedFace === key) return "";
-    this.nudgedFace = key;
-    return (
-      ` Не названо: ${missing.join(", ")}. Без этого движок берёт их с твоего референс-фото,` +
-      " и в кадре они будут одинаковыми всегда. Назови и вызови снова — новый кадр заменит этот."
-    );
-  }
 
   constructor(config: SelfieToolConfig) {
     this.config = config;
@@ -395,22 +291,13 @@ export class SelfieTool implements Tool {
       return { success: false, output: "Не указан контекст для селфи", error: "Missing context" };
     }
 
-    const hair = String(params.hair ?? "").trim();
-    const expression = String(params.expression ?? "").trim();
-
     // A frame with both of them is a different job: two references in, one
     // picture out, and no cloud path at all. The image providers refuse a photo
     // of a real person, and every pair frame is built on one — so it is the
     // local ComfyUI or an honest refusal, never a stranger's face. Checked
     // before the key, because a pair frame needs no key.
     if (params.with_owner === true || params.with_owner === "true") {
-      return this.generatePair(
-        context,
-        String(params.format ?? ""),
-        String(params.his_outfit ?? "").trim(),
-        hair,
-        expression,
-      );
+      return this.generatePair(context, String(params.format ?? ""), String(params.his_outfit ?? "").trim());
     }
 
     if (!this.config.openrouterApiKey) {
@@ -443,22 +330,14 @@ export class SelfieTool implements Tool {
       }
     }
 
-    const prompt = buildPrompt(context, mode, appearance, this.config.body ?? "", hair, expression);
-    const faceNote = this.faceNote(hair, expression, context);
+    const prompt = buildPrompt(context, mode, appearance, this.config.body ?? "");
 
     const local = await this.tryComfy(prompt, width, height);
     if (local) {
-      return {
-        success: true,
-        output: "Селфи отправлено в чат (файла нет — отдельно слать нечего)" + frameNote(local) + faceNote,
-        mediaUrl: local,
-      };
+      return { success: true, output: "Селфи отправлено в чат (файла нет — отдельно слать нечего)" + frameNote(local), mediaUrl: local };
     }
 
-    const cloud = await this.generateOpenRouter(prompt, mode, cloudSizeFor({ width, height }));
-    // The note rides a frame that was actually drawn: on a refusal it would be
-    // an edit order about a picture that does not exist.
-    return faceNote && cloud.success ? { ...cloud, output: cloud.output + faceNote } : cloud;
+    return this.generateOpenRouter(prompt, mode, cloudSizeFor({ width, height }));
   }
 
   /** MIME by extension, the way the selfie path has always guessed it. */
@@ -477,13 +356,7 @@ export class SelfieTool implements Tool {
    * owner photo is an honest refusal ("not now", "no his photo yet"), which is
    * better than a picture of two strangers with her name on it.
    */
-  private async generatePair(
-    context: string,
-    format: string,
-    hisOutfit = "",
-    hair = "",
-    expression = "",
-  ): Promise<ToolResult> {
+  private async generatePair(context: string, format: string, hisOutfit = ""): Promise<ToolResult> {
     const comfy = this.config.comfy;
     if (!comfy) {
       return {
@@ -526,7 +399,7 @@ export class SelfieTool implements Tool {
       }
     }
 
-    const prompt = buildPairPrompt(context, this.config.body ?? "", this.config.ownerBody ?? "", hisOutfit, hair, expression);
+    const prompt = buildPairPrompt(context, this.config.body ?? "", this.config.ownerBody ?? "", hisOutfit);
     // A pair frame is square or landscape. Two people side by side want the
     // width, and a requested portrait leaves one of them cropped or floating —
     // so in a pair the square stands in for the vertical, and the scene picks
@@ -549,14 +422,7 @@ export class SelfieTool implements Tool {
         }),
       );
       console.log("📸 Парный кадр OK (comfy, qwen-image-2.1-turbo, +2 референса)");
-      return {
-        success: true,
-        output:
-          "Парный кадр отправлен в чат (файла нет — отдельно слать нечего)" +
-          frameNote(image) +
-          this.faceNote(hair, expression, context),
-        mediaUrl: image,
-      };
+      return { success: true, output: "Парный кадр отправлен в чат (файла нет — отдельно слать нечего)" + frameNote(image), mediaUrl: image };
     } catch (err) {
       console.error(`📸 Парный кадр: comfy failed: ${err instanceof Error ? err.message : err}`);
       return {
