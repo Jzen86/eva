@@ -23,8 +23,14 @@ describe("SelfieTool", () => {
     // Hair and the look come right after the scene, in slots of their own. They
     // are the two things the reference photo supplies, so a frame that leaves
     // them unsaid wears the photo's hair and the photo's face — see `faceNote`.
+    // Hair is required since 19.10: as an optional slot she simply skipped it, and
+    // her own example of a call ("… sitting at the desk with an angry, scowling
+    // expression … wearing a black crop top, dim moody indoor lighting") names no
+    // hair at all — "волосы она указывает, только если я ей явно прикажу" (owner,
+    // 19.10). A required property cannot be left out of the call, so the default
+    // is switched off at the source rather than argued with in the answer.
     expect(tool.parameters[1].name).toBe("hair");
-    expect(tool.parameters[1].required).toBe(false);
+    expect(tool.parameters[1].required).toBe(true);
     expect(tool.parameters[2].name).toBe("expression");
     expect(tool.parameters[2].required).toBe(false);
     expect(tool.parameters[3].name).toBe("mode");
@@ -36,6 +42,30 @@ describe("SelfieTool", () => {
     // twice, so a missing one is refused (see generatePair).
     expect(tool.parameters[6].name).toBe("his_outfit");
     expect(tool.parameters[6].required).toBe(false);
+  });
+
+  it("demands the hairstyle in the call itself, and no longer suggests one", () => {
+    // Owner, 19.10: "надо научить еву в обязательном порядке описывать волосы
+    // вместе с остальным. В её запросах генератору". The slot had been optional, and
+    // optional is what happened on the live install: 0 of 23 frames named a hair
+    // at all, and her own example of a generator request carried an expression, a
+    // crop top and the light — but no hair. So the field is required now, and said
+    // to be required in both places she reads: the tool description and the
+    // parameter description.
+    const tool = new SelfieTool({ openrouterApiKey: "k", referencePhotoUrl: "https://example.com/photo.jpg" });
+    expect(tool.parameters[1].required).toBe(true);
+    expect(String(tool.parameters[1].description)).toContain("ОБЯЗАТЕЛЬНО в каждом кадре");
+    expect(tool.description).toMatch(/заполняешь ВСЕГДА/);
+    expect(tool.description).toMatch(/обязательный пункт каждого кадра/);
+
+    // And the sample answer is gone. It was mine, and she used it verbatim: on the
+    // deploy of f987b36 the live frames came back four times with exactly "низкий
+    // пучок, пара прядей выбилась у виска" — the sentence below — and the owner's
+    // verdict on the whole feature was "теперь у нее 2 прически всего". A copyable
+    // example is a default with extra steps. The *form* is still asked for (how it
+    // is set, what holds it, what came loose); the content stays hers.
+    expect(tool.description).not.toContain("низкий пучок, пара прядей");
+    expect(tool.description).toMatch(/как он уложен, чем держится и что выбилось/);
   });
 
   it("gives his outfit its own slot, so a pair frame cannot copy it from his photo", () => {
