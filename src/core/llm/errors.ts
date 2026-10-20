@@ -32,6 +32,44 @@ export class EmptyResponseError extends Error {
   }
 }
 
+/**
+ * The provider refused the request on policy grounds.
+ *
+ * Google answers a request it will not answer with a 200 and a finish reason
+ * that says so — `content_filter: PROHIBITED_CONTENT`. Nothing is broken: the
+ * model is alive and the same model answers the next message. What it means is
+ * "not this content", which is a different thing from "not now".
+ *
+ * It was counted as an ordinary empty answer, and that cost two things on the
+ * live install. The router read it as an outage: it degraded the whole chain
+ * and told the owner "модель недоступна — временно работаю на …" about a model
+ * that was answering fine a second later — and the reason that reached him was
+ * "вернула пустой ответ. Повтори, пожалуйста!", which is advice that cannot
+ * work, because the same words are refused the same way every time.
+ *
+ * The live cost, 17.10–20.10: 37 refusals and 25 turns that ended in an
+ * error, all of them on one kind of conversation, and both Google models in
+ * the chain refuse it identically — so the fallback could not help and the
+ * owner paid for every attempt.
+ */
+export class ContentFilteredError extends Error {
+  constructor(model: string, finishReason: string | null = null) {
+    super(
+      `Модель ${model} отклонила запрос фильтром` +
+        (finishReason ? ` (finish_reason: ${finishReason})` : ""),
+    );
+    this.name = "ContentFilteredError";
+  }
+}
+
+/** The provider said no to the content, not to the request. */
+export function isPolicyRefusal(err: unknown): boolean {
+  return (
+    err instanceof ContentFilteredError ||
+    /content_filter|prohibited_content|safety|blocked by/i.test(messageOf(err))
+  );
+}
+
 const BILLING_KEYWORDS = [
   "insufficient_quota",
   "insufficient credits",
@@ -95,6 +133,10 @@ export function isBillingError(err: unknown): boolean {
 
 /** Model is gone, rate limited, or the provider is having a bad day. */
 export function isTransientError(err: unknown): boolean {
+  // A policy refusal is not an outage: the model is up and the next message
+  // will be answered. It must not count as a failure of the provider, or the
+  // router degrades the whole chain over one refused turn.
+  if (err instanceof ContentFilteredError) return false;
   // The provider failing while looking healthy. Checked first, because
   // by every other measure here it is not an error at all.
   if (err instanceof EmptyResponseError) return true;
@@ -116,6 +158,11 @@ export function isTransientError(err: unknown): boolean {
 
 /** Anything we might get through by switching to a different model. */
 export function isRetryableError(err: unknown): boolean {
+  // A refusal is worth one more try on another model: the chain is the
+  // owner's choice, and a different model may not carry the same policy. It is
+  // not a transient failure (see isTransientError) — the next attempt is a
+  // question asked of a different model, not a retry of the same one.
+  if (err instanceof ContentFilteredError) return true;
   return isBillingError(err) || isTransientError(err) || err instanceof Error && err.name === "ModelTimeoutError";
 }
 
@@ -139,6 +186,7 @@ export type FailureKind =
   | "limit"
   | "quota"
   | "empty"
+  | "refused"
   | "gone"
   | "auth"
   | "network"
@@ -167,6 +215,7 @@ export function failureReason(err: unknown): {
   const code = statusOf(err) ?? (codeMatch ? Number(codeMatch[1]) : null);
 
   const kind = ((): FailureKind => {
+    if (isPolicyRefusal(err)) return "refused";
     if (err instanceof EmptyResponseError || msg.includes("пустой ответ")) return "empty";
     if (msg.includes("model timed out") || msg.includes("время вышло") || code === 408) return "timeout";
     if (isBillingError(err)) return "quota";
@@ -198,6 +247,11 @@ export function failureSentence(err: unknown): string {
       return `${at}кончился лимит ключа${num} — мне надо это поправить, дай минуту.`;
     case "empty":
       return `${at}вернула пустой ответ. Повтори, пожалуйста!`;
+    case "refused":
+      // Not a glitch and not an outage: the provider read the request and
+      // declined it. Saying so is the only thing that helps — "повтори" on a
+      // refusal is advice that cannot work.
+      return `${at}не пропустила эту тему — фильтр провайдера отклонил запрос.`;
     case "gone":
       return `${at}не отдаёт модель${num} — мне надо это поправить.`;
     case "auth":

@@ -1,5 +1,5 @@
 import { ProviderRegistry, type ModelRef } from "./registry.js";
-import { isRetryableError, isBillingError } from "./errors.js";
+import { isRetryableError, isBillingError, isPolicyRefusal } from "./errors.js";
 import type { LLMClient, LLMMessage, LLMResponse, ToolDefinition, StreamCallback } from "./types.js";
 
 class ModelTimeoutError extends Error {
@@ -342,6 +342,14 @@ export class LLMRouter {
    * atomic with respect to other requests.
    */
   private noteFailure(role: string, ref: ModelRef, index: number, chain: ModelRef[], err: unknown): void {
+    // A refusal is not an outage. The model is alive and answered the previous
+    // message; degrading the chain over it told the owner "модель недоступна —
+    // временно работаю на …" about a model that was working fine, and moved the
+    // whole router onto the fallback until a probe came back. The fallback gets
+    // its chance inside the chain loop above; the router's own state stays
+    // where it was.
+    if (isPolicyRefusal(err)) return;
+
     const primary = this.registry.role(role);
     const isPrimary = Boolean(primary && sameRef(ref, primary));
 

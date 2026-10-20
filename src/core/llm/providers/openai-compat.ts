@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { EmptyResponseError } from "../errors.js";
+import { EmptyResponseError, ContentFilteredError } from "../errors.js";
 import type { LLMClient, LLMMessage, LLMResponse, ToolDefinition, ToolUseRequest, StreamCallback, LLMCallOptions } from "../types.js";
 
 /**
@@ -32,6 +32,14 @@ export interface OpenAICompatOptions {
    */
   echoProviderToolContent?: boolean;
 }
+
+/**
+ * Finish reasons that mean "I read it and declined", not "nothing came back".
+ *
+ * Google writes them into the finish reason: `content_filter:
+ * PROHIBITED_CONTENT`. OpenRouter forwards the provider's reason the same way.
+ */
+const POLICY_FINISH_REASONS = /content_filter|prohibited|safety|blocklist|spii/i;
 
 /** Convert our LLMMessage[] to the OpenAI wire format. */
 export function toOpenAIMessages(
@@ -447,6 +455,11 @@ export function createOpenAICompatClient(opts: OpenAICompatOptions): LLMClient {
  * See EmptyResponseError for what this cost live: her "повтори" instead of the
  * next model in the chain answering. The test is about the whole reply, because
  * a turn that only calls a tool arrives with no text and is perfectly good.
+ *
+ * A refusal is a different thing and is named differently: Google says
+ * `content_filter: PROHIBITED_CONTENT` instead of answering, and the two must
+ * not be confused — a refusal is a decision, and the next message will be
+ * answered by the very same model.
  */
 function assertAnswered(
   response: LLMResponse,
@@ -456,6 +469,9 @@ function assertAnswered(
 ): LLMResponse {
   if (response.text.trim() || response.toolCalls?.length) return response;
   console.log(JSON.stringify({ tag: "llm:empty", model, finishReason, ms }));
+  if (finishReason && POLICY_FINISH_REASONS.test(finishReason)) {
+    throw new ContentFilteredError(model, finishReason);
+  }
   throw new EmptyResponseError(model, finishReason);
 }
 
