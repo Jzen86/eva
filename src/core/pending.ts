@@ -36,6 +36,14 @@ export interface PendingChange {
   summary: string;
   /** What the model said it was doing, also shown to the owner. */
   reason: string;
+  /**
+   * The rule that held the action back, when there was one.
+   *
+   * The model's own "reason" says why it wants the command; this says why the
+   * command is waiting. Without it the owner sees a request and no reason, and
+   * the same command comes back tomorrow.
+   */
+  policy?: string;
   createdAt: number;
 }
 
@@ -100,7 +108,7 @@ export function discard(ownerId: string): PendingChange | undefined {
 export function requireApproval(
   params: Record<string, unknown>,
   tool: string,
-  opts: { summary: string; reason?: string; args?: Record<string, unknown> },
+  opts: { summary: string; reason?: string; policy?: string; args?: Record<string, unknown> },
 ): ToolResult {
   const ownerId = typeof params._userId === "string" ? params._userId : null;
   if (!ownerId) {
@@ -113,17 +121,22 @@ export function requireApproval(
     };
   }
   const reason = opts.reason?.trim() ?? "";
+  const policy = opts.policy?.trim() ?? "";
   const parked = propose(ownerId, {
     kind: "action",
     action: { name: tool, args: opts.args ?? {} },
     summary: opts.summary,
     reason,
+    ...(policy ? { policy } : {}),
   });
   const because = reason ? ` Причина: ${reason}.` : "";
+  // The rule that held the command back is told to the model too, so it can
+  // say why the check needs a tap instead of repeating the attempt.
+  const rule = policy ? ` Правило: ${policy}.` : "";
   return {
     success: true,
     output:
-      `⏸ Жду подтверждения. Предложено: ${parked.summary}.${because} ` +
+      `⏸ Жду подтверждения. Предложено: ${parked.summary}.${because}${rule} ` +
       `НЕ ВЫПОЛНЕНО. Скажи владельцу коротко, что нужно подтвердить это действие — ` +
       `он увидит кнопки ✅/❌ (а /yes и /no остаются) — и не повторяй попытку: ` +
       `она снова придёт сюда же.`,

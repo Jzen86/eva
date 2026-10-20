@@ -482,10 +482,11 @@ function mediaCtx(d: Delivery) {
  * and the command is invisible. `/yes` and `/no` stay as they were — a button
  * that fails to arrive must not leave the owner with no way to answer.
  */
-async function sendConfirm(d: Delivery, confirm: { summary: string; reason?: string }): Promise<void> {
+async function sendConfirm(d: Delivery, confirm: { summary: string; reason?: string; policy?: string }): Promise<void> {
   const text =
     `❔ Подтверди: ${confirm.summary}` +
-    (confirm.reason ? `\nПричина: ${confirm.reason}` : "");
+    (confirm.reason ? `\nПричина: ${confirm.reason}` : "") +
+    (confirm.policy ? `\nПравило: ${confirm.policy}` : "");
   await d.api
     .sendMessage(
       d.chatId,
@@ -502,7 +503,10 @@ async function sendConfirm(d: Delivery, confirm: { summary: string; reason?: str
       }),
     )
     .catch(() => {});
-  console.log(`🔘 Кнопки подтверждения отправлены: ${confirm.summary.slice(0, 100)}`);
+  console.log(
+    `🔘 Кнопки подтверждения отправлены: ${confirm.summary.slice(0, 100)}` +
+      (confirm.policy ? ` — правило: ${confirm.policy}` : ""),
+  );
 }
 
 // ---------------------------------------------------------------------------

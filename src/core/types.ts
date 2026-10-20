@@ -30,7 +30,7 @@ export interface OutgoingMessage {
    * typing `/yes`. The command still works; the buttons are the same decision,
    * just not a command the owner has to remember or look up.
    */
-  confirm?: { summary: string; reason?: string }
+  confirm?: { summary: string; reason?: string; policy?: string }
 }
 
 export interface LLMMessage {

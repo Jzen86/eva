@@ -142,6 +142,16 @@ describe("classify — the reads that must just work", () => {
     // tap /yes without reading.
     "cd /tmp && ls -la",
     "cd /var/log && journalctl -n 20 --no-pager",
+    // The server check's last step asks whether a reboot is pending. `test`
+    // writes nothing in any mode, and it was missing from the list — so the
+    // whole check stood waiting for a tap and the owner was told about a
+    // server nobody had looked at (19.10 23:00 and 20.10 05:15).
+    "test -f /var/run/reboot-required",
+    "test -f /var/run/reboot-required && cat /var/run/reboot-required || echo 'reboot not required'",
+    // Her neighbour check reads a range of a source file. `sed` in this one
+    // shape can only print, so it reads like `cat` does.
+    "sed -n '1230,1250p' /opt/zadrot-bot/bot.py",
+    "sed -n '1230,1250p' bot.py | cut -c1-140",
   ];
 
   for (const cmd of cases) {
@@ -215,7 +225,19 @@ describe("classify — everything that must wait for the owner", () => {
     ["npm install left-pad", /не в списке/],
     ["docker run -it ubuntu", /не в списке/],
     ["tee /etc/passwd", /не в списке/],
-    ["sed -i 's/a/b/' /etc/hosts", /не в списке/],
+    ["sed -i 's/a/b/' /etc/hosts", /не только читает/],
+    // `sed` is a reader in one shape and a writer in every other, and the
+    // shape is what decides. Each of these can write: `-i` edits in place,
+    // `w` writes a file, `e` runs a command, `-f` takes a script from a file
+    // that could hold anything, and a script that is more than a line range
+    // can carry any of them.
+    ["sed -n '1,5p; w /tmp/out' /etc/hosts", /не только читает/],
+    ["sed -n '1,5e' /etc/hosts", /не только читает/],
+    ["sed -n -f /tmp/script.sed /etc/hosts", /не только читает/],
+    ["sed -n -e '1,5p' -e 'w /tmp/x' /etc/hosts", /не только читает/],
+    ["sed 's/a/b/' /etc/hosts", /не только читает/],
+    // No file to read: `sed -n p` would sit on the terminal waiting for stdin.
+    ["sed -n '1,5p'", /не только читает/],
     ["chmod 777 /root", /не в списке/],
     ["crontab -e", /не в списке/],
     ["ls > /etc/passwd", /перенаправление/],

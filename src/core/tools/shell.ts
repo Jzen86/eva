@@ -45,11 +45,19 @@ export class ShellTool implements Tool {
     // someone has already been burned by; an allowlist is the other way round.
     const verdict = classify(command, this.allow);
     if (verdict.kind === "gate") {
+      // Why it was parked belongs in the journal, not only in the button the
+      // owner sees. Without it the log says only that a command waited for a
+      // tap, and "why did this check not run" has no answer in it — which is
+      // how two days of server checks went missing on a single missing word.
+      console.log(
+        JSON.stringify({ tag: "shell:gate", why: verdict.why, command: command.slice(0, 300) }),
+      );
       // Parked for the owner, or refused when there is no chat to confirm through —
       // requireApproval says which, and a command nobody is watching does not run.
       return requireApproval(params, "shell", {
         summary: approvalSummary("выполнить команду", command),
         reason: typeof params.reason === "string" ? params.reason : "",
+        policy: verdict.why,
         args: { command: command.trim() },
       });
     }

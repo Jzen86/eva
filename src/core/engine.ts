@@ -23,7 +23,7 @@ import { gapFacts, GAP_THRESHOLD_MIN, type GapFacts } from "./memory/time-words.
 import { compactHistory } from "./memory/compaction.js";
 import { alignHistory } from "./llm/history.js";
 import { LLMUnavailableError } from "./llm/router.js";
-import { failureSentence } from "./llm/errors.js";
+import { failureSentence, isPolicyRefusal } from "./llm/errors.js";
 import { isHeavyToolCall } from "./tool-tiers.js";
 import { peek } from "./pending.js";
 import { TokenStore } from "../services/tokens.js";
@@ -392,7 +392,11 @@ export class Engine {
     if (parked && parked.createdAt > parkedBefore) {
       return {
         ...out,
-        confirm: { summary: parked.summary, ...(parked.reason ? { reason: parked.reason } : {}) },
+        confirm: {
+          summary: parked.summary,
+          ...(parked.reason ? { reason: parked.reason } : {}),
+          ...(parked.policy ? { policy: parked.policy } : {}),
+        },
       };
     }
     return out;
@@ -880,6 +884,17 @@ export class Engine {
       // an empty 200 need different actions, and the old "что-то у меня зависло"
       // told the owner nothing about which one it was (his ask, 19.10).
       const fallback = `Блин, ${failureSentence(err)}`;
+
+      // A refusal gets no second attempt at explaining itself. The recovery
+      // call carries the same history, so the provider refuses it the same way
+      // it refused the turn — two more calls and two more full prompts spent on
+      // an answer that cannot arrive. The reason goes to the owner as it is.
+      if (isPolicyRefusal(err)) {
+        const text = fallback;
+        history.push({ role: "assistant", content: text, at: turnSeconds });
+        saveMessage(userId, msg.channelName, "assistant", text);
+        return { text, mediaUrl: lastMediaUrl, mediaPath: lastMediaPath, ...(media.length ? { media } : {}) };
+      }
 
       // Try to let LLM explain what happened naturally
       try {

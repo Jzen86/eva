@@ -55,6 +55,14 @@ const READ_ONLY_BINARIES = new Set([
   "whoami", "id", "date", "uname", "uptime", "hostname", "printenv",
   "which", "type", "pwd", "basename", "dirname", "realpath", "readlink",
   "getconf", "nproc", "seq", "sleep", "true", "false",
+  // `test` asks a question about the filesystem and answers it. It writes
+  // nothing in any mode, and it is the same class as `true` and `false` above.
+  // It was missing, and that one word parked the server check: its last step
+  // asks `test -f /var/run/reboot-required`, and a parked command parks the
+  // whole check with it — two of the last three server checks were lost to it
+  // (19.10 23:00 and 20.10 05:15), each one reporting "the server is fine"
+  // about a server it had not looked at.
+  "test",
   // shell builtins that only move the cursor or the stream. `cd` is here for a
   // measured reason: on the live install it was the fourth most-used first word
   // in a shell call, and `cd /tmp && ls` is the commonest way to write one. It
@@ -109,6 +117,15 @@ interface BinaryRule {
    * how the server check came back asking the owner for a `/yes` over a listing.
    */
   bareReadFlags?: RegExp;
+  /**
+   * The binary is a reader only in this exact shape; anything else is a gate.
+   *
+   * For a binary whose safety depends on its arguments rather than on a verb —
+   * `sed` is the one that matters: it writes with `-i`, with the `w` command
+   * and with `e`, and prints with `p`. A shape test can tell the difference
+   * where a verb list cannot.
+   */
+  readOnlyShape?: (segment: string) => boolean;
 }
 
 const RULES: Record<string, BinaryRule> = {
@@ -196,7 +213,110 @@ const RULES: Record<string, BinaryRule> = {
     // a file. All four are the same command with one more flag.
     writeFlags: /(^|\s)-(delete|exec|execdir|ok|okdir|fprint|fprintf|fls)\b/,
   },
+  sed: {
+    // `sed` is a reader in one shape and a writer in every other. The shape is
+    // checked in `sedOnlyPrints`; this entry exists so that the binary is
+    // recognised at all.
+    readOnlyShape: sedOnlyPrints,
+  },
 };
+
+/**
+ * `sed` in the one shape that cannot write.
+ *
+ * `sed` writes three ways: `-i` edits the file in place, the `w` command
+ * writes to a file, and `e` runs a shell command. A script that is nothing but
+ * a line range and the `p` command can do none of them — it selects lines and
+ * prints them, and printing is what the caller sees anyway.
+ *
+ * So the rule is not "sed is safe" but "this script can only print". Every
+ * other flag and every other script is a gate, and the gate is where `sed`
+ * stood for three days while her neighbour check read a range of a source file
+ * (`sed -n '1230,1250p' bot.py`): a planned check that waits for a tap is not
+ * a planned check, and four of seven of those checks were lost to it.
+ */
+function sedOnlyPrints(segment: string): boolean {
+  const tokens = tokenize(segment);
+  if (tokens.length < 3) return false;
+
+  let i = 1;
+  // Only the flags that keep sed from writing. `-e` would add a second script
+  // and `-f` would read one from a file that could hold anything, so both are
+  // refused here rather than further down.
+  for (; i < tokens.length; i += 1) {
+    const flag = tokens[i];
+    if (!flag.startsWith("-")) break;
+    if (flag !== "-n" && flag !== "--quiet" && flag !== "--silent") return false;
+  }
+
+  const script = tokens[i];
+  // A line range and `p`, nothing else: no `w`, no `e`, no `s///`, no `;`.
+  if (!script || !SED_PRINT_SCRIPT.test(script)) return false;
+
+  // What is left are files to read. At least one, so that `sed -n p` cannot
+  // sit on the terminal waiting for stdin, and none of them may look like a
+  // flag.
+  const files = tokens.slice(i + 1);
+  if (files.length === 0) return false;
+  return files.every((f) => !f.startsWith("-"));
+}
+
+/** A script that can only print: a line range, and the `p` command. */
+const SED_PRINT_SCRIPT = /^[0-9$, ]*p$/;
+
+/**
+ * Split a segment into arguments, honouring quotes.
+ *
+ * `shapeOf` splits a command into segments; this splits one segment into the
+ * arguments a shell would hand to it. The quotes come off, because what is
+ * being judged is the argument's text and not how it was written.
+ */
+function tokenize(segment: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+  let quoted = false;
+
+  for (let i = 0; i < segment.length; i += 1) {
+    const ch = segment[i];
+    if (quote) {
+      if (ch === quote) {
+        quote = null;
+        continue;
+      }
+      if (quote === '"' && ch === "\\" && i + 1 < segment.length) {
+        current += segment[i + 1];
+        i += 1;
+        continue;
+      }
+      current += ch;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      quoted = true;
+      continue;
+    }
+    if (ch === "\\" && i + 1 < segment.length) {
+      current += segment[i + 1];
+      i += 1;
+      quoted = true;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (current || quoted) {
+        tokens.push(current);
+        current = "";
+        quoted = false;
+      }
+      continue;
+    }
+    current += ch;
+    quoted = true;
+  }
+  if (current || quoted) tokens.push(current);
+  return tokens;
+}
 
 /** The dot-commands of sqlite3 that only read. */
 const SQLITE_READ_COMMANDS = new Set([".schema", ".tables", ".indexes", ".fullschema", ".mode", ".headers", ".help"]);
@@ -443,6 +563,10 @@ const SECRET_SUFFIX = /(\.(pem|key|p12|pfx)|_key)$/i;
 const CONTENT_READERS = new Set([
   "cat", "head", "tail", "grep", "egrep", "fgrep", "nl", "tac", "fold",
   "expand", "sort", "uniq", "cut", "tr", "diff", "cmp", "column", "strings",
+  // `sed` prints the lines it is given, so pointing it at the config's
+  // directory reads the config just as `cat` would — it belongs here for the
+  // same reason, and the allowlist entry above means nothing without it.
+  "sed",
 ]);
 
 function secretPathIn(token: string, policy: PathPolicy, contentsOnly: boolean): string | null {
@@ -532,6 +656,9 @@ export function classify(command: string, trusted: string[] = [], policy: PathPo
       }
       if (rule.writeFlags?.test(segment)) {
         return { kind: "gate", why: `«${bin}» вызван с флагом, который пишет` };
+      }
+      if (rule.readOnlyShape && !rule.readOnlyShape(segment)) {
+        return { kind: "gate", why: `«${bin}» в этой форме не только читает` };
       }
       continue;
     }
