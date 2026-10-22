@@ -356,6 +356,16 @@ async function main() {
         if (!result.ran || !result.report) return;
         if (result.wrote) {
           console.log("🧠 study: есть записи");
+          // A refusal is a finding about the checks, and until now it left no
+          // trace in the journal whenever the session also wrote something: the
+          // report went to Telegram, so the 128-character dossier line of 22.10
+          // exists nowhere we can read it back. Name the refusals here.
+          if (result.refused?.length) {
+            console.log(
+              `🧠 study: отказано ${result.refused.length}\n` +
+                result.refused.map((r) => `  (отброшено) ${r}`).join("\n"),
+            );
+          }
           await channels.get("telegram")?.send(ownerId, { text: result.report });
           return;
         }

@@ -82,11 +82,12 @@ describe("study: what a session may leave in the base", () => {
   function rows() {
     return getDB()
       .prepare(
-        "SELECT topic, insight, her_move, context, his_reaction, conclusion FROM knowledge ORDER BY id",
+        "SELECT topic, insight, kind, her_move, context, his_reaction, conclusion FROM knowledge ORDER BY id",
       )
       .all() as Array<{
       topic: string;
       insight: string;
+      kind: string;
       her_move: string;
       context: string;
       his_reaction: string;
@@ -103,12 +104,12 @@ describe("study: what a session may leave in the base", () => {
     expect(prompt).toMatch(/график работы/i);
   });
 
-  it("refuses a dossier line that tells a story instead of a fact", async () => {
-    // The owner's acceptance test for the dossier is a short line — "любит энергетики",
-    // "играет в «Территорию фермеров» в «Одноклассниках»" — and the writer is a model:
-    // "please be brief" alone produced the 140-character "предпочитает целенаправленно
-    // указывать ракурсы…" he threw out on 18.10. So the briefness is mechanical: the
-    // row is refused with its length, not trimmed and not stored.
+  it("stores a story written for the questionnaire as an episode", async () => {
+    // A dossier line that needs a paragraph is a story. Refusing it outright lost
+    // the fact: on 22.10 a 128-character line about his job was thrown away, the
+    // report went to the owner's Telegram, and the study writer never saw why —
+    // he had to ask for a shorter line by hand. Moving it to the searched half
+    // keeps the fact and keeps the always-on block short.
     const long =
       "Предпочитает целенаправленно указывать ракурсы для генерации: анфас с лёгким наклоном камеры сверху, " +
       "боковой план и перспектива «стоящий над сидящим», а также подробно описывать сцену и свет.";
@@ -120,9 +121,46 @@ describe("study: what a session may leave in the base", () => {
     );
 
     const report = String(result.report);
-    expect(report).toContain("строка анкеты");
-    expect(report).toContain("анкета пишется коротко");
-    expect(rows()).toHaveLength(0);
+    expect(report).toContain("в анкету не влезло");
+    expect(report).toContain("записано событием");
+    const stored = rows();
+    expect(stored).toHaveLength(1);
+    expect(stored[0].kind).toBe("episode");
+    expect(stored[0].insight).toBe(long);
+  });
+
+  it("does not retire a dossier line when a story about it is demoted", async () => {
+    // A demoted row is not a sharper dossier answer: the short line is still the
+    // right shape, and letting the paragraph replace it would empty the dossier
+    // to fill the events. The old row must survive; the story is only added.
+    addKnowledge({
+      topic: "работа",
+      insight: "Работает администратором.",
+      source: "test",
+      kind: "profile",
+    });
+    const long =
+      "Его точка — магазин формата «у дома»: полная смена с восьми утра до десяти вечера, " +
+      "шестьсот человек за смену, постоянные поставщики и недостачи, домой приходит без сил.";
+    expect(long.length).toBeGreaterThan(PROFILE_LINE_LIMIT);
+    await session(
+      JSON.stringify({
+        facts: [{ topic: "работа", fact: long, kind: "profile", replaces: "работа" }],
+      }),
+    );
+
+    const profile = getDB()
+      .prepare("SELECT insight FROM knowledge WHERE superseded_at IS NULL AND kind = 'profile'")
+      .all() as Array<{ insight: string }>;
+    expect(profile.map((r) => r.insight)).toEqual(["Работает администратором."]);
+    expect(rows().some((r) => r.kind === "episode" && r.insight === long)).toBe(true);
+  });
+
+  it("tells the writer the dossier line has a cap and holds one fact", async () => {
+    const { prompt } = await session(JSON.stringify({ facts: [] }));
+    expect(prompt).toContain(`до ${PROFILE_LINE_LIMIT} символов`);
+    expect(prompt).toContain("один факт — одна строка");
+    expect(prompt).toContain("уйдёт в события");
   });
 
   it("stores a conversation's subject and how it ended", async () => {
