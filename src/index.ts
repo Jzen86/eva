@@ -453,6 +453,22 @@ async function main() {
           return;
         }
 
+        // The checks role writes the facts; she says them to him. This is the
+        // manager frame the role was built around: Haiku brings the report, Eva
+        // reads it and tells him what it means. The dry report is the only
+        // source, and if the relay cannot answer, the dry report is what he gets
+        // — a fact is better than a missing report.
+        if (report) {
+          const relayed = await engine.relayReport(answer.text, task.chatId);
+          const cleanRelay = splitModelNotice(relayed).rest.trim();
+          if (cleanRelay && !saidNothing(cleanRelay)) {
+            answer = { ...answer, text: cleanRelay };
+            console.log(`🗣 Отчёт "${task.name}": пересказан`);
+          } else {
+            console.log(`🗣 Отчёт "${task.name}": пересказ не вышел — отправляю сухой`);
+          }
+        }
+
         // The archive is a separate destination on purpose: the owner reads her
         // reports there, in order, without the ordinary conversation around
         // them — and it is written before the send, so a bad night for Telegram

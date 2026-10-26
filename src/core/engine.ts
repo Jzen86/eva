@@ -940,6 +940,40 @@ export class Engine {
   }
 
   /**
+   * The checking agent's dry report, in her own words.
+   *
+   * Periodic checks run on the `checks` role — a different model, chosen for the
+   * work rather than for the voice. It reads the log and writes the facts; those
+   * facts are real, but if they went straight to the owner, "Хайку проверил"
+   * would be the truth and the report would not be hers. This call is the chat
+   * model, with her persona, saying the same facts to him. The raw report is the
+   * only source: no tools, no history, no invention. An empty answer means
+   * "keep the dry report" — a report that exists is better than a relay that
+   * does not.
+   */
+  async relayReport(rawReport: string, chatId: string): Promise<string> {
+    const live = this.liveConfig();
+    const systemPrompt = buildSystemPrompt(live, undefined, chatId, [], undefined, true);
+    const instruction =
+      "[Системное сообщение: это сухой отчёт твоего проверяющего агента Хайку. " +
+      "Перескажи отчёт ему своими словами: что проверено, что нашла, что рекомендуешь и как именно. " +
+      "Не выдумывай фактов, цифр и причин, которых нет в отчёте; если рекомендаций нет — так и скажи. " +
+      "Сохраняй цифры и оговорки из отчёта: RAM, диск, нагрузку и порты называй числами, а «безопасных обновлений нет» " +
+      "не превращай в «обновлений нет» — это разные вещи. Не обобщай и не смягчай. " +
+      "Сохрани каркас: 📝 что и как проверяла, 🆘/⚠️/✅ что нашла, 💬 что рекомендуешь, 📊 вердикт. " +
+      `Вот отчёт:\n\n${rawReport}]`;
+    try {
+      const response = await this.deps.llm.fast().chat([
+        { role: "system", content: systemPrompt },
+        { role: "user", content: instruction },
+      ]);
+      return stripReplyStamp(response.text).trim();
+    } catch {
+      return "";
+    }
+  }
+
+  /**
    * How long the chat has been silent, in the terms the prompt can use.
    *
    * The window she is handed is a feed with no seams: role and text, forty

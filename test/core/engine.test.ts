@@ -30,6 +30,36 @@ describe("Engine", () => {
     expect(res.text).toBe("Привет!");
   });
 
+  it("relays the checking agent's report in her voice, from the raw text", async () => {
+    // The checks run on another model (Haiku). The facts are real, but the voice
+    // has to be hers: she reads the dry report and tells him what it means. This
+    // is the manager frame, not decoration — "я проверила" from the checking
+    // model would be a false first person.
+    const chat = vi.fn().mockResolvedValue({ text: "[21:00] Всё чисто, Женя.", stopReason: "end_turn" });
+    const llm = { fast: () => ({ chat }), strong: () => ({ chat }) };
+    const engine = new Engine({ llm, config: testConfig, tools: new ToolRegistry() });
+
+    const raw = "📝 Проверила сервер.\n✅ Всё чисто.\n📊 Вердикт: ✅";
+    const out = await engine.relayReport(raw, "1");
+    expect(out).toBe("Всё чисто, Женя.");
+
+    const messages = chat.mock.calls[0][0] as Array<{ role: string; content: string }>;
+    const instruction = messages.find((m) => m.content.includes("сухой отчёт"));
+    expect(instruction?.content).toContain(raw);
+    expect(instruction?.content).toContain("Хайку");
+    expect(instruction?.content).toContain("Сохраняй цифры и оговорки");
+    expect(messages[0].role).toBe("system");
+  });
+
+  it("leaves the dry report alone when the relay cannot answer", async () => {
+    // A report that exists is better than a relay that does not: the caller
+    // keeps the checking model's text when this returns empty.
+    const chat = vi.fn().mockRejectedValue(new Error("empty"));
+    const llm = { fast: () => ({ chat }), strong: () => ({ chat }) };
+    const engine = new Engine({ llm, config: testConfig, tools: new ToolRegistry() });
+    expect(await engine.relayReport("raw report", "1")).toBe("");
+  });
+
   it("serialises turns for one user so two flows cannot interleave", async () => {
     // The scheduler and the chat path both call process() for the same user.
     // Without a per-user lock the second builds a request from the first's
