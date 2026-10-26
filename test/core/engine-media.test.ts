@@ -126,6 +126,13 @@ describe("Engine mediaUrl propagation", () => {
 
       expect(res.text).toContain("сорвалось");
       expect(res.mediaUrl).toBe("https://fal.media/frame.jpg");
+      // The recovery call knows the frame went out: an apology that says it did
+      // not is a lie right after the picture. It is also told not to name the
+      // provider — "Гугл вернул пустой ответ" breaks the person he is talking to.
+      const recovery = chatMock.mock.calls[2][0] as Array<{ role: string; content: string }>;
+      const instruction = recovery.find((m) => m.content.includes("Системное сообщение"));
+      expect(instruction?.content).toContain("уже ушло");
+      expect(instruction?.content).toContain("Не называй модель или провайдера");
     } finally {
       spy.mockRestore();
     }

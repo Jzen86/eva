@@ -905,10 +905,22 @@ export class Engine {
 
         // The instruction rides this call only — see the timeout branch above for
         // why it must not be pushed into `history`.
+        //
+        // Two things it must not get wrong. If a frame or a voice note already
+        // went out this turn, an apology that says "the voice broke" is a lie the
+        // owner hears right after the voice (live, 26.10: the TTS had answered
+        // "ok", the next model call came back empty, and the recovery sentence
+        // told him the voice had failed). And the provider's name is plumbing:
+        // "Гугл вернул пустой ответ" breaks the person he is talking to, while
+        // "связь сорвалась" says the same thing without the machinery.
+        const sentMedia = Boolean(lastMediaUrl || lastMediaPath || media.length);
+        const mediaNote = sentMedia
+          ? " Вложение (кадр или голос) уже ушло к нему в этом же ходу — не говори, что оно не отправилось; сбой только в текстовом ответе."
+          : "";
         const recoveryMessages: LLMMessage[] = [
           { role: "system", content: systemPrompt },
           ...history,
-          { role: "user", content: `[Системное сообщение: произошла ошибка — ${failureSentence(err)} Передай ему это своими словами, в одном-двух предложениях: назови причину так, как она названа здесь, можно с кодом, и что делать. Коротко извинись. Других причин не выдумывай, ремарок не добавляй.]` },
+          { role: "user", content: `[Системное сообщение: произошла ошибка — ${failureSentence(err)}${mediaNote} Передай ему это своими словами, в одном-двух предложениях: назови причину так, как она названа здесь, можно с кодом, и что делать. Коротко извинись. Других причин не выдумывай, ремарок не добавляй. Не называй модель или провайдера по имени — для него это «связь» или «модель».]` },
         ];
         const recoveryResponse = await llm.chat(recoveryMessages);
         const text = recoveryResponse.text || fallback;
