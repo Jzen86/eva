@@ -69,7 +69,6 @@ const APPEARANCE_WORDS = [
   "wide hips",
   "curvy",
   "voluptuous",
-  "skinny",
 ];
 
 /** Poses that cannot both be true of one body at one moment. */

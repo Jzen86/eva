@@ -41,6 +41,16 @@ describe("picture prompt check", () => {
     expect(checkImagePrompt("flipping her long hair back, sitting on the bed")).toBeNull();
   });
 
+  it("lets a garment fit through and refuses a body proportion", () => {
+    // "Skinny jeans" is a garment, not a description of her body; a check that
+    // refuses it would refuse the outfit. "Big breasts" is the body the canon
+    // already fixed, and a second description is what makes it drift.
+    expect(checkImagePrompt("standing in skinny jeans and a white shirt")).toBeNull();
+    expect(checkImagePrompt("high-waisted jeans and a cropped top")).toBeNull();
+    const objection = checkImagePrompt("outfit: big breasts, red dress");
+    expect(objection).toContain("задана каноном");
+  });
+
   it("refuses two poses that cannot both be true", () => {
     const objection = checkImagePrompt("standing at the window, then lying on the bed");
     expect(objection).toContain("две позы сразу");
