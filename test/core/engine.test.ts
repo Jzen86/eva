@@ -47,6 +47,7 @@ describe("Engine", () => {
     const instruction = messages.find((m) => m.content.includes("сухой отчёт"));
     expect(instruction?.content).toContain(raw);
     expect(instruction?.content).toContain("Хайку");
+    expect(instruction?.content).toContain("он, не она");
     expect(instruction?.content).toContain("Сохраняй цифры и оговорки");
     expect(messages[0].role).toBe("system");
   });
