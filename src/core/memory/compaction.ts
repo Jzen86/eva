@@ -24,7 +24,7 @@ const MAX_COMPACTION_CHARS = 30_000;
  * what loses detail — but it cannot be unbounded either, or the digest would
  * eventually cost more than the window it exists to protect.
  */
-const MAX_DIGEST_CHARS = 24_000;
+const MAX_DIGEST_CHARS = 10_000;
 
 /** What one fold did, for the log line. */
 export interface CompactionResult {

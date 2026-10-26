@@ -141,12 +141,39 @@ export function loadHistory(
   // The same border rules the live history gets, see `llm/history.ts`: this
   // window starts and ends wherever SQLite felt like, not where a tool call
   // and its result do.
-  const result = alignHistory(messages);
+  const result = trimOldToolResults(alignHistory(messages));
 
   return {
     messages: result,
     summary: loadSummary(userId, offsetHours),
   };
+}
+
+/**
+ * Old tool results, cut down to their headline.
+ *
+ * A shell transcript, a browser dump or a files page can be thousands of
+ * characters, and they ride in the history for as long as the window holds them
+ * — the prompt was 40–63k characters of history on the live install, most of it
+ * tool output nobody was going to read again. The last two stay whole: that is
+ * the work the current thread may still be standing on. Older ones keep the
+ * first `maxChars` and a marker. The tool call is still matched by id; only the
+ * text shrinks.
+ */
+function trimOldToolResults(messages: LLMMessage[], keepLast = 2, maxChars = 500): LLMMessage[] {
+  const toolIndexes = messages
+    .map((message, index) => (message.role === "tool" ? index : -1))
+    .filter((index) => index >= 0);
+  const keep = new Set(toolIndexes.slice(-keepLast));
+
+  return messages.map((message, index) => {
+    if (message.role !== "tool" || keep.has(index)) return message;
+    if (typeof message.content !== "string" || message.content.length <= maxChars) return message;
+    return {
+      ...message,
+      content: `${message.content.slice(0, maxChars)}\n\n[обрезано: ${message.content.length - maxChars} символов]`,
+    };
+  });
 }
 
 /**

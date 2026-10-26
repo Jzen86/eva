@@ -77,6 +77,29 @@ describe("conversations", () => {
       expect(messages[4].content).toBe("Message 9");
     });
 
+    it("cuts old tool results to a headline and keeps the last two whole", () => {
+      // Live, the history was 40–63k characters and most of it was tool output
+      // nobody would read again: shell transcripts, browser dumps, files pages.
+      // The last two stay whole — that is the work the current thread may still
+      // be standing on — and older ones keep their first 500 characters.
+      const big = "x".repeat(2000);
+      for (let i = 0; i < 4; i++) {
+        saveMessage("user1", "telegram", "user", `task ${i}`);
+        saveMessage("user1", "telegram", "assistant", "", undefined, [
+          { id: `tc${i}`, name: "shell", arguments: {} },
+        ]);
+        saveMessage("user1", "telegram", "tool", big, `tc${i}`);
+        saveMessage("user1", "telegram", "assistant", "done");
+      }
+      const { messages } = loadHistory("user1");
+      const tools = messages.filter((m) => m.role === "tool");
+      expect(tools).toHaveLength(4);
+      expect(String(tools[0].content)).toContain("[обрезано:");
+      expect(String(tools[1].content)).toContain("[обрезано:");
+      expect(String(tools[2].content)).toBe(big);
+      expect(String(tools[3].content)).toBe(big);
+    });
+
     it("isolates messages by user_id", () => {
       saveMessage("user1", "telegram", "user", "Hello from user1");
       saveMessage("user2", "telegram", "user", "Hello from user2");

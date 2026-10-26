@@ -370,10 +370,10 @@ export const selfConfigTool: Tool = {
     "action=get — one key, action=set — write a value, action=append — add to an array, " +
     "action=list — everything (secrets are shown as *** and never as values). " +
     "Flavour changes (tone, style, the 0-4 dials) apply at once. " +
-    "Identity changes (name, gender, persona, ops, anything about the owner) are " +
-    "NOT applied: the tool parks the change and the owner confirms it with /yes. " +
-    "If you get 'Жду подтверждения', the change has not happened — tell the owner " +
-    "what you want to change and that it needs their yes. Do not retry it. " +
+    "Identity changes (name, gender, persona, ops, anything about the owner) are NOT applied: " +
+    "the tool parks the change and the owner confirms it with /yes. If you get 'Жду подтверждения', " +
+    "the change has not happened — tell the owner what you want to change and that it needs their yes. " +
+    "Do not retry it. " +
     "Writable: agent.name, agent.gender (female/male/neutral), " +
     "agent.personality.tone, agent.personality.style, " +
     "agent.personality.persona (WHO SHE IS — character, manner, backstory; free text), " +

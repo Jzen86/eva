@@ -53,6 +53,23 @@ const APPEARANCE_WORDS = [
   "narrow waist",
   "flat stomach",
   "long legs",
+  // Proportions are the canon's, not the scene's: a second description of the
+  // body is exactly what makes it drift from frame to frame (26.10, the five
+  // fields made this easier to get wrong — "big breasts" in `outfit` would
+  // override the fixed figure). "Hands on hips" and "high-waisted jeans" still
+  // pass: only the phrases that name a shape are refused.
+  "big breasts",
+  "small breasts",
+  "huge breasts",
+  "large breasts",
+  "perfect breasts",
+  "round ass",
+  "big ass",
+  "thick thighs",
+  "wide hips",
+  "curvy",
+  "voluptuous",
+  "skinny",
 ];
 
 /** Poses that cannot both be true of one body at one moment. */

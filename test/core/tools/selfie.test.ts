@@ -13,22 +13,45 @@ const imageReply = {
   }),
 };
 
+/**
+ * The five fields every selfie call now carries.
+ *
+ * The face and the hair colour are not here: they come from the reference. These
+ * are the parts she chooses, in English, and the live engine (26.10) showed that
+ * the wording has to be physical — "warm smile" left the neutral reference face
+ * untouched, "laughing hard, mouth open, teeth showing" changed it.
+ */
+const SCENE = {
+  hair: "loose waves",
+  face: "warm smile, eyes relaxed",
+  outfit: "white blouse",
+  scene: "sitting in a café",
+  light: "soft morning light",
+};
+
 describe("SelfieTool", () => {
   it("has correct name and parameters", () => {
     const tool = new SelfieTool({ openrouterApiKey: "k", referencePhotoUrl: "https://example.com/photo.jpg" });
     expect(tool.name).toBe("selfie");
-    expect(tool.parameters).toHaveLength(5);
-    expect(tool.parameters[0].name).toBe("context");
-    expect(tool.parameters[0].required).toBe(true);
-    expect(tool.parameters[1].name).toBe("mode");
-    expect(tool.parameters[1].required).toBe(false);
+    expect(tool.parameters).toHaveLength(9);
+    // The five fields are the scene: free text, in English, every time.
+    expect(tool.parameters.slice(0, 5).map((p) => p.name)).toEqual([
+      "hair",
+      "face",
+      "outfit",
+      "scene",
+      "light",
+    ]);
+    expect(tool.parameters.slice(0, 5).every((p) => p.required === true)).toBe(true);
+    expect(tool.parameters[5].name).toBe("mode");
+    expect(tool.parameters[5].required).toBe(false);
     // with_owner is what turns a selfie into a frame with both of them in it.
-    expect(tool.parameters[3].name).toBe("with_owner");
-    expect(tool.parameters[3].type).toBe("boolean");
+    expect(tool.parameters[7].name).toBe("with_owner");
+    expect(tool.parameters[7].type).toBe("boolean");
     // His outfit is a slot of its own — the description asking for it was skipped
     // twice, so a missing one is refused (see generatePair).
-    expect(tool.parameters[4].name).toBe("his_outfit");
-    expect(tool.parameters[4].required).toBe(false);
+    expect(tool.parameters[8].name).toBe("his_outfit");
+    expect(tool.parameters[8].required).toBe(false);
   });
 
   it("gives his outfit its own slot, so a pair frame cannot copy it from his photo", () => {
@@ -73,7 +96,7 @@ describe("SelfieTool", () => {
 
   it("returns error when the OpenRouter key is missing", async () => {
     const tool = new SelfieTool({ openrouterApiKey: "", referencePhotoUrl: "https://example.com/photo.jpg" });
-    const result = await tool.execute({ context: "в кафе" });
+    const result = await tool.execute({ ...SCENE });
     expect(result.success).toBe(false);
     expect(result.output).toContain("OpenRouter");
   });
@@ -92,7 +115,7 @@ describe("SelfieTool", () => {
     const mockFetch = vi.fn().mockResolvedValue(imageReply);
     vi.stubGlobal("fetch", mockFetch);
 
-    const result = await tool.execute({ context: "в кафе с кофе" });
+    const result = await tool.execute({ ...SCENE, scene: "в кафе с кофе" });
     expect(result.success).toBe(true);
     expect(result.output).not.toContain("лицо не сохранено");
 
@@ -120,7 +143,7 @@ describe("SelfieTool", () => {
     const mockFetch = vi.fn().mockResolvedValue(imageReply);
     vi.stubGlobal("fetch", mockFetch);
 
-    await tool.execute({ context: "на пляже" });
+    await tool.execute({ ...SCENE, scene: "на пляже" });
 
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
     const parts = body.messages[0].content as Array<{ type: string; image_url?: { url: string } }>;
@@ -143,7 +166,7 @@ describe("SelfieTool", () => {
     const mockFetch = vi.fn().mockResolvedValue(imageReply);
     vi.stubGlobal("fetch", mockFetch);
 
-    const result = await tool.execute({ context: "в кафе с кофе" });
+    const result = await tool.execute({ ...SCENE, scene: "в кафе с кофе" });
     expect(result.success).toBe(true);
     expect(result.output).not.toContain("лицо не сохранено");
 
@@ -171,7 +194,7 @@ describe("SelfieTool", () => {
       json: () => Promise.resolve({ choices: [{ message: { content: "no" }, finish_reason: "stop" }] }),
     }));
 
-    const result = await tool.execute({ context: "в кафе" });
+    const result = await tool.execute({ ...SCENE });
     expect(result.success).toBe(false);
     expect(result.output).toContain("отклонил сцену");
     expect(result.output).not.toContain("не вернул изображение");
@@ -201,7 +224,7 @@ describe("SelfieTool", () => {
       String(url).includes("/images/generations") ? okFetch() : chatFetch(),
     ));
 
-    const result = await tool.execute({ context: "в кафе, широко улыбаясь" });
+    const result = await tool.execute({ ...SCENE, scene: "в кафе, широко улыбаясь" });
     expect(result.success).toBe(true);
     expect(result.output).toContain("лицо не сохранено");
     expect(result.mediaUrl).toContain("data:image/png;base64,AAAA");
@@ -222,7 +245,7 @@ describe("SelfieTool", () => {
       appearance: "A woman with a balanced figure",
       comfy: { upload, generate } as unknown as ComfyClient,
     });
-    const result = await tool.execute({ context: "в кафе" });
+    const result = await tool.execute({ ...SCENE });
     expect(result.success).toBe(true);
     expect(result.mediaUrl).toBe("data:image/png;base64,AAAA");
 
@@ -249,7 +272,7 @@ describe("SelfieTool", () => {
       body: "Woman with a balanced figure, a flat stomach",
       comfy: { upload, generate } as unknown as ComfyClient,
     });
-    await tool.execute({ context: "в кафе", format: "4:3" });
+    await tool.execute({ ...SCENE, scene: "в кафе", format: "4:3" });
 
     const graph = generate.mock.calls[0][0] as Record<string, { inputs: Record<string, unknown> }>;
     expect(graph["5"].inputs.prompt).toContain("Woman with a balanced figure, a flat stomach");
@@ -258,7 +281,7 @@ describe("SelfieTool", () => {
     // Any name in the table must survive this whitelist: it went stale once and
     // silently dropped a format back to the mode's default. 1:1 is not the mirror
     // default, so passing it through is exactly what this checks.
-    await tool.execute({ context: "в парке", format: "1:1", mode: "mirror" });
+    await tool.execute({ ...SCENE, scene: "в парке", format: "1:1", mode: "mirror" });
     const second = generate.mock.calls[1][0] as Record<string, { inputs: Record<string, unknown> }>;
     expect(second["9"].inputs).toMatchObject({ width: 896, height: 896 });
 
@@ -274,7 +297,7 @@ describe("SelfieTool", () => {
       appearance: "A woman with a balanced figure",
       comfy: { upload: vi.fn(), generate } as unknown as ComfyClient,
     });
-    await tool.execute({ context: "в кафе" });
+    await tool.execute({ ...SCENE, scene: "в кафе" });
 
     const graph = generate.mock.calls[0][0] as Record<string, { inputs: Record<string, unknown> }>;
     expect(graph["5"].inputs.prompt).not.toContain("reference image (image 1)");
@@ -285,7 +308,7 @@ describe("SelfieTool", () => {
     const tool = new SelfieTool({ openrouterApiKey: "or-key", openrouterModel: "vendor/image", referencePhotoUrl: "https://example.com/photo.jpg" });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(imageReply));
 
-    const result = await tool.execute({ context: "моё лицо, то же самое" });
+    const result = await tool.execute({ ...SCENE, scene: "моё лицо, то же самое" });
     expect(result.success).toBe(true);
     expect(result.output).not.toContain("лицо не сохранено");
 
@@ -297,7 +320,7 @@ describe("SelfieTool", () => {
     const mockFetch = vi.fn().mockResolvedValue(imageReply);
     vi.stubGlobal("fetch", mockFetch);
 
-    await tool.execute({ context: "в новом платье" });
+    await tool.execute({ ...SCENE, scene: "в новом платье" });
 
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
     expect(body.messages[0].content[0].text).toContain("in front of a mirror");
@@ -310,7 +333,7 @@ describe("SelfieTool", () => {
     const mockFetch = vi.fn().mockResolvedValue(imageReply);
     vi.stubGlobal("fetch", mockFetch);
 
-    await tool.execute({ context: "в кафе с кофе" });
+    await tool.execute({ ...SCENE, scene: "в кафе с кофе" });
 
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
     expect(body.messages[0].content[0].text).toContain("realistic photo of her");
@@ -322,7 +345,7 @@ describe("SelfieTool", () => {
     const tool = new SelfieTool({ openrouterApiKey: "or-key", openrouterModel: "vendor/image", referencePhotoUrl: "https://example.com/photo.jpg" });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(imageReply));
 
-    const result = await tool.execute({ context: "на пляже" });
+    const result = await tool.execute({ ...SCENE, scene: "на пляже" });
     expect(result.success).toBe(true);
     expect(result.mediaUrl).toBe(PNG_URL);
 
@@ -334,7 +357,7 @@ describe("SelfieTool", () => {
     const mockFetch = vi.fn().mockResolvedValue(imageReply);
     vi.stubGlobal("fetch", mockFetch);
 
-    await tool.execute({ context: "просто так", mode: "mirror" });
+    await tool.execute({ ...SCENE, scene: "просто так", mode: "mirror" });
 
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
     expect(body.messages[0].content[0].text).toContain("in front of a mirror");
@@ -350,7 +373,7 @@ describe("SelfieTool", () => {
       text: () => Promise.resolve("Internal Server Error"),
     }));
 
-    const result = await tool.execute({ context: "тест" });
+    const result = await tool.execute({ ...SCENE, scene: "тест" });
     expect(result.success).toBe(false);
     expect(result.output).toBeDefined();
 
@@ -365,7 +388,7 @@ describe("SelfieTool", () => {
       ownerReferencePath: path.join(os.tmpdir(), `eva-no-owner-${Date.now()}.jpg`),
       comfy: { upload: vi.fn(), generate } as unknown as ComfyClient,
     });
-    const result = await tool.execute({ context: "обнимаемся", with_owner: true });
+    const result = await tool.execute({ ...SCENE, scene: "обнимаемся", with_owner: true });
     expect(result.success).toBe(false);
     expect(result.output).toContain("/setphoto me");
     expect(generate).not.toHaveBeenCalled();
@@ -388,14 +411,14 @@ describe("SelfieTool", () => {
       comfy: { upload, generate } as unknown as ComfyClient,
     });
 
-    const refused = await tool.execute({ context: "обнимаемся в кафе", with_owner: true });
+    const refused = await tool.execute({ ...SCENE, scene: "обнимаемся в кафе", with_owner: true });
     expect(refused.success).toBe(false);
     expect(refused.output).toContain("his_outfit");
     expect(generate).not.toHaveBeenCalled();
 
     // The very same try a second time is drawn anyway: a check she cannot satisfy
     // must not trap her.
-    const drawn = await tool.execute({ context: "обнимаемся в кафе", with_owner: true });
+    const drawn = await tool.execute({ ...SCENE, scene: "обнимаемся в кафе", with_owner: true });
     expect(drawn.success).toBe(true);
     expect(generate).toHaveBeenCalledTimes(1);
   });
@@ -407,7 +430,7 @@ describe("SelfieTool", () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
 
-    const result = await tool.execute({ context: "стоим рядом", with_owner: true, format: "4:3" });
+    const result = await tool.execute({ ...SCENE, scene: "стоим рядом", with_owner: true, format: "4:3" });
     expect(result.success).toBe(false);
     expect(result.output).toContain("локально");
     // The cloud is not even asked: the providers refuse a photo of a real
@@ -434,7 +457,7 @@ describe("SelfieTool", () => {
       comfy: { upload, generate } as unknown as ComfyClient,
     });
 
-    const result = await tool.execute({ context: "обнимаемся в кафе", with_owner: true, format: "4:3", his_outfit: "a bright red t-shirt" });
+    const result = await tool.execute({ ...SCENE, scene: "обнимаемся в кафе", with_owner: true, format: "4:3", his_outfit: "a bright red t-shirt" });
     expect(result.success).toBe(true);
     expect(result.mediaUrl).toBe("data:image/png;base64,AAAA");
     // A pair frame is local-only, so it always comes back to her as bytes.
@@ -460,7 +483,7 @@ describe("SelfieTool", () => {
     // pair narrows the set: landscape stays, and a portrait becomes a square.
     expect(graph["9"].inputs).toMatchObject({ width: 896, height: 672 });
 
-    await tool.execute({ context: "стоим в парке", with_owner: true, format: "3:4", his_outfit: "grey sweatpants" });
+    await tool.execute({ ...SCENE, scene: "стоим в парке", with_owner: true, format: "3:4", his_outfit: "grey sweatpants" });
     const tall = generate.mock.calls[1][0] as Record<string, { inputs: Record<string, unknown> }>;
     expect(tall["9"].inputs).toMatchObject({ width: 896, height: 896 });
 
@@ -491,7 +514,7 @@ describe("SelfieTool", () => {
     vi.stubGlobal("fetch", mockFetch);
 
     const tool = new SelfieTool({ openrouterApiKey: "or-key", openrouterModel: "vendor/image" });
-    const result = await tool.execute({ context: "в парке", mode: "mirror", format: "2:3" });
+    const result = await tool.execute({ ...SCENE, scene: "в парке", mode: "mirror", format: "2:3" });
     expect(result.success).toBe(true);
     const imagesCall = calls.find((c) => c.url.endsWith("/images/generations"));
     expect(imagesCall?.body.size).toBe("1024x1536");
@@ -512,7 +535,7 @@ describe("SelfieTool", () => {
       referencePhotoUrl: "https://example.com/photo.jpg",
       comfy: { upload, generate } as unknown as ComfyClient,
     });
-    const shown = await local.execute({ context: "в кафе" });
+    const shown = await local.execute({ ...SCENE, scene: "в кафе" });
     expect(shown.output).toContain("приложен к этому же ходу");
 
     const cloud = new SelfieTool({
@@ -529,7 +552,7 @@ describe("SelfieTool", () => {
         }],
       }),
     }));
-    const linked = await cloud.execute({ context: "в кафе" });
+    const linked = await cloud.execute({ ...SCENE, scene: "в кафе" });
     expect(linked.success).toBe(true);
     expect(linked.mediaUrl).toBe("https://cdn.example/frame.png");
     expect(linked.output).not.toContain("приложен к этому же ходу");

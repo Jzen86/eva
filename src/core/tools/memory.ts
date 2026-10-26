@@ -270,70 +270,28 @@ export function createMemoryTool(opts: MemoryToolOptions = {}): Tool {
     name: "memory",
     description:
       "Knowledge base: search it, save what just happened, list or delete entries.\n" +
-      "action=save takes what actually happened, not a conclusion drawn from it. Three " +
-      "kinds of entry, and the first is the one you will need most often:\n" +
-      "1) What you talked about: topic = the subject in a word ('самолёты', 'работа'), " +
-      "content = what was said about it, and it has to be concrete — a name, a number, a " +
-      "colour, a version, a place. 'рассказывал про кошку' is worthless: it takes a row " +
-      "and gives nothing to remember. 'кошку зовут Муська, трёхцветная, спит на клавиатуре' " +
-      "is a row. Keep it to a sentence or two and cut the framing — 'заявил, что', " +
-      "'в ходе диалога', 'подтвердил, что' — the substance is what is worth the space. " +
-      "Even a plain chat about nothing in particular has a subject, and this is " +
-      "how you can bring it up yourself a week later.\n" +
-      "2) A fact about him: content alone ('не любит айфоны'). Set kind=\"profile\" " +
-      "for these, and only for what stays true — ask yourself: if tomorrow were the " +
-      "opposite, would the line still be true? 'Пьёт энергетики' survives it; 'сегодня " +
-      "устал', 'с L-теанином', 'раз в день' do not, and those are episodes. A standing " +
-      "arrangement is the other way round: a work schedule ('работает 2/2: два дня рабочих, " +
-      "два выходных'), the shift pattern, the hour he gets up for a shift — those are profile " +
-      "lines under 'работа', and they hold for months. What makes 'раз в день' an episode is " +
-      "being one moment's circumstance, not being regular. Write such a line so the day can be " +
-      "counted from it: the cycle, the date it starts from, and the hours ('2/2, отсчёт от " +
-      "18.10.2026: 18–19 рабочие, 20–21 выходные, смена днём до 20:00') — she reads it to " +
-      "decide what is even possible right now, and a cycle without an anchor can be counted " +
-      "no way at all. A profile entry is one fact, in one line, " +
-      "and the line is short: 'любит энергетики', 'любит одежду с глубоким декольте', " +
-      "'играет в «Территорию фермеров» в «Одноклассниках»'. No 'предпочитает " +
-      "целенаправленно', no 'чисто визуально', no reason attached — the shorter the line, " +
-      "the more of it she actually uses. " +
-      "with no 'сказал', 'уточнил', 'объяснил' and no " +
-      "cause and effect — it is read as a questionnaire, not as a retelling. Its topic " +
-      "comes from this list, exactly: 'работа', 'где живёт', 'досуг', 'окружение', " +
-      "'вкусы'. Every section is about him: how you are built, " +
-      "what models your generation uses, what you can do — not a fact about him, and not " +
-      "a profile line. The list is short on purpose, and each line has to pass one test: " +
-      "could it be used in any message ('это по сути в каждом сообщении может " +
-      "использоваться')? What you know about a friend, an animal or a relative belongs here " +
-      "too, under 'окружение', by name and by who they are to him. Two things about a " +
-      "dossier line are enforced rather than asked for: it is capped at " + PROFILE_LINE_LIMIT +
-      " characters (a retelling is refused, not trimmed and not accepted), and when he says " +
-      "one of those lines is wrong or extra, that is an edit to make now, not a note for " +
-      "later — search it, write the right one with supersedes, drop what is not true " +
-      "(action=delete). He should not have to say it twice. If a sharper fact replaces an older one, pass " +
-      "the old entry's #ID in supersedes — the older line must not linger beside the new " +
-      "one and disagree with it. Everything else is kind=\"episode\" (the default): what " +
-      "happened, what was discussed or decided, with the subject as the topic.\n" +
-      "kind=\"rules\" is how he wants you to work — a requirement, a prohibition, a format " +
-      "he asked for and expects every time ('коротко, без списков', 'сначала спроси меня'). " +
-      "A prohibition said for one job ('правки и проверки идут в одну таблицу') is not a " +
-      "rule: test it like a profile line — if tomorrow he asks for the opposite, does your " +
-      "line help him or argue with him? That belongs in an episode about the job. " +
-      "Two things never become an entry: your own joking turns (he did not say them, and " +
-      "reading them as fact is how 'a bot owns a 4090' got written down), and a relation you " +
-      "assembled out of two separate statements of his — who owns what, who is who, what " +
-      "stands where. Write what was said, not what it adds up to. " +
-      "kind=\"lesson\" is what he taught you about meaning — what his word stands for, " +
-      "where the usual sense does not fit ('его „моё“ — как „моя школа“: гордость, а не " +
-      "собственность'). Both are always in front of you, so write them in his words.\n" +
-      "3) A case, when he reacted to something you did: her_move = what you did, " +
-      "context = the state he was in (busy, cheerful, in an argument, tired), " +
-      "his_reaction = what he did about it. All three together — the context is not " +
-      "decoration, without it the note comes back as a rule, and rules are what this " +
-      "base is not for. Two cases about the same thing in different states are both " +
-      "true; save each as it happens. The date is set for you.\n" +
-      "conclusion = how it ended, when it ended in something: what was decided, what " +
-      "he settled on. It belongs to that one conversation and is read only beside it, " +
-      "so write it with the argument it came from, never as advice for later.",
+      "kind=\"episode\" (default) — what was discussed or decided: topic = the subject in a word " +
+      "('самолёты', 'работа'), content = concrete facts (a name, a number, a colour, a version, " +
+      "a place), one or two sentences, no 'заявил, что' framing. Even a chat about nothing has a subject.\n" +
+      "kind=\"profile\" — a stable fact about him: one short line (capped at " + PROFILE_LINE_LIMIT +
+      " characters), no retelling. 'любит энергетики', 'играет в «Территорию фермеров»'. Only what " +
+      "stays true: if tomorrow were the opposite, would the line still be true? One more test: could " +
+      "it be used in any message? A standing arrangement is profile under 'работа' — the cycle, " +
+      "the date it starts from and the hours ('2/2, отсчёт от 18.10.2026, смена 8–22'), so the day " +
+      "can be counted. Topics: 'работа', 'где живёт', 'досуг', 'окружение', " +
+      "'вкусы'. Nothing about yourself: how you are built or what you can do is not a fact about him.\n" +
+      "kind=\"rules\" — how he wants you to work ('коротко, без списков', 'сначала спроси меня'); " +
+      "a prohibition for one job is an episode, not a rule.\n" +
+      "kind=\"lesson\" — what he taught you a word means ('его „моё“ — как „моя школа“: гордость, " +
+      "а не собственность').\n" +
+      "A case: her_move = what you did, context = his state (busy, tired, in an argument), " +
+      "his_reaction = what he did; all three together. conclusion = how it ended, with the argument " +
+      "it came from, never as advice for later.\n" +
+      "If a sharper fact replaces an older one, pass the old #ID in supersedes. When he says a line is " +
+      "wrong or extra, that is an edit to make now: search it, write the right one with supersedes, " +
+      "delete what is not true. He should not have to say it twice.\n" +
+      "Never save your own jokes as fact, and never assemble a relation from two separate statements — " +
+      "write what was said, not what it adds up to.",
     parameters: [
       { name: "action", type: "string", description: "One of: search, save, delete, list", required: true },
       { name: "query", type: "string", description: "Search query (required for action=search; results include the entry's #ID)" },
