@@ -470,6 +470,13 @@ describe("SelfieTool", () => {
     expect(graph["5"].inputs.image2).toEqual(["11", 0]);
     expect(graph["11"]).toEqual({ class_type: "LoadImage", inputs: { image: "eva_owner.jpg" } });
     expect(String(graph["5"].inputs.prompt)).toContain("person from image 2");
+    // His face and hairstyle are the reference; his expression, clothes and pose
+    // are the scene's. The owner, 26.10: "лицо всегда как на рефе... причёску
+    // не меняй, мимику можно". Measured on the pair path before this line: the
+    // model restyled his hair with the scene while the face held.
+    expect(String(graph["5"].inputs.prompt)).toContain("keep his exact face and hairstyle");
+    expect(String(graph["5"].inputs.prompt)).toContain("do not restyle his hair");
+    expect(String(graph["5"].inputs.prompt)).toContain("His facial expression, outfit, pose and the scene come from the text below");
     // The figure standard rides here too — the owner wants the same proportions
     // in every frame. It was the canon's words (areolas/nipples), not the idea,
     // that once made the model inflate her chest and drop the man; see e5544ea.

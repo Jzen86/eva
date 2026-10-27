@@ -99,7 +99,7 @@ function buildPrompt(
  * them renders both people clean on 8 of 8 (4 lingerie, 4 nude, 4 seeds).
  */
 const PAIR_FACES =
-  "Two people in one photo. The woman is the person from image 1: keep her exact face and hair color. The man is the person from image 2: keep his exact face. Do not swap, blend or merge the faces. Her hairstyle, facial expression, outfit, scene and light come from the text below, not from the reference photos.";
+  "Two people in one photo. The woman is the person from image 1: keep her exact face and hair color. The man is the person from image 2: keep his exact face and hairstyle — do not restyle his hair, do not change its colour or length. Do not swap, blend or merge the faces. Her hairstyle, facial expression, outfit, scene and light come from the text below, not from the reference photos. His facial expression, outfit, pose and the scene come from the text below; his face and hairstyle do not.";
 
 /**
  * The prompt for a frame with both of them in it.
