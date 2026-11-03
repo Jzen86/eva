@@ -33,6 +33,57 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 const WEEKDAYS = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
 
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/** Minutes since his midnight. */
+function minutesOfDay(ms: number, offsetHours: number): number {
+  const local = ms + offsetHours * 60 * 60 * 1000;
+  return Math.floor((((local % DAY_MS) + DAY_MS) % DAY_MS) / 60000);
+}
+
+/** `6 ч 20 мин`, `50 мин`, `2 ч` — the way a person says it. */
+function duration(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h === 0) return `${m} мин`;
+  if (m === 0) return `${h} ч`;
+  return `${h} ч ${m} мин`;
+}
+
+/** `8:00–22:00` → the pair of minutes; a shift over midnight gets `end > 24h`. */
+function shiftBounds(shift: string): { start: number; end: number } | null {
+  const match = /(\d{1,2})[:.](\d{2})\s*[-–—]\s*(\d{1,2})[:.](\d{2})/.exec(shift);
+  if (!match) return null;
+  const start = Number(match[1]) * 60 + Number(match[2]);
+  let end = Number(match[3]) * 60 + Number(match[4]);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  if (end <= start) end += 24 * 60;
+  return { start, end };
+}
+
+/**
+ * Where he is inside his shift right now — the subtraction the model cannot do.
+ *
+ * The prompt already carries the clock and the shift, and she still asked "сколько
+ * ещё до конца смены": two numbers are not an answer, because working out the
+ * difference is the one thing a small model reliably gets wrong (18.10, and again
+ * 03.11 — a wrong "завтра выходной" after a correct line was in front of her).
+ * So the arithmetic is done here, in the engine, and the sentence that arrives is
+ * already the answer.
+ */
+function shiftPosition(shift: string | undefined, nowMs: number, offsetHours: number): string | null {
+  if (!shift) return null;
+  const bounds = shiftBounds(shift);
+  if (!bounds) return null;
+  const now = minutesOfDay(nowMs, offsetHours);
+  const clock = `${pad2(Math.floor(now / 60))}:${pad2(now % 60)}`;
+  // After midnight a shift that started yesterday is still the current one.
+  const local = bounds.end > 24 * 60 && now < bounds.start ? now + 24 * 60 : now;
+  if (local < bounds.start) return `Сейчас ${clock}, смена начнётся через ${duration(bounds.start - local)}.`;
+  if (local < bounds.end) return `Сейчас ${clock}, до конца смены ${duration(bounds.end - local)}.`;
+  return `Сейчас ${clock}, смена закончилась ${duration(local - bounds.end)} назад.`;
+}
+
 /** `YYYY-MM-DD` → its midnight UTC stamp, or null when the text is not a date. */
 function anchorMs(anchor: string): number | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(anchor.trim());
@@ -90,9 +141,11 @@ export function scheduleLine(
   const daysLeft = working ? workDays - phase : cycle - phase;
   const next = today + daysLeft;
   const nextText = working ? `Следующий выходной — ${dayLabel(next)}.` : `Следующая смена — ${dayLabel(next)}.`;
+  const position = working ? shiftPosition(shift, nowMs, offsetHours) : null;
 
   return (
     `Его график: сегодня ${dayLabel(today)} — ${working ? "рабочий день" : "выходной"}${shiftText}. ` +
+    (position ? `${position} ` : "") +
     nextText
   );
 }

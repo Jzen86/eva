@@ -80,4 +80,42 @@ describe("scheduleLine", () => {
     expect(line).toContain("рабочий день.");
     expect(line).not.toContain("смена");
   });
+
+  /**
+   * Two numbers are not an answer.
+   *
+   * The prompt always carried the clock ("Сейчас: вторник, 15:40") and the shift
+   * ("смена 8:00–22:00"), and she still asked him how long was left — live, 03.11,
+   * after a correct line was in front of her. Subtraction across a shift is exactly
+   * the arithmetic a small model gets wrong, so the engine does it and hands her the
+   * sentence instead of the operands.
+   */
+  it("says how long is left in the shift", () => {
+    // 10:00 UTC is 14:00 for him (+4), the shift ends at 22:00 — eight hours left.
+    expect(scheduleLine(CYCLE, at("2026-10-18", 10), 4)).toContain("Сейчас 14:00, до конца смены 8 ч.");
+  });
+
+  it("says how long until the shift starts, and that it is already over", () => {
+    // 03:00 UTC is 07:00 for him: one hour before the 8:00 shift.
+    expect(scheduleLine(CYCLE, at("2026-10-18", 3), 4)).toContain("Сейчас 07:00, смена начнётся через 1 ч.");
+    // 19:00 UTC is 23:00: the shift ended an hour ago.
+    expect(scheduleLine(CYCLE, at("2026-10-18", 19), 4)).toContain("Сейчас 23:00, смена закончилась 1 ч назад");
+  });
+
+  it("counts minutes as well as hours", () => {
+    // 10:35 UTC is 14:35 — 7 ч 25 мин left, not "восемь".
+    expect(scheduleLine(CYCLE, at("2026-10-18", 10) + 35 * 60000, 4)).toContain("до конца смены 7 ч 25 мин");
+  });
+
+  it("keeps the countdown off a day with no shift", () => {
+    const off = scheduleLine(CYCLE, at("2026-10-20", 10), 4);
+    expect(off).not.toContain("до конца смены");
+    expect(off).not.toContain("начнётся через");
+  });
+
+  it("counts a shift that runs past midnight", () => {
+    const night: WorkSchedule = { ...CYCLE, shift: "22:00–06:00" };
+    // 00:30 UTC is 04:30 for him, still inside the shift that began yesterday: 1.5 ч left.
+    expect(scheduleLine(night, at("2026-10-18", 0) + 30 * 60000, 4)).toContain("до конца смены 1 ч 30 мин");
+  });
 });

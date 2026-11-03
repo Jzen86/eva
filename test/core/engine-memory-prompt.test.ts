@@ -90,6 +90,37 @@ describe("memory in the prompt", () => {
     expect(String(system)).not.toContain("шампиньоны");
   });
 
+  /**
+   * The cycle in the config is not the same thing as the sentence she reads.
+   *
+   * `doctor` composes its own line straight from `agent.schedule`, so it can print a
+   * correct "сегодня рабочий день" while the engine hands her nothing at all — the
+   * two paths were written separately, and only the doctor's had been exercised. This
+   * pins the engine's side: the counted day and the remaining time reach the prompt.
+   */
+  it("puts the counted day and the time left in her shift in front of her", async () => {
+    const engine = new Engine({
+      llm: captureLlm(),
+      config: {
+        ...testConfig,
+        timezoneOffsetHours: 4,
+        workSchedule: { workDays: 2, restDays: 2, anchor: "2026-10-18", shift: "8:00–22:00" },
+      },
+      tools: new ToolRegistry(),
+    });
+    await engine.process({
+      channelName: "test",
+      userId: "sched-chat",
+      text: "сколько мне ещё торчать?",
+      // 10:00 UTC — 14:00 for him, eight hours before the shift ends.
+      timestamp: Date.UTC(2026, 9, 18, 10),
+    });
+
+    const system = String(captured[0]?.[0]?.content);
+    expect(system).toContain("Его график: сегодня 18.10.2026 (вс) — рабочий день");
+    expect(system).toContain("до конца смены 8 ч");
+  });
+
   it("shows her the picture she just made — for that turn only", async () => {
     // She generated blind: the picture went to the channel, and the model that
     // wrote the prompt never saw it. Live: the same request produced both hands
