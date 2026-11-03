@@ -1089,11 +1089,6 @@ export class Engine {
         if (profile) {
           prompt += `\n\n## Что я о нём знаю\n\n${profile}\n\n${PROFILE_RULE}`;
         }
-        // Today, counted from his cycle — the one part of the arrangement that cannot
-        // live in the dossier, since it is true for a day and not for months. Without
-        // a schedule in the config this is nothing at all.
-        const today = scheduleLine(live.workSchedule, incomingAt, live.timezoneOffsetHours ?? 0);
-        if (today) prompt += `\n\n${today}`;
         const rules = renderFlatBlock(knowledgeOfKind("rules"));
         if (rules) {
           prompt += `\n\n## Как с ним работать\n\n${rules}\n\n${RULES_RULE}`;
@@ -1166,6 +1161,19 @@ export class Engine {
     // See REPORT_SHAPE for where it came from and why a clean run answers as well.
     if (reportTurn) {
       prompt += `\n\n## Отчёт\n\n${REPORT_SHAPE}`;
+    }
+
+    // His working day, counted fresh — and placed at the tail on purpose.
+    //
+    // It used to sit at the top of the arrangement, right after the dossier, and on
+    // 03.11 she asked him how long was left in his shift and called the end "восемь
+    // вечера" (it is ten) while the correct line was already in her prompt. At 20k+
+    // tokens a line near the top is read past; the tail is where the model actually
+    // keeps what it just read. So the one sentence that changes at midnight lives at
+    // the very end, next to the turn itself.
+    if (!reportTurn) {
+      const today = scheduleLine(live.workSchedule, incomingAt, live.timezoneOffsetHours ?? 0);
+      if (today) prompt += `\n\n${today}`;
     }
 
     const turnContext = buildTurnContext(userMessage, gap ?? undefined);

@@ -118,4 +118,12 @@ describe("scheduleLine", () => {
     // 00:30 UTC is 04:30 for him, still inside the shift that began yesterday: 1.5 ч left.
     expect(scheduleLine(night, at("2026-10-18", 0) + 30 * 60000, 4)).toContain("до конца смены 1 ч 30 мин");
   });
+
+  it("says both ends of the shift in words, not just as two numbers", () => {
+    // Live, 03.11: she called the end "восемь вечера" (it is ten) right after quoting a
+    // countdown that only works for 22:00. "8:00-22:00" reads as a range, and the first
+    // number is easy to take for the last, so the ends are spelled out.
+    const line = scheduleLine(CYCLE, at("2026-10-18", 10), 4);
+    expect(line).toContain("смена 8:00–22:00 (с восьми утра до десяти вечера)");
+  });
 });

@@ -121,6 +121,38 @@ describe("memory in the prompt", () => {
     expect(system).toContain("до конца смены 8 ч");
   });
 
+  /**
+   * Where that line sits is the fix, not the text of it.
+   *
+   * Placed right after the dossier — near the top of a 20k-token prompt — she read past
+   * it and asked him how long was left; the same engine had the answer in the string it
+   * sent. The tail is what a model keeps, so the counted day goes there, after memory
+   * and the digest. Ordered pin, not a substring: both halves exist either way.
+   */
+  it("keeps the counted day at the tail, after the memory", async () => {
+    const engine = new Engine({
+      llm: captureLlm(),
+      config: {
+        ...testConfig,
+        timezoneOffsetHours: 4,
+        workSchedule: { workDays: 2, restDays: 2, anchor: "2026-10-18", shift: "8:00–22:00" },
+      },
+      tools: new ToolRegistry(),
+    });
+    await engine.process({
+      channelName: "test",
+      userId: "sched-tail",
+      text: "что-нибудь про грибы",
+      timestamp: Date.UTC(2026, 9, 18, 10),
+    });
+
+    const system = String(captured[0]?.[0]?.content);
+    const memory = system.indexOf("Что было раньше");
+    const schedule = system.indexOf("Его график");
+    expect(memory).toBeGreaterThan(-1);
+    expect(schedule).toBeGreaterThan(memory);
+  });
+
   it("shows her the picture she just made — for that turn only", async () => {
     // She generated blind: the picture went to the channel, and the model that
     // wrote the prompt never saw it. Live: the same request produced both hands

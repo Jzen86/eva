@@ -35,6 +35,12 @@ const WEEKDAYS = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
+// Родительный падеж: «с восьми … до десяти», — обе границы читаются одинаково.
+const HOUR_WORDS = [
+  "двенадцати", "часа", "двух", "трёх", "четырёх", "пяти",
+  "шести", "семи", "восьми", "девяти", "десяти", "одиннадцати",
+];
+
 /** Minutes since his midnight. */
 function minutesOfDay(ms: number, offsetHours: number): number {
   const local = ms + offsetHours * 60 * 60 * 1000;
@@ -59,6 +65,22 @@ function shiftBounds(shift: string): { start: number; end: number } | null {
   if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
   if (end <= start) end += 24 * 60;
   return { start, end };
+}
+
+/**
+ * `1320` → "десять вечера", `480` → "восемь утра"; null when the time is not on the
+ * hour — the 24-hour pair is enough then.
+ *
+ * Live, 03.11: the shift was written as "8:00-22:00" and she called its end "восемь
+ * вечера" — 10 pm, right after quoting a countdown that only works for 22:00. Two
+ * numbers in a row read as a range and the first one is easy to take for the last,
+ * so the ends are said in words as well.
+ */
+function clockWords(minutes: number): string | null {
+  if (minutes % 60 !== 0) return null;
+  const hour = Math.floor(minutes / 60) % 24;
+  const part = hour < 5 ? "ночи" : hour < 12 ? "утра" : hour < 17 ? "дня" : "вечера";
+  return `${HOUR_WORDS[hour % 12]} ${part}`;
 }
 
 /**
@@ -134,7 +156,12 @@ export function scheduleLine(
 
   const working = phase < workDays;
   const shift = schedule.shift?.trim();
-  const shiftText = shift ? `, смена ${shift}` : "";
+  const bounds = shift ? shiftBounds(shift) : null;
+  const fromWords = bounds ? clockWords(bounds.start) : null;
+  const toWords = bounds ? clockWords(bounds.end) : null;
+  const shiftText = shift
+    ? `, смена ${shift}${fromWords && toWords ? ` (с ${fromWords} до ${toWords})` : ""}`
+    : "";
 
   // When does the current stretch end? Work days run out at `workDays - phase`, days
   // off at `cycle - phase`.
